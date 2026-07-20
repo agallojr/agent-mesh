@@ -165,6 +165,18 @@ and leave it open. Closing the session stops the node (as does `/mesh-off`).
   hook reads the command before the shell expands it and denies anything it
   cannot resolve. The skills already do this correctly; this only bites hand-typed
   git.
+- **A commit is denied though the path is correct.** The gate splits the raw
+  command on shell operators (`;`, `&&`, `||`, `|`, `&`, newline) before parsing,
+  so a `-m` message containing one of those — or `$(...)` / backticks — breaks the
+  parse and is denied. Keep commit messages to plain words and simple punctuation.
+- **`/mesh-on` can't find `~/.agent-identity.env` (or the allowlist), or the
+  poller never stops.** On some nodes `$HOME` is not the directory the dotfiles
+  and `.claude` actually live in (e.g. `$HOME=/opt/x/install` while identity,
+  `.claude`, and the `.mesh-stop` sentinel are in `/opt/x`). Then `~` resolves to
+  the wrong place. Fix `$HOME` at the point it is set (login profile or env
+  script) so `~` matches where the mesh files are, or pass literal absolute paths.
+  The git gate itself is immune — it resolves its allowlist from
+  `CLAUDE_CODE_CONFIG_DIR`, not `~` — but the skills and sentinel use `~`.
 - **The skill doesn't appear.** Confirm the symlinks resolve (step 3) and restart
   Claude Code so it re-scans `~/.claude/skills/`.
 - **Nothing happens after `/mesh-on`.** Tasks only start when someone drops a

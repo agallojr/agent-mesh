@@ -22,6 +22,13 @@ shell expands it. Always emit git with the LITERAL absolute repo path:
 `git -C «REPO» <subcommand> ...`. Never use a variable, never `cd … && git …`.
 The hook will DENY anything it cannot resolve to the allowlisted literal path.
 
+**Commit messages must be plain text.** The gate splits the raw command on shell
+operators (`;`, `&&`, `||`, `|`, `&`, newline) BEFORE tokenizing, to find every
+git invocation. A `-m` message containing any of those — or `$(...)` / backticks —
+splits mid-message, breaks quote parsing, and the fragment is denied as
+unparseable. Keep commit messages to plain words and simple punctuation:
+`status <id> -> accepted` is fine; `built; ran tests` is denied.
+
 ## Single-writer discipline (never violate)
 
 - You may write ONLY: `status/<task-id>.json` for tasks you are executing, new

@@ -25,6 +25,11 @@ shell expands it**. So every git command MUST use a literal absolute path:
 Read-only git (`pull`, `fetch`, `status`) is not gated; use the literal path
 anyway for consistency. See `permissions.md`.
 
+Commit messages must be **plain text**: the gate splits the raw command on shell
+operators (`;`, `&&`, `||`, `|`, `&`, newline) before parsing, so a `-m` message
+containing any of those -- or `$(...)` / backticks -- breaks the parse and is
+denied. Keep messages to plain words (`status <id> -> accepted`).
+
 ## Single-writer discipline -- the load-bearing rule
 
 Never write a path another agent owns. Merge conflicts are prevented by
