@@ -47,12 +47,21 @@ Repeat until stop (see "Stopping" below):
 2. **Pull.** `git -C «REPO» pull --rebase`. On failure, log a warning and
    continue (transient network is not fatal).
 
-3. **Scan inbox.** List `«REPO»/tasks/«AGENT_ID»/*.md`. For each task file, read
-   its `id:` from the frontmatter. A task is NEW if `«REPO»/status/<id>.json`
-   does not exist yet. Skip tasks that already have a status file. **If the inbox
-   is empty, write NOTHING and go straight to sleep** — an idle node only pulls,
-   it never commits. This is what keeps repo traffic proportional to real work
-   rather than to node-count × poll frequency.
+3. **Scan inbox.** List `«REPO»/tasks/«AGENT_ID»/*.md`. For each file, read its
+   `id:` and `type:` from the frontmatter, then branch on `type`:
+   - `task.request` / `task.cancel` — actionable work. It is NEW if
+     `«REPO»/status/<id>.json` does not exist yet; skip it if a status file
+     already exists. Handle NEW ones in step 4.
+   - `query` — a ping addressed to you. Also NEW iff no `status/<id>.json`
+     exists. Handle in step 4 (you ACK and answer it).
+   - `reply` — a response to a `query` YOU sent earlier (it carries
+     `in_reply_to`). This is information, NOT work: never dispatch an executor
+     and never write a status file for it. Handle in step 4½ (surface it).
+
+   **If the inbox has no NEW actionable message and no unsurfaced reply, write
+   NOTHING and go straight to sleep** — an idle node only pulls, it never
+   commits. This is what keeps repo traffic proportional to real work rather than
+   to node-count × poll frequency.
 
 **"Sync" means, every time:** stage, commit, and push using THREE separate
 commands, each with its own literal `-C «REPO»` prefix (a bare `commit`/`push`
@@ -71,8 +80,12 @@ rejection, follow the conflict-handling rule below.
    a. **ACK by writing** `status/<id>.json` state `accepted` (schema per
       PROTOCOL.md §6), then sync (commit message `status <id> -> accepted`). This
       single write IS the acknowledgment and the liveness signal — there is no
-      separate periodic heartbeat. If the task is a `query` (a ping), a
-      `reply` in your outbox (step e) is the ack; handle it and move on.
+      separate periodic heartbeat. If the message is a `query` (a ping), write a
+      `reply` addressed to the sender — a new file in `tasks/<sender-id>/` (the
+      sender's inbox), with `type: reply` and `in_reply_to: <this query id>` —
+      then sync and move on. Route replies to the sender's INBOX, not to your
+      outbox, so the sender's poller senses them on its own inbox scan. (Set the
+      terminal `status/<id>.json` to `done` once the reply is written.)
    b. Verify every credential NAME the task lists (frontmatter `credentials:`) is
       present in the environment / `~/.agent-credentials.env`. If any is missing:
       write status `blocked` naming the missing KEY NAMES (never values), sync,
@@ -90,6 +103,16 @@ rejection, follow the conflict-handling rule below.
       Sync.
    f. If the executor surfaced a durable lesson, drop a `lore.submit` message into
       `mailbox/roles/librarian/` (only the hub promotes it to memory/lore).
+
+4½. **Surface any `reply` messages in your inbox.** For each `reply` (a message
+   with `type: reply` and an `in_reply_to`), emit a concise line to your output so
+   the human sees the response — include `from`, `in_reply_to`, and the reply
+   body's key facts. A reply is INFORMATION: do NOT write a status file, do NOT
+   dispatch an executor, do NOT reply to it. Track which reply ids you have
+   already surfaced (in your own running context) so you announce each once and
+   stay silent on later cycles. You never delete or move a reply — the hub's
+   archive sweep (§9) is the sole cleanup path, preserving single-writer and the
+   "reading writes nothing" invariant. Surfacing a reply causes NO commit.
 
 5. **Sleep** `POLL_SEC` seconds (`sleep «POLL_SEC»`), then loop.
 

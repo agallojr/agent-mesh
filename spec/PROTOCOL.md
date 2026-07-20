@@ -279,6 +279,15 @@ What to report, and how far to back off before giving up.
 `agents/*.yaml` by matching `context` and `capabilities`. Senders never
 hardcode a machine name.
 
+**Replies route to the sender's inbox.** A `reply` (and its `in_reply_to`) is
+written as a new file in `tasks/<original-sender-id>/`, not into the responder's
+outbox. This lets every node sense the responses to messages it sent using the
+same inbox scan it already runs — no node ever polls another node's outbox. The
+recipient of a reply treats it as information: it surfaces the reply and writes
+no status for it. (Outboxes remain the home for `task.request` *results* —
+`outbox/<agent-id>/<task-id>-result.md` — which the requester reads by path when
+it wants the artifact pointers, not as a liveness signal.)
+
 ---
 
 ## 6. Status files
@@ -326,11 +335,12 @@ payloads. Large results belong in the experiment results repository.
 **Liveness by ACK, not heartbeat.** A node proves it is alive by *acting* on its
 inbox: reading a message and writing status `accepted` is the acknowledgment. To
 check whether a specific node is still alive and listening, the hub drops a
-`query` (a ping) into that node's inbox; the node ACKs by replying in its outbox
-within a few poll intervals. Silence across several intervals implies the node is
-down. There is no timer-driven liveness signal and no idle-node writes — a node
-with an empty inbox only pulls, so mesh traffic is proportional to real work, not
-to node count. This is the design's answer to hosted-git rate limits.
+`query` (a ping) into that node's inbox; the node ACKs by writing a `reply` into
+the hub's inbox (`tasks/<hub-id>/`) within a few poll intervals, which the hub's
+own inbox scan then surfaces. Silence across several intervals implies the node
+is down. There is no timer-driven liveness signal and no idle-node writes — a
+node with an empty inbox only pulls, so mesh traffic is proportional to real
+work, not to node count. This is the design's answer to hosted-git rate limits.
 
 **Orphan detection.** A task left in `accepted`/`running` with no terminal status
 after a generous bound (e.g. the task's `timeout_min`, or a hub-chosen multiple of
@@ -410,17 +420,23 @@ boot (mesh-on, main session):
 loop (poller subagent):
   0. if ~/.mesh-stop exists: end cleanly
   1. git -C /abs/repo pull --rebase
-  2. read tasks/<AGENT_ID>/ for messages with no status file
-       none -> write nothing, go to sleep (idle node only pulls)
-  3. for each: write status -> accepted (this ACK is the liveness signal); sync
-  4. verify required credential names present
-       missing -> status blocked, report missing names, next task
-  5. write status -> running; sync; dispatch executor sub-subagent and wait
-     (no periodic heartbeat -- status is written only at transitions)
-  6. terminal: status -> done | failed
-     write outbox/<AGENT_ID>/<task-id>-result.md; sync
-  7. submit any lore to mailbox/roles/librarian/
-  8. sleep POLL_INTERVAL_SEC
+  2. read tasks/<AGENT_ID>/, branch by message type:
+       task.request/task.cancel/query with no status file -> NEW work (step 4)
+       reply (has in_reply_to) -> information to surface (step 4½)
+       nothing new and no unsurfaced reply -> write nothing, sleep (idle = pull only)
+  3. for each NEW: write status -> accepted (this ACK is the liveness signal); sync
+  4. task.request: verify creds; status blocked if missing names, else
+       status -> running; sync; dispatch executor sub-subagent and wait
+       terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md
+       (no periodic heartbeat -- status is written only at transitions)
+     query: write a reply into the SENDER'S inbox tasks/<sender-id>/ (type: reply,
+       in_reply_to: <query id>); status -> done. Replies route to inboxes so the
+       sender's own inbox scan senses them -- outboxes are never polled.
+  4½. for each reply in your inbox: surface it to the human (from, in_reply_to,
+       body). A reply is information: no status write, no executor, no commit.
+       Never delete it -- the hub archive sweep is the only cleanup.
+  5. submit any lore to mailbox/roles/librarian/
+  6. sleep POLL_INTERVAL_SEC
 ```
 
 **`sync`** is three separate commands, each with its own literal `-C /abs/repo`

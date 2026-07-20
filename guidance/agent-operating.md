@@ -61,13 +61,21 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
 5. Write status `running`, sync, then execute (dispatch to an executor
    sub-subagent and wait). Do NOT rewrite status on a timer while it runs — write
    status only at real transitions. Idle churn is what the mesh avoids.
-6. On finish: status `done` or `failed`, and write
-   `outbox/<your-id>/<task-id>-result.md`; sync.
+6. On finish: for a `task.request`, status `done` or `failed`, and write
+   `outbox/<your-id>/<task-id>-result.md`; sync. For a `query` (ping), write a
+   `reply` into the SENDER'S inbox `tasks/<sender-id>/` (`type: reply`,
+   `in_reply_to:` the query id) and set status `done`; sync.
 7. Submit any durable lesson learned as a `lore.submit` message into
    `mailbox/roles/librarian/`. Only the hub promotes it into `memory/lore/`.
+8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
+   human: it answers a query YOU sent. A reply is information — write no status,
+   dispatch no executor, and do not reply to it. Announce each reply once.
 
-To check whether another node is alive, send it a `query` (ping) — its `accepted`
-write and `reply` are the proof of life. Nobody heartbeats on a timer.
+Replies route to the sender's INBOX, not to the responder's outbox, so every node
+learns the answers to its own messages via the same inbox scan it already runs —
+no node ever polls another's outbox. To check whether another node is alive, send
+it a `query` (ping); its `accepted` write plus the `reply` that lands in your
+inbox are the proof of life. Nobody heartbeats on a timer.
 
 ## Messages are self-contained
 
