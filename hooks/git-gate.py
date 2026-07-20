@@ -19,9 +19,10 @@ Contract (Claude Code PreToolUse):
 Posture: FAIL CLOSED. A gated op is denied unless its target repo can be
 affirmatively proven to be on the allowlist. Ambiguity denies.
 
-Allowlist: ~/.claude/mesh-git-allowlist.txt, one absolute repo path per line,
-blank lines and #-comments ignored. Paths are resolved to real paths; a target
-matches if it equals, or is nested under, an allowlisted path.
+Allowlist: mesh-git-allowlist.txt in the Claude Code config dir (resolved via
+CLAUDE_CODE_CONFIG_DIR / CLAUDE_CONFIG_DIR, else ~/.claude), one absolute repo
+path per line, blank lines and #-comments ignored. Paths are resolved to real
+paths; a target matches if it equals, or is nested under, an allowlisted path.
 """
 
 import json
@@ -31,7 +32,20 @@ import shlex
 import sys
 
 GATED = {"add", "commit", "push"}
-ALLOWLIST = os.path.expanduser("~/.claude/mesh-git-allowlist.txt")
+
+# Resolve the config dir the way Claude Code does, NOT via ~/.claude: on some
+# hosts HOME is not the config-dir parent (e.g. HOME=/quantum-data/agallojr/
+# install while config lives in /quantum-data/agallojr/.claude), so ~/.claude
+# points at a DEPRECATED/empty config dir with no allowlist and the fail-closed
+# gate would silently deny ALL gated git. The live config dir is set by
+# CLAUDE_CODE_CONFIG_DIR (current var; CLAUDE_CONFIG_DIR is the legacy alias).
+# Fall back to ~/.claude only if neither is set.
+_CONFIG_DIR = (
+    os.environ.get("CLAUDE_CODE_CONFIG_DIR")
+    or os.environ.get("CLAUDE_CONFIG_DIR")
+    or os.path.expanduser("~/.claude")
+)
+ALLOWLIST = os.path.join(_CONFIG_DIR, "mesh-git-allowlist.txt")
 
 # git global options that take a value; we must skip the value when scanning
 # for the subcommand, and capture -C / --git-dir targets.
