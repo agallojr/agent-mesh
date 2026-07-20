@@ -1,0 +1,7 @@
+# Copy to ~/.claude/mesh-git-allowlist.txt on each node.
+# Absolute repo paths where the mesh agent may run git add/commit/push.
+# One path per line. Blank lines and #-comments ignored. Nested paths match.
+# Add the coordination-repo clone path here (this node's REPO_PATH), plus any
+# other repo you explicitly authorize an agent to work with.
+#
+# /abs/path/to/agent-mesh

@@ -1,0 +1,4 @@
+.agent-identity.env
+.agent-credentials.env
+*.env
+!templates/*.env.template

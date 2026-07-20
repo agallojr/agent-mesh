@@ -1,0 +1,32 @@
+{
+  "_comment": "Merge these keys into the node's ~/.claude/settings.json. Remove any blanket git add/commit/push deny from permissions.deny (keep sudo). The git-gate hook becomes the sole authority on git add/commit/push. The broad allow list lets task execution run unattended without permission prompts.",
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(sudo)",
+      "Bash(sudo:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE_WITH_HOME/.claude/hooks/git-gate.py"
+          }
+        ]
+      }
+    ]
+  }
+}
