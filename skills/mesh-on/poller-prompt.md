@@ -36,6 +36,8 @@ unparseable. Keep commit messages to plain words and simple punctuation:
   and new files under other agents' `tasks/<their-id>/` (to send them work).
 - You must NEVER write another agent's `agents/*.yaml`, another agent's status
   file, your own inbox `tasks/«AGENT_ID»/`, or `memory/lore/**` (unless hub).
+- The hub additionally owns `memory/lore/**`, `_archive/**`, and `workflows/**`
+  (it is the sole writer of workflow records). Workers never write those paths.
 
 ## The loop
 
@@ -114,6 +116,12 @@ rejection, follow the conflict-handling rule below.
    archive sweep (§9) is the sole cleanup path, preserving single-writer and the
    "reading writes nothing" invariant. Surfacing a reply causes NO commit.
 
+4¾. **(Hub only) Advance running workflows.** For each `running`
+   `workflows/<id>.yaml`, drive it one step per the "Workflow orchestration"
+   section below — originate the pending step at the cursor, or check the in-flight
+   step's terminal status and advance. Workers skip this step (they have no
+   workflow records). A hub with no running workflows writes nothing here.
+
 5. **Sleep** `POLL_SEC` seconds (`sleep «POLL_SEC»`), then loop.
 
 ## Dispatching an executor sub-subagent
@@ -144,6 +152,81 @@ Additionally each cycle: drain `mailbox/roles/librarian/` (dedupe, validate, set
 `verified_on`, assign id, write the `memory/lore/<slug>.md` note and update
 `memory/lore/index.md` — you are the sole writer there), and run the archive
 sweep per PROTOCOL.md §9. An empty librarian queue is normal, not a fault.
+
+### Workflow orchestration (hub only) — step 4¾ of the loop
+
+You may run **multi-step workflows autonomously**: originate a task to a worker,
+wait for its terminal status, read its result, then originate the next step —
+all without the human in the loop. The workflow's plan is a DURABLE repo record
+so a hub crash (process death, token expiry) never loses it: a restarted hub
+re-reads `workflows/` and resumes from the saved cursor.
+
+**Workflow record.** Path `workflows/<workflow-id>.yaml` (you are its sole
+writer). Schema:
+
+```yaml
+schema_version: 1
+workflow_id: wf-20260720T1815-a1b2
+title: one line
+created: 2026-07-20T18:15:00Z
+state: running            # running | done | failed | cancelled
+cursor: 1                 # index of the step currently in flight (1-based)
+steps:
+  - n: 1
+    target: 60ad2c        # worker agent_id this step is sent to
+    spec: "what to do"    # enough to render a task.request body
+    task_id: 20260720T1815-0001   # the task you originated for this step (or null)
+    status: running       # pending | running | done | failed
+    result_ref: null      # outbox/<target>/<task_id>-result.md when done
+  - n: 2
+    target: 60ad2c
+    spec: "next step, may reference step 1's result"
+    task_id: null
+    status: pending
+    result_ref: null
+```
+
+**Where workflows come from.** The human asks main; main relays the plan to you
+via a message (main never writes the repo). On receiving a workflow request,
+mint a `workflow_id`, write the record with all steps `pending`, cursor 1, then
+begin step 1.
+
+**Advancing a workflow — do this for each `running` workflow every cycle, in
+step 4¾ (after inbox handling, before sleep):**
+
+1. Read `workflows/<id>.yaml`. Look at the step at `cursor`.
+2. If that step's `status` is `pending`: **originate it.** Assign a `task_id`,
+   write the `task.request` into `tasks/<target>/`, AND update the workflow
+   record (step `status: running`, fill `task_id`, keep cursor). Stage BOTH and
+   sync in ONE commit (`workflow <id> step <n> originated`). One commit = the
+   task and the plan update land together; a crash before push leaves neither,
+   so restart cleanly re-originates.
+3. If that step's `status` is `running`: check the task's terminal status —
+   read `status/<task_id>.json`.
+   - Not terminal yet → do nothing this cycle (the worker is still on it).
+   - `done` → set the step `status: done`, `result_ref` to
+     `outbox/<target>/<task_id>-result.md`. If a next step exists: advance
+     `cursor`, leave the next step `pending` (it originates next cycle). If no
+     next step: set workflow `state: done`. Sync (`workflow <id> step <n> done`).
+   - `failed` → set step `status: failed` and workflow `state: failed` (do NOT
+     advance — a workflow stops on a failed step unless the human says
+     otherwise). Sync. Surface it in your output.
+
+**Reading a step's result to build the next step.** When you originate a step
+whose `spec` references a prior step, read that prior step's `result_ref` file
+(`outbox/<target>/<task_id>-result.md`) and fold the needed facts into the new
+task body. This is the ONLY place the hub reads a worker outbox — and only for a
+task THIS workflow originated. Never blind-sweep all outboxes.
+
+**Human visibility is automatic.** Every workflow write is a commit, so main
+sees the whole run (record + task files + statuses + results) in its ledger diff
+on the next "check the hub". You do not message main; the ledger is the report.
+
+**Idempotence / crash-safety.** Because the plan lives in the record and each
+transition is one commit: a hub that dies mid-workflow and restarts re-reads
+`workflows/`, finds the `running` workflow, and continues from `cursor` — a step
+already `running` with a `task_id` is not re-originated (its status file already
+exists); a step still `pending` is originated. No double-sends, no lost steps.
 
 ## Stopping
 

@@ -54,6 +54,7 @@ until the hub next runs — this is correct behavior, not a fault.
 /mailbox/roles/librarian/      lore submissions; writer: anyone
 /memory/lore/<slug>.md         curated notes; writer: hub only
 /memory/lore/index.md          union-merge safe index; writer: hub only
+/workflows/<workflow-id>.yaml  durable multi-step workflow plans; writer: hub only
 /guidance/                     CLAUDE.md, conventions; writer: human + hub
 /hooks/                        git-gate hook + settings snippet; writer: human
 /skills/                       mesh-on / mesh-off skills; writer: human
@@ -72,6 +73,7 @@ until the hub next runs — this is correct behavior, not a fault.
 | `mailbox/roles/librarian/` | any agent (new files only) |
 | `memory/lore/**` | hub |
 | `_archive/**` | hub |
+| `workflows/**` | hub |
 
 ### 3.2 .gitattributes
 
@@ -451,7 +453,45 @@ never hand-resolve a textual conflict — the agent's job is to re-derive its
 intended write against current state.
 
 **Hub-only duties:** drain `mailbox/roles/librarian/`, curate lore, run the
-archive sweep, render the console view.
+archive sweep, render the console view, and drive workflows (§8.1).
+
+### 8.1 Workflow orchestration (hub only)
+
+The mesh supports two levels of coordination over the same ledger:
+
+- **Human-in-the-loop.** The operator's interface session ("main") is *not* a
+  node. It relays intent to the hub and reads results from the git history (a
+  watermark diff). It never writes the repo, so it never races the hub.
+- **Autonomous hub-driven workflows.** The hub chains multiple task steps across
+  workers without the human in each step, then the human observes the whole run
+  from the ledger whenever they check.
+
+These compose: main injects and observes; the hub acts. Both read the same
+durable ledger; only the hub (and workers, for their own status/outbox) writes.
+
+**Durable plan.** A workflow is a repo record `workflows/<workflow-id>.yaml`,
+sole writer the hub, with `state`, a `cursor`, and a `steps[]` list where each
+step carries `target`, `spec`, the `task_id` the hub originated for it, `status`,
+and `result_ref`. Because the plan is in the repo (not only in the hub's
+context), a hub that dies mid-workflow — process kill, token expiry — resumes on
+restart: it re-reads `workflows/`, finds `running` records, and continues from
+`cursor`.
+
+**Advancement, one step per cycle:** at the cursor, a `pending` step is
+originated (write the `task.request` into the worker's inbox AND update the
+record in ONE commit, so task and plan land atomically); a `running` step is
+checked against its `status/<task_id>.json` — on `done`, record `result_ref` and
+advance the cursor (or finish the workflow); on `failed`, halt the workflow.
+
+**Bounded outbox reads.** Driving a workflow is the ONLY case where the hub reads
+a worker's outbox, and only for a task that workflow originated — to fold a prior
+step's result into the next step's task body. The hub never blind-sweeps
+outboxes; task results are otherwise consumed by main from the ledger.
+
+**Idempotence.** Plan-in-record + one-commit-per-transition means a restarted hub
+never double-originates (a step already `running` has a `task_id` and a status
+file) and never skips (a `pending` step at the cursor is originated). Retention:
+workflow records follow terminal-status retention (§9) once `state` is terminal.
 
 ---
 
@@ -463,6 +503,8 @@ archive sweep, render the console view.
 | Status files, terminal | archive after 7 days |
 | Status files, active | never archived |
 | Outbox results | archive after 7 days |
+| Workflow records, terminal | archive after 7 days |
+| Workflow records, running | never archived |
 | Lore notes | permanent until superseded |
 | Agent registrations | overwritten each boot |
 
