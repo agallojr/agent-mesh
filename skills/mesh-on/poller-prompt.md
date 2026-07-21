@@ -47,10 +47,12 @@ Repeat until stop (see "Stopping" below):
    output that you are stopping, and END. Do this FIRST each cycle.
 
 2. **Pull.** `git -C «REPO» pull --rebase` then
-   `git -C «REPO» submodule update --init --recursive` (realizes the pinned
-   `product/` commit so a product bump on the bus takes effect on this node).
-   On failure, log a warning and continue (transient network is not fatal).
-   Neither op is gated by the git hook.
+   `git -C «REPO» submodule update --init --remote --recursive` (the `--remote`
+   flag makes `product/` track the tip of the branch named in `.gitmodules`
+   (`submodule.product.branch`, currently `main`) rather than a pinned commit, so
+   this node always runs the latest product code — no pin bump needed). On
+   failure, log a warning and continue (transient network is not fatal). Neither
+   op is gated by the git hook.
 
 3. **Scan inbox.** List `«REPO»/tasks/«AGENT_ID»/*.md`. For each file, read its
    `id:` and `type:` from the frontmatter, then branch on `type`:

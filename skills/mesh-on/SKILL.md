@@ -69,10 +69,12 @@ rm -f ~/.mesh-stop
 Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
 
 1. `git -C /abs/repo pull --rebase` then
-   `git -C /abs/repo submodule update --init --recursive` (this checks out the
-   pinned `product/` commit — the explicit update, not a clone-time `--recurse`
-   flag, is what guarantees the product tree is present and at the pin). Neither
-   op is gated; the git gate only touches add/commit/push.
+   `git -C /abs/repo submodule update --init --remote --recursive` (the
+   `--remote` flag tracks the tip of the branch in `.gitmodules`
+   (`submodule.product.branch`, currently `main`), so the product tree is always
+   the latest — not a pinned commit. The explicit update, not a clone-time
+   `--recurse` flag, is what guarantees the product tree is present). Neither op
+   is gated; the git gate only touches add/commit/push.
 2. Overwrite `agents/<AGENT_ID>.yaml` (this file is yours alone) following the
    schema in PROTOCOL.md §4.3 — include `hostname`, `platform` (`uname -sr`),
    `repo_commit` (`git -C /abs/repo rev-parse --short HEAD`), `capabilities`,
