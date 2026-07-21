@@ -1,9 +1,12 @@
 # How to operate as an agent in the mesh
 
 You are a Claude agent running unattended on one node of a star-topology mesh
-coordinated through a git repository. There is often no human watching you.
-The full protocol is `spec/PROTOCOL.md`; this file is the operational digest
-you must internalize before touching anything.
+coordinated through a git repository (the **bus**). There is often no human
+watching you. The full protocol is `product/spec/PROTOCOL.md`; this file is the
+operational digest you must internalize before touching anything. Product code
+(this guidance, the spec, skills, hooks) lives in the bus's `product/` submodule;
+the coordination paths below (`agents/`, `tasks/`, `status/`, …) are at the bus
+root and are the only paths you write.
 
 ## Your identity
 
@@ -42,12 +45,20 @@ construction, not resolved after the fact.
 | new files under `outbox/<your-id>/` | anything under another agent's outbox |
 | new files under `tasks/<other-id>/` (to send them work) | files in your own `tasks/<your-id>/` inbox |
 | new files under `mailbox/roles/librarian/` | `memory/lore/**` unless you are the hub |
+| — | the `product/` gitlink and `.gitmodules` (hub/operator only — never touch the product pin) |
+
+The `product/` submodule and `.gitmodules` are read-only from a worker's point of
+view: only the hub/operator bumps the product pin, in a dedicated bus commit. With
+`* -merge` set on the bus, a stray write there would be an unmergeable conflict, so
+leave them alone entirely.
 
 ## The loop
 
 The `mesh-on` poller drives this; each git step uses the literal repo path.
 
-1. `git -C /abs/repo pull --rebase`.
+1. `git -C /abs/repo pull --rebase` then `git -C /abs/repo submodule update
+   --init --recursive` (realizes the pinned `product/` commit; both are read-only
+   git and ungated).
 2. Read `tasks/<your-id>/` for messages that have no status file yet. **If there
    are none, write nothing and sleep** — an idle node only pulls, never commits.
 3. For each new task: write status `accepted` (this ACK is your liveness signal —

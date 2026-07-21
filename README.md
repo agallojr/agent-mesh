@@ -1,56 +1,58 @@
-# agent-mesh
+# agent-mesh (product)
 
-GitHub repository as a durable, outbound-only coordination bus for Claude
-agents on machines that cannot reach each other directly.
+The mesh **product**: the protocol, skills, git gate, env templates, guidance,
+and installer that turn a machine into a coordination node for Claude agents on
+hosts that cannot reach each other directly.
 
-Full protocol: [`spec/PROTOCOL.md`](spec/PROTOCOL.md)
-Step-by-step node install: [`INSTALL.md`](INSTALL.md)
+This repo is the reusable software. The runtime coordination state — the
+append-only ledger nodes read and write, plus the shared library — lives in a
+separate **bus** repo (`agent-mesh-bus`), where this product is linked in as a
+pinned `product/` submodule. A node clones the bus, checks out the pinned
+product, and runs it. See
+[`docs/product-data-split.md`](docs/product-data-split.md) for the rationale.
 
-## Setup per machine
+- Full protocol: [`spec/PROTOCOL.md`](spec/PROTOCOL.md)
+- Fresh node install: [`INSTALL.md`](INSTALL.md)
+- Existing node migrating after the split: [`docs/reinstall-after-split.md`](docs/reinstall-after-split.md)
+- Driving the mesh from a phone: [`docs/operator-manual.md`](docs/operator-manual.md)
+- Scaffolding a new bus: [`install/`](install/)
 
-The quick version below; [`INSTALL.md`](INSTALL.md) has the full copy-paste
-walkthrough (git gate, symlinks, identity, verification, troubleshooting).
+## How it is delivered
 
-1. Clone this repo; note its absolute path as `REPO_PATH`.
-2. Copy `templates/agent-identity.env.template` to `~/.agent-identity.env`,
-   fill in. Generate `AGENT_ID` once with `openssl rand -hex 3`; never change it.
-3. Copy `templates/agent-credentials.env.template` to `~/.agent-credentials.env`,
-   fill in, then `chmod 600`.
-4. Install the git gate: copy `git-gate.py` to `~/.claude/hooks/`, register the
-   `PreToolUse` Bash hook in `~/.claude/settings.json`, remove any blanket git
-   deny, and add `REPO_PATH` to `~/.claude/mesh-git-allowlist.txt`. See
-   [`guidance/permissions.md`](guidance/permissions.md).
-5. Install the skills: symlink `skills/mesh-on` and `skills/mesh-off` into
-   `~/.claude/skills/`.
-6. Start Claude normally, then invoke `/mesh-on`. Stop later with `/mesh-off`.
+The product reaches every node as a submodule of the bus, pinned to a tagged
+commit, so all nodes on the same bus commit run byte-identical code. Shipping a
+mesh-wide update = bump the submodule pin in one bus commit; nodes pick it up on
+their next `git pull` + `git submodule update --init --recursive`. The installer
+(`install/install.sh`) scaffolds a fresh bus from `bus-skeleton/`, adds this
+product as the `product/` submodule at a chosen tag, and wires the git gate and
+skill symlinks.
 
-Neither env file is ever committed. No machine name is hardcoded anywhere. The
-guidance chain (best practices + how to operate as a mesh agent + permission
-posture) ships in the repo, so every node -- hub or worker, real or test --
-gets byte-identical instructions from one `git pull`, and the git gate lets the
-agent sync the coordination repo without ever hanging on a permission prompt.
-See [`guidance/`](guidance/).
+## Layout (product repo)
 
-## Layout
-
-| Directory | Role |
+| Path | Role |
 |---|---|
 | `spec/` | The protocol definition (`PROTOCOL.md`) — the normative reference. |
-| `skills/` | The `mesh-on` / `mesh-off` Claude skills; symlinked into `~/.claude/skills/`. |
-| `hooks/` | The `git-gate.py` PreToolUse hook, its settings snippet, and the allowlist template — the path-scoped-git mechanism. |
+| `skills/` | The `mesh-on` / `mesh-off` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
+| `hooks/` | `git-gate.py` (path-scoped git gate + blob rejection), its settings snippet, and the allowlist template. |
 | `templates/` | `*.env.template` files copied to `$HOME` and filled in per node (never committed). |
-| `guidance/` | The `CLAUDE.md` chain (best practices + operating + permissions) every node pulls verbatim. |
-| `agents/` | Roster: one `<agent-id>.yaml` self-registration per node. |
-| `tasks/` | Inboxes: `tasks/<agent-id>/` holds messages addressed to that node. |
-| `status/` | Live task state, one `<task-id>.json` per task. |
-| `outbox/` | Results and replies, `outbox/<agent-id>/` written by that node. |
-| `mailbox/roles/librarian/` | Role-addressed lore submissions (any node writes). |
-| `memory/lore/` | Hub-curated notes; hub is the sole writer. |
-| `_archive/` | Cold storage; the hub sweeps terminal messages and status here. |
+| `guidance/` | `best-practices.base.md` (universal, self-contained), `agent-operating.md`, `permissions.md`, `operator-interface.md`, and a product-side `CLAUDE.md`. |
+| `install/` | The installer that scaffolds a bus and links this product in. |
+| `bus-skeleton/` | The empty, `.gitkeep`-tracked directory skeleton a fresh bus starts from. |
+| `docs/` | Design + operator docs (the product/data split, operator manual, re-install guide). |
+
+The coordination directories (`agents/`, `tasks/`, `status/`, `outbox/`,
+`mailbox/`, `workflows/`, `_archive/`) and the library (`memory/lore/`,
+`memory/experiments/`, `memory/best-practices.user.md`) live at the **bus** root,
+not here. The bus's own `guidance/CLAUDE.md` composes the product base with the
+deployment's user overlay (see `spec/PROTOCOL.md` §4.4).
 
 ## Core invariants
 
 - Single writer per path; merges are impossible by construction.
-- Credentials referenced by name only; values never enter the repo.
+- Credentials referenced by name only; values never enter the bus.
+- Large blobs never enter the bus; records reference them by pointer in
+  `artifacts`. The git gate enforces this.
 - Messages are self-contained and immutable.
 - Conflicts are re-derived, never resolved textually.
+- The product submodule is read-only on nodes; only the hub/operator bumps the
+  pin.

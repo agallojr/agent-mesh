@@ -46,8 +46,11 @@ Repeat until stop (see "Stopping" below):
 1. **Check stop sentinel.** If `~/.mesh-stop` exists, write a final line to your
    output that you are stopping, and END. Do this FIRST each cycle.
 
-2. **Pull.** `git -C «REPO» pull --rebase`. On failure, log a warning and
-   continue (transient network is not fatal).
+2. **Pull.** `git -C «REPO» pull --rebase` then
+   `git -C «REPO» submodule update --init --recursive` (realizes the pinned
+   `product/` commit so a product bump on the bus takes effect on this node).
+   On failure, log a warning and continue (transient network is not fatal).
+   Neither op is gated by the git hook.
 
 3. **Scan inbox.** List `«REPO»/tasks/«AGENT_ID»/*.md`. For each file, read its
    `id:` and `type:` from the frontmatter, then branch on `type`:

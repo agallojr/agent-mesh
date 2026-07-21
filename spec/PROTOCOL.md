@@ -45,8 +45,12 @@ until the hub next runs — this is correct behavior, not a fault.
 
 ## 3. Repository layout
 
+The repo nodes clone is the **bus**. Product code is linked in as a pinned
+submodule at `product/`; everything else at the bus root is runtime coordination
+state and the library.
+
 ```
-/spec/PROTOCOL.md              this document
+BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /agents/<agent-id>.yaml        self-registration; writer: that agent only
 /tasks/<agent-id>/             inbox; writer: anyone except that agent
 /status/<task-id>.json         live task state; writer: executing agent only
@@ -54,12 +58,22 @@ until the hub next runs — this is correct behavior, not a fault.
 /mailbox/roles/librarian/      lore submissions; writer: anyone
 /memory/lore/<slug>.md         curated notes; writer: hub only
 /memory/lore/index.md          union-merge safe index; writer: hub only
+/memory/experiments/           experiment logs (the library); writer: hub only
+/memory/best-practices.user.md deployment-specific rules; writer: human + hub
 /workflows/<workflow-id>.yaml  durable multi-step workflow plans; writer: hub only
-/guidance/                     CLAUDE.md, conventions; writer: human + hub
-/hooks/                        git-gate hook + settings snippet; writer: human
-/skills/                       mesh-on / mesh-off skills; writer: human
-/templates/                    identity/credentials env templates; writer: human
+/guidance/CLAUDE.md            bus entry point composing product + user rules;
+                               writer: human + hub
 /_archive/YYYY-MM/             swept messages and terminal status files
+/.gitmodules, /product (gitlink)  the product pin; writer: hub/operator only
+
+PRODUCT SUBMODULE (agent-mesh @ pinned tag) — read-only on nodes
+/product/spec/PROTOCOL.md      this document
+/product/guidance/             best-practices.base.md, agent-operating.md,
+                               permissions.md, operator-interface.md
+/product/hooks/                git-gate hook + settings snippet + allowlist tmpl
+/product/skills/               mesh-on / mesh-off skills
+/product/templates/            identity/credentials env templates
+/product/install/              installer + bus-skeleton
 ```
 
 ### 3.1 Writer table
@@ -172,29 +186,31 @@ and catches hostname or capability drift between sessions.
 Identity and credentials tell an agent *who it is*. This section tells it *how
 to behave*. On boot — after sourcing identity and credentials, before
 self-registration — the agent loads its operating guidance from a single
-well-known path **inside the repo**:
+well-known path at the **bus root**:
 
 ```
 guidance/CLAUDE.md          the well-known entry point; same on every node
 ```
 
-Because it lives in the repo, every node — hub laptop or remote worker — gets
-byte-identical, version-controlled instructions from one `git pull`. The
-entry point MUST NOT depend on any machine-local path (e.g. a laptop's
-`~/proj/src/0-kit`), which remote nodes do not have. `guidance/CLAUDE.md`
-`@import`s, in order:
+Because it lives in the bus, every node — hub laptop or remote worker — gets
+byte-identical, version-controlled instructions from one `git pull`. The entry
+point MUST NOT depend on any machine-local path, which remote nodes do not have.
+The bus owns the composition (the product never reaches up out of its submodule):
+`guidance/CLAUDE.md` `@import`s, in order:
 
-1. `guidance/best-practices.md` — the operator's shared working conventions,
-   **vendored into the repo** so they travel with it. The canonical source may
-   live elsewhere on the hub (e.g. `~/proj/src/0-kit/Best-Practices.md`); the
-   hub syncs it into `guidance/` on change, and remote nodes only ever read the
-   committed copy. This is the mechanism by which the hub operator's best
-   practices carry to every agent in the mesh.
-2. `guidance/agent-operating.md` — how to be a mesh agent: the loop, the writer
-   table, message schemas, single-writer discipline, credential-name-only rule,
-   and conflict re-derivation. A fresh agent with no history operates correctly
-   from this file alone.
-3. `guidance/permissions.md` — the permission posture (see §4.5).
+1. `product/guidance/best-practices.base.md` — universal agent + coding
+   conventions that ship with the product. Self-contained and publishable; the
+   same on every deployment.
+2. `memory/best-practices.user.md` — this deployment's operator-specific rules,
+   a text record in the bus library (like lore). It rides the same one-pull
+   propagation. If absent, only the base rules apply, so a bare product is still
+   complete. This is how the operator's environment rules reach every node
+   without forking the base file.
+3. `product/guidance/agent-operating.md` — how to be a mesh agent: the loop, the
+   writer table, message schemas, single-writer discipline, credential-name-only
+   rule, and conflict re-derivation. A fresh agent with no history operates
+   correctly from this file alone.
+4. `product/guidance/permissions.md` — the permission posture (see §4.5).
 
 A node enters mesh behavior through the **`mesh-on` skill**, not through a
 per-node `@import`. A human starts Claude normally on the node and invokes
@@ -414,14 +430,16 @@ boot (mesh-on, main session):
   verify REPO_PATH is on ~/.claude/mesh-git-allowlist.txt
   rm -f ~/.mesh-stop
   git -C /abs/repo pull --rebase
-  load guidance/CLAUDE.md chain          (best-practices + operating + perms)
+  git -C /abs/repo submodule update --init --recursive   (realize product/ pin)
+  load guidance/CLAUDE.md chain          (base + user overlay + operating + perms)
   write agents/<AGENT_ID>.yaml           (overwrite, includes registered_at)
   sync                                   (add / commit / push -- see below)
   spawn background poller subagent; return (session stays interactive)
 
 loop (poller subagent):
   0. if ~/.mesh-stop exists: end cleanly
-  1. git -C /abs/repo pull --rebase
+  1. git -C /abs/repo pull --rebase; git -C /abs/repo submodule update --init
+     --recursive   (a product bump on the bus takes effect here)
   2. read tasks/<AGENT_ID>/, branch by message type:
        task.request/task.cancel/query with no status file -> NEW work (step 4)
        reply (has in_reply_to) -> information to surface (step 4½)

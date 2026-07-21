@@ -11,8 +11,10 @@ the one-time bootstrap yourself, then spawn a **background poller subagent** tha
 runs the loop so your own (main) context stays small and interactive. The user
 stops the loop later with `/mesh-off`.
 
-Read `${REPO_PATH}/spec/PROTOCOL.md` and `${REPO_PATH}/guidance/agent-operating.md`
-if anything here is unclear — this skill is the operational digest.
+Read `${REPO_PATH}/product/spec/PROTOCOL.md` and
+`${REPO_PATH}/product/guidance/agent-operating.md` if anything here is unclear —
+this skill is the operational digest. The product code is a submodule of the bus
+at `product/`, so spec and guidance live under that prefix.
 
 ## The git rule you must never break
 
@@ -39,7 +41,8 @@ Extract `AGENT_ID`, `AGENT_NAME`, `AGENT_CONTEXT`, `AGENT_ROLE`,
 `POLL_INTERVAL_SEC`, `AGENT_CAPABILITIES` (comma-separated; becomes the
 registration `capabilities` list), and `REPO_PATH`. If `~/.agent-identity.env`
 is missing, STOP and tell the user to create it from
-`templates/agent-identity.env.template` in the repo. `REPO_PATH` must be a literal
+`product/templates/agent-identity.env.template` in the bus. `REPO_PATH` must be a
+literal
 absolute path (no `$HOME`/`~`) — if it contains a `$` or `~`, STOP and tell the
 user to replace it with the expanded absolute path. Confirm `REPO_PATH` is on the
 git allowlist:
@@ -65,7 +68,11 @@ rm -f ~/.mesh-stop
 
 Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
 
-1. `git -C /abs/repo pull --rebase`
+1. `git -C /abs/repo pull --rebase` then
+   `git -C /abs/repo submodule update --init --recursive` (this checks out the
+   pinned `product/` commit — the explicit update, not a clone-time `--recurse`
+   flag, is what guarantees the product tree is present and at the pin). Neither
+   op is gated; the git gate only touches add/commit/push.
 2. Overwrite `agents/<AGENT_ID>.yaml` (this file is yours alone) following the
    schema in PROTOCOL.md §4.3 — include `hostname`, `platform` (`uname -sr`),
    `repo_commit` (`git -C /abs/repo rev-parse --short HEAD`), `capabilities`,

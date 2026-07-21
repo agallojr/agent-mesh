@@ -1,187 +1,113 @@
 # Installing the mesh on a node
 
 This turns a machine into a mesh node: a Claude agent that joins the
-coordination repo, takes tasks addressed to it, and syncs results by git. It
-applies equally to the hub laptop and a remote worker. A human runs these steps
-once per node (a Claude agent can run them too — they are ordinary shell edits).
+coordination bus, takes tasks addressed to it, and syncs results by git. It
+applies equally to the hub laptop and a remote worker doing a fresh install.
 
-Estimated time: a few minutes. Everything installs under `~/.claude` and two
-dotfiles in `$HOME`; nothing here is committed to the repo.
+The bus is its own git repo (`agent-mesh-bus`). It carries the runtime
+coordination state (`agents/`, `tasks/`, `status/`, `outbox/`, `mailbox/`,
+`workflows/`) and the memory library (`memory/lore/`, `memory/experiments/`,
+`memory/best-practices.user.md`). The product software lives in a git submodule
+at `product/`, pinned to a released `agent-mesh` tag. Every path below that
+starts with `${REPO}/product/...` resolves inside that submodule.
 
 ## 0. Prerequisites
+- git and Python 3 (`/usr/bin/python3` is used by the hook).
+- Claude Code installed.
+- Network access to the bus repo's git remote.
 
-- `git` and Python 3 (`/usr/bin/python3` is used by the hook; it need not be on
-  `PATH`).
-- Claude Code installed and working on this machine.
-- Network access to the coordination repo's git remote.
+## 1. Clone the bus and realize the product submodule
+Clone `agent-mesh-bus`, not the old `agent-mesh`. After cloning you MUST init
+the submodule so the pinned product commit is checked out under `product/`.
 
-## 1. Clone the coordination repo
+    git clone <bus-url> ~/agent-mesh-bus
+    REPO="$HOME/agent-mesh-bus"
+    git -C "$REPO" submodule update --init --recursive
 
-Pick a stable location and clone. Record its absolute path — you will reuse it as
-`REPO` below.
+Do not rely on `git clone --recurse-submodules` alone. Always run the explicit
+`submodule update --init --recursive` step: it is what the poller uses to sync
+the product, and it is robust across git versions. Confirm the submodule is
+populated:
 
-```bash
-git clone <coordination-repo-url> ~/agent-mesh
-REPO="$HOME/agent-mesh"          # adjust if you cloned elsewhere
-echo "REPO=$REPO"
-```
+    ls "$REPO/product/spec/PROTOCOL.md"
+
+If `product/` is empty, the submodule was not realized. See Troubleshooting.
 
 ## 2. Install the git gate (hook + settings + allowlist)
+2a. Copy the hook and make it executable.
 
-The mesh agent runs `git add/commit/push` itself. Claude Code's `deny` beats
-`allow` everywhere and its rules are not path-aware, so a hook is the only way to
-allow git in the coordination repo while denying it elsewhere. Three pieces, all
-in `~/.claude`:
+    cp "$REPO/product/hooks/git-gate.py" ~/.claude/hooks/
+    chmod +x ~/.claude/hooks/git-gate.py
 
-**2a. Install the hook.**
+2b. Seed the allowlist from the template and append the bus clone path. The
+path you add here must equal `REPO_PATH` in the identity file (step 4).
 
-```bash
-mkdir -p ~/.claude/hooks
-cp "$REPO/hooks/git-gate.py" ~/.claude/hooks/git-gate.py
-chmod +x ~/.claude/hooks/git-gate.py
-```
+    cp "$REPO/product/hooks/mesh-git-allowlist.txt.template" \
+        ~/.claude/mesh-git-allowlist.txt
+    echo "$REPO" >> ~/.claude/mesh-git-allowlist.txt
 
-**2b. Create the allowlist** with this node's repo path (and any other repo you
-explicitly want the agent to be able to use git in — one absolute path per line):
+2c. Register the PreToolUse Bash hook pointing at
+`~/.claude/hooks/git-gate.py` in `~/.claude/settings.json`, remove any blanket
+git deny, and keep sudo denied. The snippet uses a `REPLACE_WITH_HOME` token:
 
-```bash
-cp "$REPO/hooks/mesh-git-allowlist.txt.template" \
-   ~/.claude/mesh-git-allowlist.txt
-printf '%s\n' "$REPO" >> ~/.claude/mesh-git-allowlist.txt
-grep -v '^#' ~/.claude/mesh-git-allowlist.txt        # confirm your path is in
-```
+    sed "s#REPLACE_WITH_HOME#$HOME#g" \
+        "$REPO/product/hooks/settings.snippet.json" > ~/.claude/settings.json
 
-**2c. Register the hook and drop any blanket git deny** in
-`~/.claude/settings.json`. The result must contain:
-
-- a `PreToolUse` hook on `Bash` pointing at `~/.claude/hooks/git-gate.py`
-  (use the absolute path, not `~`),
-- **no** `Bash(git add/commit/push...)` entries in `permissions.deny`
-  (the hook now owns those),
-- `sudo` still denied.
-
-If you have no `~/.claude/settings.json` yet, start from the snippet:
-
-```bash
-sed "s#REPLACE_WITH_HOME#$HOME#g" \
-  "$REPO/hooks/settings.snippet.json" > ~/.claude/settings.json
-```
-
-If you already have one, merge the `hooks.PreToolUse` entry and the trimmed
-`permissions.deny` in by hand (or with `jq`). `hooks/settings.snippet.json` shows
-exactly the two keys to add. Do not remove your existing `env`, `model`, or other
-settings.
-
-**2d. Verify the gate works** before going further:
-
-```bash
-# should print "deny": target repo not on allowlist  (git in /tmp is blocked)
-printf '{"tool_name":"Bash","tool_input":{"command":"git -C /tmp add -A"},"cwd":"/tmp"}' \
-  | /usr/bin/python3 ~/.claude/hooks/git-gate.py
-
-# should print nothing  (git in the coordination repo is allowed)
-printf '{"tool_name":"Bash","tool_input":{"command":"git -C '"$REPO"' add -A"},"cwd":"/tmp"}' \
-  | /usr/bin/python3 ~/.claude/hooks/git-gate.py && echo "(allowed)"
-```
-
-The first prints a deny JSON; the second prints only `(allowed)`.
+2d. Verify by piping a fake deny case and a fake allow case through the hook
+and checking the decisions.
 
 ## 3. Install the skills (symlinks)
+Symlink the skills from the product submodule so they track the pinned commit.
 
-Symlink the repo's two skills into `~/.claude/skills/`. Symlinks (not copies) mean
-a `git pull` in the repo updates mesh behavior on this node automatically.
+    ln -sfn "$REPO/product/skills/mesh-on" ~/.claude/skills/mesh-on
+    ln -sfn "$REPO/product/skills/mesh-off" ~/.claude/skills/mesh-off
 
-```bash
-mkdir -p ~/.claude/skills
-ln -sfn "$REPO/skills/mesh-on"  ~/.claude/skills/mesh-on
-ln -sfn "$REPO/skills/mesh-off" ~/.claude/skills/mesh-off
-```
-
-Verify they resolve:
-
-```bash
-ls -l ~/.claude/skills/mesh-on ~/.claude/skills/mesh-off
-test -f ~/.claude/skills/mesh-on/SKILL.md         && echo "mesh-on OK"
-test -f ~/.claude/skills/mesh-on/poller-prompt.md && echo "poller OK"
-test -f ~/.claude/skills/mesh-off/SKILL.md        && echo "mesh-off OK"
-```
-
-`-sfn` makes the command idempotent: safe to re-run when the repo path changes
-(it replaces the link instead of nesting a link inside the old target).
+Verify that `SKILL.md` and `poller-prompt.md` resolve through each symlink.
 
 ## 4. Plant identity and credentials
+Copy the templates from the product submodule, then edit them.
 
-Two dotfiles in `$HOME`, never committed. Copy the templates and fill them in.
+    cp "$REPO/product/templates/agent-identity.env.template" \
+        ~/.agent-identity.env
+    chmod 644 ~/.agent-identity.env
+    cp "$REPO/product/templates/agent-credentials.env.template" \
+        ~/.agent-credentials.env
+    chmod 600 ~/.agent-credentials.env
 
-```bash
-cp "$REPO/templates/agent-identity.env.template"    ~/.agent-identity.env
-cp "$REPO/templates/agent-credentials.env.template" ~/.agent-credentials.env
-chmod 600 ~/.agent-credentials.env
-```
-
-Edit `~/.agent-identity.env`:
-
-- `AGENT_ID` — generate once, never change: `openssl rand -hex 3`. It appears in
-  every path that routes to this node.
-- `AGENT_NAME` — human-readable, may change freely.
-- `AGENT_CONTEXT` — coarse environment class (e.g. `linux-server`,
-  `frontier-login`).
-- `AGENT_ROLE` — `worker` (or `hub` for the librarian node).
-- `POLL_INTERVAL_SEC` — e.g. `300`.
-- `REPO_PATH` — the absolute clone path (`$REPO` from step 1). It MUST match the
-  allowlist entry from step 2b.
-
-Edit `~/.agent-credentials.env`: put any credentials this node needs, as
-`NAME=value` lines. Only the NAMES are ever published (in registration); values
-stay local and must never appear in a message, status file, or log.
+Edit `~/.agent-identity.env`: set `AGENT_ID` (`openssl rand -hex 3`),
+`AGENT_NAME`, `AGENT_CONTEXT`, `AGENT_ROLE`, `POLL_INTERVAL_SEC`, and
+`REPO_PATH`. `REPO_PATH` MUST be the absolute path of the bus clone (the value
+of `$REPO`) and MUST appear verbatim in `~/.claude/mesh-git-allowlist.txt`.
 
 ## 5. Join the mesh
+Start Claude, then run `/mesh-on` to start the node; `/mesh-off` stops it. The
+poller is session-scoped, so run unattended nodes under tmux or screen.
 
-Start Claude Code normally in any directory, then:
-
-```
-/mesh-on
-```
-
-The skill reads your identity, self-registers this node into `agents/<id>.yaml`,
-and spawns a background poller that watches `tasks/<your-id>/`. Your session stays
-interactive. To leave:
-
-```
-/mesh-off
-```
-
-The poller is **session-scoped**: it lives as long as this Claude session. To
-keep a node participating unattended, run the session inside `tmux` or `screen`
-and leave it open. Closing the session stops the node (as does `/mesh-off`).
+## Notes
+- Git literal-absolute-path rule: agents must run `git -C /abs/bus <subcmd>`
+  with a literal path, never `git -C "$VAR" ...` or `cd ... && git ...`.
+  Read-only git (pull, fetch, status, `submodule update`) is not gated.
+- The gate rejects staging large or binary blobs into the bus (`*.nc`, `*.h5`,
+  `*.hdf5`, `*.ckpt`, `*.npy`, `*.npz`, `*.png`, `*.jpg`, `*.mp4`, `*.tar`,
+  `*.zip`, and any file over roughly 5MB). Large results must be referenced by
+  pointer in a record's `artifacts` field, not committed to the bus.
 
 ## Troubleshooting
-
-- **`/mesh-on` says REPO_PATH is not allowlisted.** The path in
-  `~/.agent-identity.env` must appear verbatim in `~/.claude/mesh-git-allowlist.txt`
-  (step 2b). Re-run the `grep` there and compare exactly.
-- **A git push is denied.** Confirm the command used a literal absolute path
-  (`git -C /abs/repo push`), not `git -C "$VAR"` or `cd repo && git push`. The
-  hook reads the command before the shell expands it and denies anything it
-  cannot resolve. The skills already do this correctly; this only bites hand-typed
-  git.
-- **A commit is denied though the path is correct.** The gate splits the raw
-  command on shell operators (`;`, `&&`, `||`, `|`, `&`, newline) before parsing,
-  so a `-m` message containing one of those — or `$(...)` / backticks — breaks the
-  parse and is denied. Keep commit messages to plain words and simple punctuation.
-- **`/mesh-on` can't find `~/.agent-identity.env` (or the allowlist), or the
-  poller never stops.** On some nodes `$HOME` is not the directory the dotfiles
-  and `.claude` actually live in (e.g. `$HOME=/opt/x/install` while identity,
-  `.claude`, and the `.mesh-stop` sentinel are in `/opt/x`). Then `~` resolves to
-  the wrong place. Fix `$HOME` at the point it is set (login profile or env
-  script) so `~` matches where the mesh files are, or pass literal absolute paths.
-  The git gate itself is immune — it resolves its allowlist from
-  `CLAUDE_CODE_CONFIG_DIR`, not `~` — but the skills and sentinel use `~`.
-- **The skill doesn't appear.** Confirm the symlinks resolve (step 3) and restart
-  Claude Code so it re-scans `~/.claude/skills/`.
-- **Nothing happens after `/mesh-on`.** Tasks only start when someone drops a
-  message in `tasks/<your-id>/`. Check `git -C "$REPO" pull` shows your
-  registration landed and that another node can see `agents/<your-id>.yaml`.
-
-See `spec/PROTOCOL.md` for the full protocol and `guidance/` for how an agent is
-expected to behave once running.
+- Submodule not checked out / `product/` empty: the clone did not realize the
+  submodule. Fix with `git -C <REPO> submodule update --init --recursive`, then
+  re-check `ls "$REPO/product/spec/PROTOCOL.md"`.
+- Blob `git add` denied by the gate: you tried to stage a large or binary file
+  (see Notes). Do not commit it. Reference the artifact by pointer in the
+  record's `artifacts` field and stage only the small text record.
+- `REPO_PATH` not allowlisted: push denied. Ensure `REPO_PATH` in
+  `~/.agent-identity.env` appears verbatim in `~/.claude/mesh-git-allowlist.txt`.
+- Push denied (literal path rule): rewrite the command as
+  `git -C /abs/bus <subcmd>` with a literal path, not a variable or `cd`.
+- Commit denied: shell operators or command substitution in `-m`. Use a plain,
+  quoted commit message with no `$(...)`, backticks, or `&&`/`;`/`|`.
+- `$HOME` mismatch vs config dir: the hook and settings resolved a different
+  home than expected. Re-run the step 2c `sed` with the correct `$HOME`.
+- Skill not appearing: check the symlinks in `~/.claude/skills/` resolve into
+  `$REPO/product/skills/` and that `SKILL.md` exists at the target.
+- Nothing happens (no tasks): the node is idle because no tasks are addressed
+  to its `AGENT_ID`. Confirm identity, then wait for or assign a task.

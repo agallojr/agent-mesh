@@ -2,3 +2,6 @@
 .agent-credentials.env
 *.env
 !templates/*.env.template
+__pycache__/
+*.pyc
+.DS_Store

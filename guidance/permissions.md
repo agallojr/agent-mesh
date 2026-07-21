@@ -61,14 +61,17 @@ convention.
 
 ## Node checklist to launch (including an extra test agent)
 
-1. Clone the repo; note its absolute path as `REPO_PATH`.
-2. Install the git gate on this node: copy `git-gate.py` to `~/.claude/hooks/`,
-   register the `PreToolUse` Bash hook in `~/.claude/settings.json`, remove any
-   blanket git deny, and add `REPO_PATH` to `~/.claude/mesh-git-allowlist.txt`.
+1. Clone the **bus** (`agent-mesh-bus`); note its absolute path as `REPO_PATH`.
+   Then `git -C "$REPO_PATH" submodule update --init --recursive` to check out
+   the pinned `product/` code.
+2. Install the git gate on this node: copy `product/hooks/git-gate.py` to
+   `~/.claude/hooks/`, register the `PreToolUse` Bash hook in
+   `~/.claude/settings.json`, remove any blanket git deny, and add `REPO_PATH` to
+   `~/.claude/mesh-git-allowlist.txt`.
 3. Plant `~/.agent-identity.env` (mode 644) and `~/.agent-credentials.env`
    (`chmod 600` — only the credentials file needs 600).
-4. Install the mesh skills: symlink the repo's `skills/mesh-on` and
-   `skills/mesh-off` into `~/.claude/skills/`.
+4. Install the mesh skills: symlink `product/skills/mesh-on` and
+   `product/skills/mesh-off` into `~/.claude/skills/`.
 5. Start Claude normally, then invoke `/mesh-on`. Stop later with `/mesh-off`.
 
 No step requires a human to approve a permission after launch.

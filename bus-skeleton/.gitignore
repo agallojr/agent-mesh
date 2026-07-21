@@ -1,0 +1,30 @@
+# --- BUS .gitignore ---
+# Env dotfiles never belong in the bus. Templates live in the product repo,
+# so there is nothing to un-ignore here beyond .gitkeep.
+.agent-identity.env
+.agent-credentials.env
+*.env
+
+# First-line blob/binary filter. Real enforcement is the git gate hook;
+# this just stops the obvious accidents.
+*.nc
+*.h5
+*.hdf5
+*.ckpt
+*.npy
+*.npz
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.tar
+*.zip
+*.gz
+*.tgz
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# Keep the placeholder files that make empty coordination dirs trackable.
+!.gitkeep

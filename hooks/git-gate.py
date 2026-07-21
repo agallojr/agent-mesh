@@ -11,6 +11,11 @@ in one repo" cannot be expressed as a permission rule. A PreToolUse hook can
 add a deny (best-effort), and — with the blanket deny removed from settings —
 becomes the sole authority on these ops.
 
+Blob layer: for an `add` that already targets an allowlisted repo, a second
+enforcement layer rejects staging blob-class files (blocked extensions or
+files over BLOB_SIZE_LIMIT). Large results belong by pointer in a record's
+`artifacts` field, not committed into git.
+
 Contract (Claude Code PreToolUse):
   stdin  : JSON with tool_name, tool_input.command, and cwd.
   stdout : JSON permissionDecision "deny" to block; nothing (exit 0) to defer
@@ -25,6 +30,11 @@ path per line, blank lines and #-comments ignored. Paths are resolved to real
 paths; a target matches if it equals, or is nested under, an allowlisted path.
 """
 
+# Lazy annotations so PEP 604 unions (str | None) work under the pinned
+# /usr/bin/python3, which on some nodes is 3.9 (evaluates annotations eagerly
+# otherwise). Must be the first statement after the docstring.
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -32,6 +42,14 @@ import shlex
 import sys
 
 GATED = {"add", "commit", "push"}
+
+# Blob-rejection layer: extensions and size that must not be staged into git.
+BLOB_EXTS = frozenset({
+    ".nc", ".h5", ".hdf5", ".ckpt", ".npy", ".npz", ".png", ".jpg", ".jpeg",
+    ".mp4", ".tar", ".zip", ".gz", ".tgz", ".bin", ".pt", ".pth",
+    ".safetensors",
+})
+BLOB_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB
 
 # Resolve the config dir the way Claude Code does, NOT via ~/.claude: on some
 # hosts HOME is not the config-dir parent (e.g. HOME=/quantum-data/agallojr/
@@ -163,6 +181,90 @@ def git_invocations(fragment: str) -> list[list[str]]:
     return out
 
 
+# add flags that mean "stage everything" (trigger a working-tree scan).
+_ADD_STAGE_ALL = {"-A", "--all", "-u"}
+
+
+def _blob_reason(path: str) -> str | None:
+    """Return a deny reason if `path` is a blob-class file, else None.
+    Blob = blocked extension (regardless of existence), or an existing file
+    over BLOB_SIZE_LIMIT."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in BLOB_EXTS:
+        return (
+            f"git add denied: '{path}' has a blocked blob extension ({ext}). "
+            f"Reference large results by pointer in the record's `artifacts` "
+            f"field instead of committing them."
+        )
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) > BLOB_SIZE_LIMIT:
+            return (
+                f"git add denied: '{path}' exceeds the "
+                f"{BLOB_SIZE_LIMIT}-byte blob size limit. Reference large "
+                f"results by pointer in the record's `artifacts` field "
+                f"instead of committing them."
+            )
+    except OSError:
+        return None
+    return None
+
+
+def _find_blob_in_tree(root: str) -> str | None:
+    """Best-effort walk of `root` (skipping any `.git` dir) for the first
+    blob-class file. Returns its path or None. Fail-safe: on any error return
+    None so the hook defers rather than denying spuriously. Stops at the first
+    offender."""
+    try:
+        for dirpath, dirnames, filenames in os.walk(root):
+            if ".git" in dirnames:
+                dirnames.remove(".git")  # never recurse into a .git dir
+            for name in filenames:
+                full = os.path.join(dirpath, name)
+                if os.path.splitext(name)[1].lower() in BLOB_EXTS:
+                    return full
+                try:
+                    if os.path.getsize(full) > BLOB_SIZE_LIMIT:
+                        return full
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return None
+
+
+def check_add_blobs(add_args: list[str], target_dir: str) -> None:
+    """For an allowlisted `git add`, deny if it would stage a blob-class file.
+    `add_args` are the tokens after the `add` subcommand token."""
+    stage_all = False
+    paths: list[str] = []
+    for tok in add_args:
+        if tok in _ADD_STAGE_ALL or tok == ".":
+            stage_all = True
+        elif tok.startswith("-"):
+            continue  # other add flag (-f/--force, -p, --pathspec-*, etc.)
+        else:
+            paths.append(tok)
+
+    # Explicit path args: check each plain resolvable literal.
+    for p in paths:
+        if not resolvable_literal(p):
+            continue
+        full = p if os.path.isabs(p) else os.path.join(target_dir, p)
+        reason = _blob_reason(full)
+        if reason:
+            deny(reason)
+
+    # Stage-everything (or no explicit paths): best-effort working-tree scan.
+    if stage_all or not paths:
+        offender = _find_blob_in_tree(target_dir)
+        if offender:
+            deny(_blob_reason(offender) or (
+                f"git add denied: '{offender}' is a blob-class file. "
+                f"Reference large results by pointer in the record's "
+                f"`artifacts` field instead of committing them."
+            ))
+
+
 def analyze_git(tokens: list[str], fragment: str, cwd: str,
                 roots: list[str], cwd_trusted: bool) -> None:
     """Inspect one tokenized git invocation. Deny (and exit) if it is a gated
@@ -222,6 +324,8 @@ def analyze_git(tokens: list[str], fragment: str, cwd: str,
         subcommand = t
         break
 
+    # tokens after the subcommand token (the add's path/flag args).
+    sub_args = tokens[i + 1:] if subcommand is not None else []
     cleanly_gated = subcommand in GATED
 
     # Fail-closed on command substitution: $(...) or backticks make shlex
@@ -266,6 +370,10 @@ def analyze_git(tokens: list[str], fragment: str, cwd: str,
             f"...`."
         )
     if under_allowlist(target_dir, roots):
+        # Allowlist passed. For `add`, run the additional blob-rejection layer
+        # before deferring; commit/push are unaffected.
+        if subcommand == "add":
+            check_add_blobs(sub_args, target_dir)
         return
     deny(
         f"git {subcommand} denied: target repo '{target_dir}' is not on the "
