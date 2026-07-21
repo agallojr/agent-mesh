@@ -17,6 +17,42 @@ product, and runs it. See
 - Driving the mesh from a phone: [`docs/operator-manual.md`](docs/operator-manual.md)
 - Scaffolding a new bus: [`install/`](install/)
 
+## Getting started — pick your path
+
+This repo is software, not a running mesh. You do not clone it to join a mesh;
+you either **stand up your own mesh** (creating a private bus) or **join one
+that already exists**.
+
+**A. Standing up a new mesh (no bus yet — start here if you found this repo).**
+
+1. Create an **empty, private** repo on your own Git host — this becomes *your*
+   bus (`agent-mesh-bus`). Keep it private: it holds your runtime coordination
+   state, your credential *names*, and your deployment-specific rules. The
+   product stays public; your bus never should.
+2. Clone this product repo and run the installer, pointing it at the public
+   product URL and your new (empty) bus URL:
+
+   ```sh
+   git clone https://github.com/agallojr/agent-mesh.git
+   cd agent-mesh
+   PRODUCT_URL=https://github.com/agallojr/agent-mesh.git \
+   BUS_URL=<your-empty-private-bus-url> \
+   BUS_PATH="$HOME/agent-mesh-bus" \
+   ./install/install.sh --product-tag v0.1.0
+   ```
+
+   The installer scaffolds the bus from `bus-skeleton/`, links this product in
+   as the pinned `product/` submodule, writes the bus's `guidance/CLAUDE.md`,
+   and wires the git gate + skills. It **prints** the bus's first
+   `commit`/`push` for you to run — it never pushes on its own. Full detail:
+   [`install/README.md`](install/README.md). This node is the first (hub) node
+   of your mesh.
+
+**B. Joining an existing mesh (a bus is already running).** Clone that bus and
+install a node against it — see [`INSTALL.md`](INSTALL.md). You do not run the
+installer or touch the product directly; the product arrives as the bus's
+`product/` submodule.
+
 ## How it is delivered
 
 The product reaches every node as a submodule of the bus, pinned to a tagged

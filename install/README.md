@@ -5,6 +5,22 @@ product's `bus-skeleton/`, pins the product code as a git submodule at a chosen
 tag, and wires the git gate plus the `mesh-on` / `mesh-off` skills into
 `~/.claude`. Run it from a clone of the **product** repo.
 
+## Step 0 — create your bus remote (do this first)
+
+The installer scaffolds the bus *contents* locally and pushes them to a remote
+you already own; it does not create the remote for you. Before running it:
+
+1. Create an **empty, private** repository on your Git host — no README, no
+   `.gitignore`, no license (the installer fills it). This is your bus
+   (`agent-mesh-bus`). Its clone/SSH URL is the `BUS_URL` below.
+2. Keep it **private**. The bus holds your runtime coordination ledger,
+   credential *names*, and deployment-specific rules (`best-practices.user.md`).
+   The product repo is public; your bus should not be. A private bus can still
+   reference the public product submodule with no extra configuration.
+
+You do not create a separate product remote — `PRODUCT_URL` points at the
+existing (public) product repo you cloned this from.
+
 ## What it does
 
 1. Confirms it is running inside a product checkout (`spec/PROTOCOL.md` and
