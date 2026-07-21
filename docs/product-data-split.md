@@ -1,18 +1,29 @@
 # Agent Mesh — Separating the Product from the Data
 
-**Design document · draft v4 · 2026-07-20**
+**Design document · draft v5 · 2026-07-20**
 
-> **Changes since v3.** Composition of best-practices now lives in the **bus**,
-> not in the product (the product artifact is fully self-contained — §6). The
-> contaminated `best-practices.md` is **not** filtered into product history at
-> all; a fresh base file is authored instead (§7). Naming is settled: **product
-> = `agent-mesh`, bus = `agent-mesh-bus`** (§4, §10). Blob enforcement moves from
-> `.gitignore` alone to the **git-gate hook** (§5). The poller does an explicit
-> `submodule update` rather than trusting `--recurse-submodules` (§7, §9). The
-> `product/` gitlink is added to the ownership matrix (§9). `VERSION` is dropped
-> in favor of deriving the tag from the pin (§4). The `@`-include mechanism is
-> pinned to Claude Code's native recursive import (§2, §6). The one-pull property
-> is stated honestly as *one-pull-if-recursion-is-realized* (§1, §8).
+> **Status: implemented.** The split described here has been executed. `agent-mesh`
+> (product) is **public**; `agent-mesh-bus` (bus) is **private** and references the
+> product as a submodule. §7 is retained as the historical migration record.
+>
+> **Changes since v4 (reflecting what actually shipped).** The product is no
+> longer "private for now" — it is **public**, the bus stays private (§2). The
+> delivery model changed from a **frozen pin** to **tracking the tip of product
+> `main`**: the submodule sets `submodule.product.branch = main` and every sync
+> uses `--remote`, so a refresh lands `product/` on the latest `main`, not a
+> recorded commit (§1, §4, §8). The poller and a new `pullmesh` alias both use
+> `submodule update --init --remote --recursive` (§4, §7 step 5). A plain
+> `git pull` re-checks-out the recorded gitlink (which lags `main`); `pullmesh`
+> is the one-command manual refresh (§4). The recorded gitlink still exists (it is
+> intrinsic to submodules) but is no longer the source of truth — the `main` tip
+> is — so the §9 "pin-bump race" is reframed as harmless gitlink churn.
+>
+> **Changes since v3 (carried forward).** Best-practices composition lives in the
+> **bus**, not the product (§6). The contaminated `best-practices.md` is **not**
+> filtered into product history; a fresh base is authored (§7). Naming settled:
+> product = `agent-mesh`, bus = `agent-mesh-bus` (§4, §10). Blob enforcement is the
+> **git-gate hook**, not `.gitignore` alone (§5). `VERSION` dropped (§4).
+> `@`-includes use Claude Code's native recursive import (§2, §6).
 
 ## 1. Problem
 
@@ -45,17 +56,19 @@ true.
 
 **One honest caveat.** In-repo/vendored content gets this property *for free* — a
 plain `pull` updates it. Delivering the product as a **submodule** (the chosen
-design, §8) makes it *one-pull-if-recursion-is-realized*: the pull must be
-followed by a submodule checkout to the pinned commit. We keep the property true
-by baking that step into the poller (§7 step 5, §9) rather than trusting a client
-flag. This is the one place the submodule choice is weaker than vendoring, and we
-accept it in exchange for a clean product/bus boundary.
+design, §8) makes it *one-pull-if-the-tip-is-realized*: the pull must be followed
+by a `--remote` submodule update that checks out the tip of product `main`. We
+keep the property true by baking that step into the poller and into a `pullmesh`
+alias for manual use (§4, §7 step 5) rather than trusting a client flag — a plain
+`git pull` (even a recursing one) re-checks-out the *recorded* gitlink, which lags
+the `main` tip. This is the one place the submodule choice is weaker than
+vendoring, and we accept it in exchange for a clean product/bus boundary.
 
 ## 2. Terminology (so we stop colliding on words)
 
 | Term | Means | Where it lives |
 |---|---|---|
-| **product** / **code** | the mesh software: protocol, skills, hooks, templates, guidance, installer | its own repo (`agent-mesh`), **private for now → public once tested** |
+| **product** / **code** | the mesh software: protocol, skills, hooks, templates, guidance, installer | its own repo (`agent-mesh`), **public** |
 | **bus** | the coordination repo nodes pull & push | private repo (`agent-mesh-bus`) |
 | **library** | the record store: **lore + experiment logs + the user best-practices** (`memory/`) | inside the **bus** |
 | **blob store** | large binary results, referenced by pointer | **outside the mesh; user/workflow-specific — the mesh does not define or assume it** |
@@ -89,15 +102,16 @@ composition path, one set of resolution semantics.
 ## 4. Target architecture — two repos we build, one boundary we enforce
 
 ```
-agent-mesh            PRODUCT repo — the software. Private now; flip to public once tested.
+agent-mesh            PRODUCT repo — the software. PUBLIC.
   spec/ skills/ hooks/ templates/ guidance/(sanitized) README INSTALL
   guidance/best-practices.base.md   universal rules only, self-contained (no reaching @-include)
   install/            the installer: scaffolds a fresh bus and links the product in
   bus-skeleton/       dir skeleton for initializing a bus (dirs carry .gitkeep placeholders)
 
-agent-mesh-bus        BUS repo — private; the repo every node clones, pulls, pushes.
+agent-mesh-bus        BUS repo — PRIVATE; the repo every node clones, pulls, pushes.
                       (This is the CURRENT repo, renamed from agent-mesh — see §7 step 2.)
-  product/   ->  git submodule, pinned to an agent-mesh tag   (the product "linked in")
+  product/   ->  git submodule TRACKING product main (submodule.product.branch=main)
+  .gitmodules         submodule url + branch=main; synced with --remote (§8)
   agents/ tasks/ status/ outbox/ mailbox/ workflows/ _archive/
   memory/             THE LIBRARY (text only):
     lore/                shared, hub-curated
@@ -105,33 +119,42 @@ agent-mesh-bus        BUS repo — private; the repo every node clones, pulls, p
     best-practices.user.md   this operator's env-specific rules (composed by the bus, §6)
   guidance/CLAUDE.md  bus entry point: @-includes product/guidance/best-practices.base.md
                       AND memory/best-practices.user.md (the bus owns composition)
-  .gitmodules, .gitignore (first-line blob filter; real enforcement is the git gate, §5)
+  .gitignore (first-line blob filter; real enforcement is the git gate, §5)
 ```
 
-The bus no longer needs a `VERSION` file: the submodule already pins an exact
-product commit, so the pin *is* the source of truth. A human-readable tag is
-derived on demand with `git -C product describe --tags` — no second copy to drift.
+The bus needs no `VERSION` file, and the recorded submodule commit (the gitlink)
+is deliberately **not** the source of truth: the tip of product `main` is. The
+submodule is configured with `submodule.product.branch = main`, and every sync
+uses `--remote`, so nodes converge on latest `main` regardless of what commit any
+particular bus commit happens to record. A human-readable tag, when wanted, is
+derived on demand with `git -C product describe --tags`.
 
-**Product delivery = the product repo linked into the bus as a pinned submodule.**
-This is the "installation creates a bus with the product linked in" model. A node
-clones the bus and checks out the pinned product commit, so every node on the same
-bus commit runs byte-identical product code — no drift, no separate install to
-keep in sync. Product paths shift by a fixed prefix
-(`${REPO_PATH}/product/spec/…`), a mechanical repoint of the skill and guidance
-references. Shipping a product update mesh-wide = bump the submodule pointer in one
-bus commit; nodes pick it up on their next pull + submodule update. The
-**installer** (part of the product) scaffolds a fresh bus from `bus-skeleton/`,
-adds the product submodule at a chosen tag, and wires the git gate / symlinks. (A
-private submodule works fine while both repos are private; when the product flips
-public, the bus stays private and simply references a now-public submodule — no
-bus change.)
+**Product delivery = the product repo linked into the bus as a submodule that
+tracks `main`.** This is the "installation creates a bus with the product linked
+in" model. A node clones the bus and runs
+`git submodule update --init --remote --recursive`, which lands `product/` on the
+tip of product `main` — so a refresh always runs the latest product code. Product
+paths sit under a fixed prefix (`${REPO_PATH}/product/spec/…`), a mechanical
+repoint of the skill and guidance references. Shipping a product update mesh-wide
+= push to product `main`; nodes pick it up on their next sync, no bus commit
+required. Because the product is **public** and the bus **private**, the bus
+simply references a public submodule with no extra configuration.
+
+**Refreshing the product — poller vs manual.** The poller runs
+`git -C /abs/bus submodule update --init --remote --recursive` every cycle, so
+unattended nodes stay on the `main` tip automatically. For a **manual** refresh,
+a plain `git pull` is *not* enough: even a recursing pull re-checks-out the
+recorded gitlink, which lags the `main` tip. The product therefore ships a git
+alias, `pullmesh` = `git pull` followed by the `--remote` submodule update, so one
+command (`git -C /abs/bus pullmesh`) advances both the bus and the product tip.
+INSTALL registers this alias per clone.
 
 **The library stays in the bus.** `memory/` (lore + experiment logs) is written at
 runtime (the hub curates lore; the centralize-log workflow writes experiment logs)
 and is meant to be read by every node — so a plain `git pull` of the bus delivers
 the latest lore and logs to everyone. It is deliberately *not* in the product
-submodule (read-only, pinned) and *not* a separate repo (which would break
-one-pull propagation).
+submodule (which tracks the product repo, not deployment state) and *not* a
+separate repo (which would break one-pull propagation).
 
 **Blobs are handled outside the mesh.** Large binary payloads never enter the bus.
 Where they go — a git-LFS repo, an S3 bucket, a scratch filesystem, nothing at all
@@ -241,71 +264,83 @@ coordination.
    best-practices.base.md` and `memory/best-practices.user.md` (plus the product's
    `agent-operating.md` and `permissions.md`) — the bus owns composition (§6). The
    product base contains **no** reaching include.
-5. **Teach the poller to pull *and* realize the pin.** `mesh-on` step 3 and the
+5. **Teach the poller to pull *and* realize the tip.** `mesh-on` step 3 and the
    poller pull loop run, with the literal bus path:
    `git -C /abs/bus pull --rebase` **then**
-   `git -C /abs/bus submodule update --init --recursive`. The explicit
-   `submodule update` — not reliance on a `--recurse-submodules` flag — is what
-   deterministically checks out the pinned product commit across git versions and
-   configs. Neither op is gated (checkout/update are not add/commit/push), so the
-   git gate is unaffected.
+   `git -C /abs/bus submodule update --init --remote --recursive`. The explicit
+   `--remote` update — not reliance on a `--recurse-submodules` flag — is what
+   deterministically checks out the tip of product `main` across git versions and
+   configs. For manual use, register the `pullmesh` alias (`git pull` + the same
+   `--remote` update) so a human refresh gets the tip in one command. Neither op
+   is gated (checkout/update are not add/commit/push), so the git gate is
+   unaffected. (Originally specified as a frozen-pin `submodule update`; changed
+   to `--remote` tip-tracking — see the v5 status note.)
 6. **Verify one node end-to-end.** Fresh clone of the bus followed by
-   `submodule update --init --recursive`, `/mesh-on`, confirm: guidance/protocol
-   resolve byte-identically at the `product/` prefix, the composed best-practices
-   chain (base + user overlay) loads, latest lore + logs present from the pull, a
-   task round-trips, `agents/<id>.yaml` still self-registers, env files still
-   gitignored, a blob-class `git add` is rejected by the gate. Then re-point the
-   other nodes.
-7. **Gate for going public (later).** Before flipping the product repo public:
-   secret-scan its full (filtered) history and confirm no credentials or private
-   paths remain. Because the contaminated `best-practices.md` was never imported
-   (step 1), the highest-risk file is not in product history at all — the scan is
-   a confirmation, not a rescue. Only then flip.
+   `submodule update --init --remote --recursive`, `/mesh-on`, confirm:
+   guidance/protocol resolve byte-identically at the `product/` prefix, the
+   composed best-practices chain (base + user overlay) loads, latest lore + logs
+   present from the pull, a task round-trips, `agents/<id>.yaml` still
+   self-registers, env files still gitignored, a blob-class `git add` is rejected
+   by the gate. Then re-point the other nodes.
+7. **Go public.** With the contaminated `best-practices.md` never imported (step
+   1), the product history carried no known secret. After a confirming secret-scan
+   of the filtered history, the product repo `agent-mesh` was flipped **public**;
+   the bus `agent-mesh-bus` stays private and references the now-public submodule
+   with no change.
 
 ## 8. Product delivery — options considered
 
-| Option | One-pull identical? | Update path | Verdict |
+| Option | One-pull latest? | Update path | Verdict |
 |---|---|---|---|
-| **Product submodule in the bus** (chosen) | Yes *if* the poller realizes the pin (§7 step 5) | 1 (`pull` + `submodule update`; bump pin to ship) | Matches "bus with product linked in"; clean boundary; works private-now/public-later unchanged. Costs one explicit submodule-update step. |
+| **Product submodule tracking `main`** (chosen) | Yes *if* the sync uses `--remote` (§7 step 5) | 1 (`pull` + `--remote submodule update`; push product `main` to ship) | Matches "bus with product linked in"; clean boundary; public product / private bus unchanged. Costs one explicit `--remote` submodule-update step. |
+| Product submodule frozen to a pinned commit | Yes if the pin is realized | 2 (pull bus + bump pin commit to ship) | Reproducible, but shipping needs a bus commit per update and a plain pull lags — rejected for the mesh's "pull gets latest product" goal |
 | Product as release artifact installed into `~/.claude` | Yes if pinned | 2 (pull bus + re-install on product bump) | Cleaner if consumed outside the mesh; more operator steps |
 | Product vendored (copied) into the bus | Exactly, *for free* (plain pull, no extra step) | 1 | Only option that preserves one-pull literally, but reintroduces the commingling we're removing |
 
-The submodule choice trades vendoring's *automatic* one-pull for a *realized*
-one-pull (poller does `submodule update`). We accept that one step to get a clean,
-independently-publishable product boundary — see §1's caveat and §9's footgun
-mitigation.
+The submodule-tracking-`main` choice trades vendoring's *automatic* one-pull for a
+*realized* one — the sync must use `--remote`. We accept that one step (baked into
+the poller and the `pullmesh` alias) to get a clean, independently-publishable
+product boundary where pushing to product `main` ships mesh-wide with no bus
+commit. See §1's caveat and §9's footgun mitigation.
 
 ## 9. Risks & mitigations
 
-- **Submodule footguns** (detached HEAD, forgotten checkout, stale working tree):
-  bake `git -C /abs/bus submodule update --init --recursive` into the poller
-  (§7 step 5) — the *explicit update*, not a client-side `--recurse` flag, is the
-  mitigation — and add a `mesh-on` preflight that asserts the `product/` submodule
-  is present and at the pinned commit.
-- **Gitlink ownership / pin-bump races.** The bus's `.gitattributes` sets
-  `* -merge`, so any concurrent edit to a tracked path is a hard conflict by
-  design. The `product/` gitlink and `.gitmodules` are now tracked entries, so
-  add them to `agent-operating.md`'s owned-paths matrix as **hub/operator-owned**:
-  workers never touch them; only the hub/operator bumps the pin. That keeps a
-  pin-bump from racing a worker's write.
-- **Going public later** (deferred, not now): the contaminated `best-practices.md`
-  is never imported into product history (§7 step 1), so the step-7 secret-scan is
-  a confirmation over already-clean history rather than a remedy for a known leak.
-  Nothing to do while the product stays private.
-- **Version drift**: eliminated — the bus pins the product commit, so every node
-  that has realized the pin is on the same product. (The pin is the source of
-  truth; there is no separate `VERSION` file to fall out of sync — §4.)
+- **Submodule footguns** (forgotten `--remote`, stale working tree, a manual
+  `git pull` that lags): bake `git -C /abs/bus submodule update --init --remote
+  --recursive` into the poller (§7 step 5) — the *explicit `--remote` update*, not
+  a client-side `--recurse` flag, is the mitigation — ship the `pullmesh` alias
+  for manual refreshes, and have `mesh-on` assert the `product/` submodule is
+  present and populated.
+- **Gitlink churn (not a race).** Because the working tree tracks the `main` tip
+  (not the recorded gitlink), the recorded commit is no longer authoritative — a
+  node that stages `product` merely records whatever tip it happened to be on, and
+  the next node's sync ignores it and re-resolves `main` anyway. So a moved gitlink
+  is cosmetic churn, not a correctness problem. To keep it quiet, the `product/`
+  gitlink and `.gitmodules` remain **hub/operator-owned** in
+  `agent-operating.md`'s matrix (workers do not stage them), and the poller's
+  `add` need not touch `product`. The bus's `* -merge` still makes any concurrent
+  edit a hard conflict by design.
+- **Going public**: done (§7 step 7). The contaminated `best-practices.md` was
+  never imported into product history (§7 step 1), so the confirming secret-scan
+  found nothing to redact and the product was flipped public. The bus stays
+  private.
+- **Version drift**: nodes converge on the tip of product `main` on every
+  `--remote` sync, so they run the same product independent of the recorded
+  gitlink. There is no `VERSION` file to fall out of sync (§4). The tradeoff vs a
+  frozen pin: no "every node on bus commit X runs product commit Y"
+  reproducibility guarantee — deliberately accepted for the "pull gets latest
+  product" behavior.
 - **Single-writer invariant**: unchanged — only the bus is node-writable; the
-  product submodule is read-only, blobs live outside the bus entirely, and the
-  gitlink/`.gitmodules` are hub/operator-owned.
+  product submodule is read-only to nodes, blobs live outside the bus entirely,
+  and the gitlink/`.gitmodules` are hub/operator-owned.
 
 ## 10. Decisions
 
 *Settled:*
-- Product code → its own repo, **private for now, public once tested**.
-- **Naming: product = `agent-mesh`; bus = `agent-mesh-bus`.** The current repo is
-  renamed to `agent-mesh-bus`, freeing `agent-mesh` for the product (the eventual
-  public face). Resolves the former §7/§10 collision.
+- Product code → its own repo, now **public**. The bus stays **private**.
+- **Naming: product = `agent-mesh`; bus = `agent-mesh-bus`.** The original repo was
+  renamed to `agent-mesh-bus`, freeing `agent-mesh` for the (now public) product.
+  Resolves the former §7/§10 collision.
 - Library (lore + experiment logs) stays in the bus and propagates by plain pull;
   no separate data repo for logs.
 - Best-practices splits: **product ships a self-contained
@@ -319,14 +354,20 @@ mitigation.
   blobs out of the bus and references them by pointer. **Enforcement is the git
   gate** (extended to reject blob-class staging); `.gitignore` is a first-line
   convenience filter, not the boundary.
-- Product reaches nodes as a **pinned submodule** of the bus, and the poller
-  **realizes the pin** with an explicit `submodule update --init --recursive`
-  after each pull.
+- Product reaches nodes as a submodule of the bus that **tracks product `main`**
+  (`submodule.product.branch = main`); the poller and the `pullmesh` alias
+  **realize the tip** with `submodule update --init --remote --recursive` after
+  each pull. A plain `git pull` lags (re-checks-out the recorded gitlink), so
+  manual refreshes use `pullmesh`. Pushing to product `main` ships mesh-wide with
+  no bus commit; the recorded gitlink is not the source of truth.
 - Includes use **Claude Code's native recursive `@`-import**, the one mechanism
   already in use — no second agent-driven composition path.
-- No `VERSION` file — the submodule pin is the source of truth; derive a
-  human-readable tag with `git -C product describe --tags`.
+- No `VERSION` file and no authoritative pin — the tip of product `main` is the
+  source of truth; derive a human-readable tag with `git -C product describe
+  --tags` when wanted.
 
 *Still open:*
-- Exact **size threshold** for the gate's blob rejection (§5) — pick a default
-  (e.g. 5 MB) and let the allowlist/config tune it.
+- Exact **size threshold** for the gate's blob rejection (§5) — currently 5 MB;
+  may expose it as allowlist/config-tunable.
+- Whether to have the poller explicitly exclude `product` from its `git add` to
+  suppress gitlink churn entirely (§9) — cosmetic, not yet decided.
