@@ -8,8 +8,10 @@ The bus is its own git repo (`agent-mesh-bus`). It carries the runtime
 coordination state (`agents/`, `tasks/`, `status/`, `outbox/`, `mailbox/`,
 `workflows/`) and the memory library (`memory/lore/`, `memory/experiments/`,
 `memory/best-practices.user.md`). The product software lives in a git submodule
-at `product/`, pinned to a released `agent-mesh` tag. Every path below that
-starts with `${REPO}/product/...` resolves inside that submodule.
+at `product/`. The submodule tracks the tip of the product's `main` branch
+(`submodule.product.branch = main` in `.gitmodules`): a sync checks out the
+latest product `main`, not a frozen pin. Every path below that starts with
+`${REPO}/product/...` resolves inside that submodule.
 
 ## 0. Prerequisites
 - git and Python 3 (`/usr/bin/python3` is used by the hook).
@@ -18,20 +20,29 @@ starts with `${REPO}/product/...` resolves inside that submodule.
 
 ## 1. Clone the bus and realize the product submodule
 Clone `agent-mesh-bus`, not the old `agent-mesh`. After cloning you MUST init
-the submodule so the pinned product commit is checked out under `product/`.
+the submodule so the product is checked out under `product/`. Use `--remote` so
+`product/` lands on the tip of product `main`, not on the commit the bus
+happens to record:
 
     git clone <bus-url> ~/agent-mesh-bus
     REPO="$HOME/agent-mesh-bus"
-    git -C "$REPO" submodule update --init --recursive
+    git -C "$REPO" submodule update --init --remote --recursive
 
 Do not rely on `git clone --recurse-submodules` alone. Always run the explicit
-`submodule update --init --recursive` step: it is what the poller uses to sync
-the product, and it is robust across git versions. Confirm the submodule is
-populated:
+`submodule update --init --remote --recursive` step: it is what the poller uses
+to sync the product to latest, and it is robust across git versions. Confirm
+the submodule is populated:
 
     ls "$REPO/product/spec/PROTOCOL.md"
 
 If `product/` is empty, the submodule was not realized. See Troubleshooting.
+
+Then register the `pullmesh` alias on this clone, so a later manual refresh gets
+the latest product in one command (a plain `git pull` would re-checkout the
+recorded commit instead of the `main` tip — see Notes):
+
+    git -C "$REPO" config alias.pullmesh \
+      '!f() { git pull "$@" && git submodule update --init --remote --recursive; }; f'
 
 ## 2. Install the git gate (hook + settings + allowlist)
 2a. Copy the hook and make it executable.
@@ -84,6 +95,13 @@ Start Claude, then run `/mesh-on` to start the node; `/mesh-off` stops it. The
 poller is session-scoped, so run unattended nodes under tmux or screen.
 
 ## Notes
+- Refreshing the product: the automated poller already syncs `product/` to the
+  tip of `main` every cycle (`git submodule update --init --remote --recursive`).
+  For a manual refresh, run `git -C <REPO> pullmesh` — a plain `git pull` (even
+  with `submodule.recurse` set) re-checks-out the commit the bus records under
+  `product/`, which lags the `main` tip. `pullmesh` = `git pull` followed by the
+  `--remote` submodule update, so one command lands the bus and the product tip
+  together.
 - Git literal-absolute-path rule: agents must run `git -C /abs/bus <subcmd>`
   with a literal path, never `git -C "$VAR" ...` or `cd ... && git ...`.
   Read-only git (pull, fetch, status, `submodule update`) is not gated.
@@ -94,8 +112,12 @@ poller is session-scoped, so run unattended nodes under tmux or screen.
 
 ## Troubleshooting
 - Submodule not checked out / `product/` empty: the clone did not realize the
-  submodule. Fix with `git -C <REPO> submodule update --init --recursive`, then
-  re-check `ls "$REPO/product/spec/PROTOCOL.md"`.
+  submodule. Fix with `git -C <REPO> submodule update --init --remote --recursive`,
+  then re-check `ls "$REPO/product/spec/PROTOCOL.md"`.
+- Product looks stale after `git pull`: a plain pull re-checks-out the recorded
+  `product/` commit, not the `main` tip. Run `git -C <REPO> pullmesh` (or
+  `git -C <REPO> submodule update --init --remote --recursive`) to advance to
+  the latest product `main`.
 - Blob `git add` denied by the gate: you tried to stage a large or binary file
   (see Notes). Do not commit it. Reference the artifact by pointer in the
   record's `artifacts` field and stage only the small text record.
