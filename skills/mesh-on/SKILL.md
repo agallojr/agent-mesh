@@ -1,10 +1,10 @@
 ---
 name: mesh-on
-description: Enter agent-mesh worker loop. Spawns a background poller subagent that watches this node's task inbox in the coordination repo, dispatches each task to an executor subagent, and syncs status/results via git. The main session stays interactive; stop with /mesh-off. Use when the user wants this machine to join or resume the mesh.
+description: Enter the agent-mesh node loop. Spawns a background poller subagent that watches this node's role queues in the coordination repo, claims each task (accept-as-claim), dispatches it to an executor subagent, and syncs status/results via git. The main session stays interactive; stop with /mesh-off. Use when the user wants this machine to join or resume the mesh.
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, TaskList
 ---
 
-# mesh-on — join the agent mesh as a worker
+# mesh-on — join the agent mesh as a node
 
 You are turning THIS Claude session's machine into an active mesh node. You do
 the one-time bootstrap yourself, then spawn a **background poller subagent** that
@@ -37,9 +37,10 @@ Source the node's identity (never committed, planted per machine):
 cat ~/.agent-identity.env
 ```
 
-Extract `AGENT_ID`, `AGENT_NAME`, `AGENT_CONTEXT`, `AGENT_ROLE`,
-`POLL_INTERVAL_SEC`, `AGENT_CAPABILITIES` (comma-separated; becomes the
-registration `capabilities` list), and `REPO_PATH`. If `~/.agent-identity.env`
+Extract `AGENT_ID`, `AGENT_NAME`, `AGENT_CONTEXT`, `POLL_INTERVAL_SEC`,
+`AGENT_ROLES` (comma-separated; becomes the registration `roles` list and the set
+of `tasks/roles/<role>/` queues this node monitors), and `REPO_PATH`. A lone legacy
+`AGENT_ROLE` is read as a one-role list. If `~/.agent-identity.env`
 is missing, STOP and tell the user to create it from
 `product/templates/agent-identity.env.template` in the bus. `REPO_PATH` must be a
 literal
@@ -77,9 +78,9 @@ Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
    is gated; the git gate only touches add/commit/push.
 2. Overwrite `agents/<AGENT_ID>.yaml` (this file is yours alone) following the
    schema in PROTOCOL.md §4.3 — include `hostname`, `platform` (`uname -sr`),
-   `repo_commit` (`git -C /abs/repo rev-parse --short HEAD`), `capabilities`,
-   `credentials_available` (KEY NAMES only, from `~/.agent-credentials.env` — never
-   values), and a fresh `registered_at`.
+   `repo_commit` (`git -C /abs/repo rev-parse --short HEAD`), `roles` (from
+   `AGENT_ROLES`), `credentials_available` (KEY NAMES only, from
+   `~/.agent-credentials.env` — never values), and a fresh `registered_at`.
 3. Commit and push:
    `git -C /abs/repo add -A` then
    `git -C /abs/repo commit -m "register <AGENT_NAME> (<AGENT_ID>)"` then

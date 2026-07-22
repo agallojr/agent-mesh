@@ -114,7 +114,7 @@ agent-mesh-bus        BUS repo — PRIVATE; the repo every node clones, pulls, p
   .gitmodules         submodule url + branch=main; synced with --remote (§8)
   agents/ tasks/ status/ outbox/ mailbox/ workflows/ _archive/
   memory/             THE LIBRARY (text only):
-    lore/                shared, hub-curated
+    lore/                shared, curated by the `librarian` role
     experiments/         experiment logs
     best-practices.user.md   this operator's env-specific rules (composed by the bus, §6)
   guidance/CLAUDE.md  bus entry point: @-includes product/guidance/best-practices.base.md
@@ -150,7 +150,7 @@ command (`git -C /abs/bus pullmesh`) advances both the bus and the product tip.
 INSTALL registers this alias per clone.
 
 **The library stays in the bus.** `memory/` (lore + experiment logs) is written at
-runtime (the hub curates lore; the centralize-log workflow writes experiment logs)
+runtime (the `librarian` role curates lore; a workflow writes experiment logs)
 and is meant to be read by every node — so a plain `git pull` of the bus delivers
 the latest lore and logs to everyone. It is deliberately *not* in the product
 submodule (which tracks the product repo, not deployment state) and *not* a
@@ -316,8 +316,8 @@ commit. See §1's caveat and §9's footgun mitigation.
   node that stages `product` merely records whatever tip it happened to be on, and
   the next node's sync ignores it and re-resolves `main` anyway. So a moved gitlink
   is cosmetic churn, not a correctness problem. To keep it quiet, the `product/`
-  gitlink and `.gitmodules` remain **hub/operator-owned** in
-  `agent-operating.md`'s matrix (workers do not stage them), and the poller's
+  gitlink and `.gitmodules` remain **operator-owned** in
+  `agent-operating.md`'s matrix (nodes do not stage them), and the poller's
   `add` need not touch `product`. The bus's `* -merge` still makes any concurrent
   edit a hard conflict by design.
 - **Going public**: done (§7 step 7). The contaminated `best-practices.md` was
@@ -332,7 +332,7 @@ commit. See §1's caveat and §9's footgun mitigation.
   product" behavior.
 - **Single-writer invariant**: unchanged — only the bus is node-writable; the
   product submodule is read-only to nodes, blobs live outside the bus entirely,
-  and the gitlink/`.gitmodules` are hub/operator-owned.
+  and the gitlink/`.gitmodules` are operator-owned.
 
 ## 10. Decisions
 

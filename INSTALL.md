@@ -1,8 +1,8 @@
 # Installing the mesh on a node
 
 This turns a machine into a mesh node: a Claude agent that joins the
-coordination bus, takes tasks addressed to it, and syncs results by git. It
-applies equally to the hub laptop and a remote worker doing a fresh install.
+coordination bus, claims tasks from the role queues it holds, and syncs results by
+git. It applies to any node — a laptop or a remote server — doing a fresh install.
 
 The bus is its own git repo (`agent-mesh-bus`). It carries the runtime
 coordination state (`agents/`, `tasks/`, `status/`, `outbox/`, `mailbox/`,
@@ -98,9 +98,11 @@ Copy the templates from the product submodule, then edit them.
     chmod 600 ~/.agent-credentials.env
 
 Edit `~/.agent-identity.env`: set `AGENT_ID` (`openssl rand -hex 3`),
-`AGENT_NAME`, `AGENT_CONTEXT`, `AGENT_ROLE`, `POLL_INTERVAL_SEC`, and
-`REPO_PATH`. `REPO_PATH` MUST be the absolute path of the bus clone (the value
-of `$REPO`) and MUST appear verbatim in `~/.claude/mesh-git-allowlist.txt`.
+`AGENT_NAME`, `AGENT_CONTEXT`, `AGENT_ROLES` (comma-separated — the roles this node
+holds and the `tasks/roles/<role>/` queues it will claim from),
+`POLL_INTERVAL_SEC`, and `REPO_PATH`. `REPO_PATH` MUST be the absolute path of the
+bus clone (the value of `$REPO`) and MUST appear verbatim in
+`~/.claude/mesh-git-allowlist.txt`.
 
 ## 5. Join the mesh
 Start Claude, then run `/mesh-on` to start the node; `/mesh-off` stops it. The

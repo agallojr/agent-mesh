@@ -8,13 +8,15 @@ operational digest for an interface.
 
 ## The one rule of topology
 
-The mesh is a **star**: one hub, worker spokes. **Operators talk only to the
-hub.** You never address a worker directly -- the hub decides which worker does
-what and fans the work out. This keeps one brain in charge of dispatch and keeps
-operators trivial and stateless.
+The mesh is **peer-to-peer and role-addressed** -- there is no hub. You dispatch by
+posting to a **role**, and whichever node holds that role claims and runs the work.
+You address a role, never a machine: you neither decide nor care which node runs
+it. This keeps operators trivial and stateless.
 
-Resolve the hub from `agents/*.yaml` -- it is the entry with `role: hub` (today
-`241f3c`, name `hub-laptop`). Never hardcode a machine name; read the id.
+Resolve which roles exist (and which nodes hold them) from `agents/*.yaml` -- each
+registration lists a `roles:` field. You post to `tasks/roles/<role>/`; you need a
+specific `agent_id` only to ping one particular node directly (a `query`). Never
+hardcode a machine name; read the ids.
 
 ## Your identity
 
@@ -28,16 +30,14 @@ Resolve the hub from `agents/*.yaml` -- it is the entry with `role: hub` (today
 
 | You may write | You must never write |
 |---|---|
-| new files in `tasks/<hub-id>/` (requests TO the hub) | any `status/**` |
-| (nothing else) | any `agents/*.yaml` |
-|  | any worker inbox `tasks/<worker-id>/` |
-|  | `memory/lore/**`, `_archive/**`, `workflows/**` |
+| new files in `tasks/roles/<role>/` (requests to a role) | any `status/**` |
+| new files in a node's direct inbox `tasks/<id>/` (to ping it) | any `agents/*.yaml` |
+| (nothing else) | `memory/lore/**`, `_archive/**`, `workflows/**` |
 |  | any existing file (messages are immutable once pushed) |
 
-You only ever ADD a new, uniquely-named file to the hub's inbox. Because every
-message is a new file, pushes never textually conflict -- a `pull --rebase` plus
-retry always resolves. This is the same property that lets several writers share
-`main`.
+You only ever ADD a new, uniquely-named file to a queue. Because every message is a
+new file, pushes never textually conflict -- a `pull --rebase` plus retry always
+resolves. This is the same property that lets several writers share `main`.
 
 ## Two verbs
 
@@ -53,24 +53,30 @@ retry always resolves. This is the same property that lets several writers share
 The ledger is the source of truth. You reconstruct status from git history, not
 from anyone messaging you -- so an interface being offline loses nothing.
 
-### SEND -- drop one request into the hub's inbox
+### SEND -- post one request to a role (use the `mesh-post` skill)
+
+The `mesh-post` skill does this for you: give it a role, a type, and the task body,
+and it writes the file and pushes. By hand it is:
 
 1. `git -C <repo> pull`.
-2. Read `agents/*.yaml` to resolve the hub id (`role: hub`).
-3. Write a NEW `tasks/<hub-id>/<UTC-YYYYMMDDTHHMM>-<seq>-<slug>.md` with
-   frontmatter per `spec/PROTOCOL.md` section 5: `from: op-main` (or `op-phone`),
-   `to: <hub-id>`, `type: task.request` for work or `type: query` for a
-   question/status ask, plus `Goal / Context / Done when / On failure`.
+2. Pick the target `role`. Optionally confirm a holder exists in `agents/*.yaml`
+   (`roles:`) -- an unstaffed queue simply waits until one comes online.
+3. Write a NEW `tasks/roles/<role>/<UTC-YYYYMMDDTHHMM>-<seq>-<slug>.md` with
+   frontmatter per `spec/PROTOCOL.md` §5: `from: op-main` (or `op-phone`),
+   `to: role:<role>`, `type: task.request` for work or `type: query` for a
+   question/status ask, plus `Goal / Context / Done when / On failure`. To ping one
+   specific node instead, address its direct inbox `tasks/<id>/` with `to: <id>`.
 4. `git -C <repo> add <that one file>`, then `commit` (PLAIN-TEXT message), then
    `push origin HEAD`.
 
-The hub senses it on its next inbox scan, decides the worker(s), originates the
-worker task(s), tracks status, and writes results -- all into the ledger. You
-learn the outcome on your next CHECK. The hub does not push to you.
+A node holding that role senses it on its next scan and claims it (accept-as-claim,
+so exactly one runs it even if several hold the role), tracks status, and writes the
+result -- all into the ledger. You learn the outcome on your next CHECK. No node
+pushes to you.
 
-If the hub routes a `reply` to you (answering a `query` you sent), it lands as a
-new file in `tasks/<your-op-id>/`; you pick it up on CHECK. You never reply to a
-reply and never write status for it.
+If a node routes a `reply` to you (answering a `query` you sent), it lands as a new
+file in `tasks/<your-op-id>/`; you pick it up on CHECK. You never reply to a reply
+and never write status for it.
 
 ## Phone specifics (Claude Code on web / mobile app)
 
@@ -84,10 +90,9 @@ reply and never write status for it.
 - Orient a fresh phone session in one step: "read guidance/operator-interface.md
   and check the mesh."
 
-## Not yet supported
+## Workflows
 
-Kicking off a multi-step **hub workflow** from an interface needs a
-`workflow.request` message type the hub recognizes in its inbox scan (today
-workflows arrive via main's in-process message, which a phone cannot send).
-Until then, an interface sends single `task.request`/`query` messages; the hub
-may still choose to run a workflow in response.
+An operator posts single `task.request`/`query` messages; it does not itself drive
+multi-step workflows. To have a chain run autonomously, post a `task.request` to a
+role whose holder drives workflows (that node owns and advances the
+`workflows/<id>.yaml` record). You observe the whole run from the ledger on CHECK.

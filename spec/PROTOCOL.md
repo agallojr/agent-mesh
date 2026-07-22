@@ -19,7 +19,7 @@ protocol exists to avoid.
 2. **Append-only messaging, mutable state.** Messages are immutable events.
    Status and registration files are overwritten in place by their sole owner.
 3. **No hardcoded machine names.** Agents learn their identity at boot from a
-   preplanted file and self-register. Routing is by capability and context.
+   preplanted file and self-register. Routing is by role and context.
 4. **Credentials by name, never by value.** No secret ever enters the repo,
    a message, a status file, a log tail, or an agent transcript.
 5. **Self-contained messages.** A fresh agent with no conversational history
@@ -33,13 +33,30 @@ protocol exists to avoid.
 
 ## 2. Topology
 
-Star. One hub agent (typically a laptop) and N worker agents. Workers do not
-address each other; all cross-worker coordination passes through the hub.
+Peer-to-peer, role-addressed. There is no hub. Every participant is a node that
+holds one or more **roles**; work is addressed to a role, not to a machine, and
+any node holding that role may claim and run it. Nodes may address each other
+directly — cross-node coordination does not pass through any central agent.
 
-The hub additionally performs the **librarian** role: it is the sole writer to
-`memory/lore/**` and the only agent that runs archive sweeps. This is a static
-assignment, not an election. An unstaffed librarian queue simply accumulates
-until the hub next runs — this is correct behavior, not a fault.
+A **role** is both a queue (`tasks/roles/<role>/`, which its holders monitor) and
+the unit of addressing. A node may hold many roles; a role may be held by many
+nodes. When several nodes hold the same role they are competing consumers of its
+queue; the accept-as-claim rule (§6, §8) ensures exactly one runs each task.
+
+Roles split by what they write:
+
+- **Per-task-output roles** (e.g. `build`, `install`, `slurm.submit`) write only
+  their own `outbox/<agent-id>/<task-id>-result.md`. Any number of nodes may hold
+  them; fan-out is unbounded and always conflict-free.
+- **Shared-output roles** (e.g. `librarian`, `archiver`) curate a shared namespace
+  (`memory/lore/**`, `_archive/**`). These should be held by exactly one node so
+  their shared writes stay single-writer. This is an operating convention, not a
+  mechanism the mesh enforces — running two holders of a shared-output role risks
+  a textual conflict on the shared path, at the operator's own risk.
+
+An **operator** is a person's interface to the mesh (§5, and `operator-interface.md`).
+It is not a node: it holds no roles, runs no loop, and never writes `status/**`. It
+posts task requests and queries into role queues and reads results from the ledger.
 
 ---
 
@@ -52,26 +69,29 @@ state and the library.
 ```
 BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /agents/<agent-id>.yaml        self-registration; writer: that agent only
-/tasks/<agent-id>/             inbox; writer: anyone except that agent
-/status/<task-id>.json         live task state; writer: executing agent only
+/tasks/roles/<role>/           role queue; writer: anyone (claimed via §6)
+/tasks/<agent-id>/             direct inbox (replies, targeted sends); writer:
+                               anyone except that agent
+/status/<task-id>.json         live task state; writer: the agent that claimed it
 /outbox/<agent-id>/            results and replies; writer: that agent only
 /mailbox/roles/librarian/      lore submissions; writer: anyone
-/memory/lore/<slug>.md         curated notes; writer: hub only
-/memory/lore/index.md          union-merge safe index; writer: hub only
-/memory/experiments/           experiment logs (the library); writer: hub only
-/memory/best-practices.user.md deployment-specific rules; writer: human + hub
-/workflows/<workflow-id>.yaml  durable multi-step workflow plans; writer: hub only
+/memory/lore/<slug>.md         curated notes; writer: holder of `librarian` role
+/memory/lore/index.md          union-merge safe index; writer: `librarian` role
+/memory/experiments/           experiment logs (the library); writer: `librarian`
+/memory/best-practices.user.md deployment-specific rules; writer: human + librarian
+/workflows/<workflow-id>.yaml  durable multi-step workflow plans; writer: the node
+                               that originated the workflow
 /guidance/CLAUDE.md            bus entry point composing product + user rules;
-                               writer: human + hub
-/_archive/YYYY-MM/             swept messages and terminal status files
-/.gitmodules, /product (gitlink)  the product pin; writer: hub/operator only
+                               writer: human + operator
+/_archive/YYYY-MM/             swept messages and terminal status; writer: `archiver`
+/.gitmodules, /product (gitlink)  the product pin; writer: operator only
 
 PRODUCT SUBMODULE (agent-mesh @ pinned tag) — read-only on nodes
 /product/spec/PROTOCOL.md      this document
 /product/guidance/             best-practices.base.md, agent-operating.md,
                                permissions.md, operator-interface.md
 /product/hooks/                git-gate hook + settings snippet + allowlist tmpl
-/product/skills/               mesh-on / mesh-off skills
+/product/skills/               mesh-on / mesh-off / mesh-post skills
 /product/templates/            identity/credentials env templates
 /product/install/              installer + bus-skeleton
 ```
@@ -81,13 +101,18 @@ PRODUCT SUBMODULE (agent-mesh @ pinned tag) — read-only on nodes
 | Path | Sole writer |
 |---|---|
 | `agents/<X>.yaml` | X |
+| `tasks/roles/<role>/` | any agent (new files only) |
 | `tasks/<X>/` | any agent **except** X (new files only) |
-| `status/<task-id>.json` | agent executing that task |
+| `status/<task-id>.json` | the agent that first accepted (claimed) that task |
 | `outbox/<X>/` | X (new files only) |
 | `mailbox/roles/librarian/` | any agent (new files only) |
-| `memory/lore/**` | hub |
-| `_archive/**` | hub |
-| `workflows/**` | hub |
+| `memory/lore/**` | holder of the `librarian` role |
+| `_archive/**` | holder of the `archiver` role |
+| `workflows/<id>.yaml` | the node that originated that workflow |
+
+Ownership of `status/<task-id>.json` is not pre-assigned: for a task on a role
+queue it is established by the **first node to write an `accepted` status and push**
+(the claim, §6). Once claimed, that node is its sole writer.
 
 ### 3.2 .gitattributes
 
@@ -113,9 +138,8 @@ AGENT_ID=a7f3c2                 # opaque, stable, immutable
 AGENT_NAME=frontier-login       # human-readable, mutable, display only
 AGENT_CONTEXT=frontier-login    # scopes lore relevance
 POLL_INTERVAL_SEC=300
-AGENT_ROLE=worker               # worker | hub
+AGENT_ROLES=build,slurm.submit,results.groom,install   # comma-separated roles
 REPO_PATH=/ccs/home/agallojr/agent-mesh   # literal absolute path; no $HOME/~
-AGENT_CAPABILITIES=build,slurm.submit,results.groom,install   # comma-separated
 ```
 
 `AGENT_ID` is the routing key and appears in paths. Changing it orphans that
@@ -129,11 +153,13 @@ values: `frontier-login`, `wsl-laptop`, `linux-server`, `macos-laptop`.
 Agents sharing a context can trust each other's operational lore; agents in
 different contexts should treat it as advisory.
 
-`AGENT_CAPABILITIES` is a comma-separated list of what this node can do; it is
-the source of the `capabilities` list in registration (§4.3). Senders match on
-it when addressing tasks. `REPO_PATH` MUST be a literal absolute path (no
-`$HOME`, `~`, or other expansion) and must appear verbatim in the node's
-`~/.claude/mesh-git-allowlist.txt`, or the git gate denies the mesh's own syncs.
+`AGENT_ROLES` is a comma-separated list of the roles this node holds; it is the
+source of the `roles` list in registration (§4.3). Each role is a queue the node
+monitors (`tasks/roles/<role>/`) and the unit senders address. A lone legacy
+`AGENT_ROLE` is read as a one-role list for back-compat. `REPO_PATH` MUST be a
+literal absolute path (no `$HOME`, `~`, or other expansion) and must appear
+verbatim in the node's `~/.claude/mesh-git-allowlist.txt`, or the git gate denies
+the mesh's own syncs.
 
 ### 4.2 `~/.agent-credentials.env` (mode 600)
 
@@ -164,14 +190,13 @@ schema_version: 1
 agent_id: a7f3c2
 agent_name: frontier-login
 context: frontier-login
-role: worker
+roles: [build, slurm.submit, results.groom, install]
 hostname: login09.frontier.olcf.ornl.gov
 platform: "Linux 5.14.21 / Cray SLES 15"
 cwd: /ccs/home/agallojr/agent-mesh
 repo_commit: abc1234
 model: claude-opus-4-8
 poll_interval_sec: 300
-capabilities: [build, slurm.submit, results.groom, install]
 credentials_available: [GH_PAT_RESEARCH, OLCF_PROJECT_ID]
 registered_at: 2026-07-18T14:30:00Z
 session_started: 2026-07-18T14:30:00Z
@@ -192,7 +217,7 @@ well-known path at the **bus root**:
 guidance/CLAUDE.md          the well-known entry point; same on every node
 ```
 
-Because it lives in the bus, every node — hub laptop or remote worker — gets
+Because it lives in the bus, every node — laptop or remote — gets
 byte-identical, version-controlled instructions from one `git pull`. The entry
 point MUST NOT depend on any machine-local path, which remote nodes do not have.
 The bus owns the composition (the product never reaches up out of its submodule):
@@ -258,19 +283,22 @@ on a permission, while git elsewhere stays denied by default.
 
 ## 5. Task messages
 
-Path: `tasks/<target-agent-id>/<timestamp>-<seq>-<slug>.md`
+Path (role queue): `tasks/roles/<role>/<timestamp>-<seq>-<slug>.md`
+Path (direct): `tasks/<target-agent-id>/<timestamp>-<seq>-<slug>.md`
 Filename timestamp is UTC `YYYYMMDDTHHMM`. Messages are immutable once pushed.
+Most work is posted to a role queue; direct inboxes carry replies and
+deliberately targeted sends.
 
 ```markdown
 ---
 schema_version: 1
 id: 20260718T1432-0001
 from: 4b91de
-to: a7f3c2
+to: role:build
 type: task.request
 created: 2026-07-18T14:32:00Z
 priority: normal            # low | normal | high
-credentials: [GH_PAT_RESEARCH]
+credentials: [GH_PAT_RESEARCH]   # to: may be role:<role> or a bare agent_id
 depends_on: []
 timeout_min: 120
 ---
@@ -293,9 +321,12 @@ What to report, and how far to back off before giving up.
 **Types:** `task.request`, `task.cancel`, `query`, `reply`, `lore.submit`,
 `lore.deprecate`.
 
-**Addressing:** `to` is always an `agent_id`, resolved by the sender from
-`agents/*.yaml` by matching `context` and `capabilities`. Senders never
-hardcode a machine name.
+**Addressing:** `to` is normally `role:<role>` — the sender posts into that role's
+queue and any holder claims it (§6). `to` may instead be a bare `agent_id` for a
+direct send (a reply, or work deliberately pinned to one node). Senders resolve
+roles and holders from `agents/*.yaml` (the `roles` list) and never hardcode a
+machine name. An operator posts to a role with the `mesh-post` command
+(`operator-interface.md`); any node may post to a role queue the same way.
 
 **Replies route to the sender's inbox.** A `reply` (and its `in_reply_to`) is
 written as a new file in `tasks/<original-sender-id>/`, not into the responder's
@@ -350,27 +381,46 @@ credential-shaped before writing.
 `artifacts` holds pointers — repo URLs, filesystem paths, job IDs. Never
 payloads. Large results belong in the experiment results repository.
 
+**Claiming a task from a role queue (accept-as-claim).** When several nodes hold
+the same role they all see the same queued task. Ownership is resolved with no
+coordinator, by the same `accepted` write above:
+
+> To take task `T` off a role queue, create `status/<T>.json` with your `agent_id`
+> and `state: accepted`, and **push before doing any work.**
+
+Git serializes pushes to the branch: the first push wins and that node owns `T`.
+A loser's push is rejected; it runs `pull --rebase`, sees that `status/<T>.json`
+now exists and is not its own, and **yields** — it drops the task and moves on,
+having spent only a pull, not a compute run (the claim precedes execution). This is
+invariant §1.7 ("never resolve conflicts textually") applied to the claim: the
+re-derived intent against current state is "already taken, yield". A task on a
+direct inbox `tasks/<id>/` has a single consumer and never contends.
+
 **Liveness by ACK, not heartbeat.** A node proves it is alive by *acting* on its
 inbox: reading a message and writing status `accepted` is the acknowledgment. To
-check whether a specific node is still alive and listening, the hub drops a
-`query` (a ping) into that node's inbox; the node ACKs by writing a `reply` into
-the hub's inbox (`tasks/<hub-id>/`) within a few poll intervals, which the hub's
-own inbox scan then surfaces. Silence across several intervals implies the node
+check whether a specific node is still alive and listening, any participant drops a
+`query` (a ping) into that node's direct inbox (`tasks/<id>/`); the node ACKs by
+writing a `reply` into the sender's inbox within a few poll intervals, which the
+sender's own inbox scan then surfaces. Silence across several intervals implies the node
 is down. There is no timer-driven liveness signal and no idle-node writes — a
 node with an empty inbox only pulls, so mesh traffic is proportional to real
 work, not to node count. This is the design's answer to hosted-git rate limits.
 
 **Orphan detection.** A task left in `accepted`/`running` with no terminal status
-after a generous bound (e.g. the task's `timeout_min`, or a hub-chosen multiple of
-the owner's `poll_interval_sec`) is presumed dead and shown as `stale`. Only the
-owning agent or the human may transition it to `failed` — a dead agent cannot
-report its own death, so staleness is inferred, never asserted by a third party.
+past a generous bound (its `timeout_min`, or a multiple of the owner's
+`poll_interval_sec`) is presumed dead. Discerning this is a read-only ledger query
+any node or operator can run — scan `status/**` for non-terminal states whose
+`updated` is stale, and report the owning `agent_id`. The mesh does not reap:
+recovery is manual (restart the named node). Only the owning agent or the human may
+transition a task to `failed` — a dead agent cannot report its own death, so
+staleness is inferred, never asserted by a third party.
 
 ---
 
 ## 7. Lore notes
 
-Path: `memory/lore/<slug>.md`. One fact per file. Hub writes only.
+Path: `memory/lore/<slug>.md`. One fact per file. Written by the `librarian` role
+only.
 
 ```markdown
 ---
@@ -400,14 +450,15 @@ Which machines, versions, or conditions this applies to — and which it does no
 ```
 
 **Staleness.** A note unverified for 90 days is set to `confidence: stale` by
-the hub. Stale notes are still surfaced, but flagged. Re-verification is part
-of the librarian's job, not an afterthought — a wrong operational gotcha is
-worse than no gotcha.
+the `librarian` holder. Stale notes are still surfaced, but flagged.
+Re-verification is part of the librarian's job, not an afterthought — a wrong
+operational gotcha is worse than no gotcha.
 
-**Submission flow.** Workers never write `memory/lore/`. They drop a
-`lore.submit` message in `mailbox/roles/librarian/` with the note body inline.
-The hub dedupes against existing notes, validates schema, sets `verified_on`,
-assigns the `id`, writes the note, and updates `index.md`.
+**Submission flow.** Nodes that do not hold the `librarian` role never write
+`memory/lore/`. They drop a `lore.submit` message in `mailbox/roles/librarian/`
+with the note body inline. The `librarian` holder dedupes against existing notes,
+validates schema, sets `verified_on`, assigns the `id`, writes the note, and
+updates `index.md`.
 
 **index.md** is a flat list of `id | title | contexts | confidence`, one per
 line, sorted by id. Order-independent and union-merge safe.
@@ -440,11 +491,16 @@ loop (poller subagent):
   0. if ~/.mesh-stop exists: end cleanly
   1. git -C /abs/repo pull --rebase; git -C /abs/repo submodule update --init
      --recursive   (a product bump on the bus takes effect here)
-  2. read tasks/<AGENT_ID>/, branch by message type:
-       task.request/task.cancel/query with no status file -> NEW work (step 4)
+  2. scan this node's queues: tasks/roles/<role>/ for each role in AGENT_ROLES,
+     plus the direct inbox tasks/<AGENT_ID>/. Branch by message type:
+       task.request/task.cancel/query with no status file -> claimable work (step 3)
        reply (has in_reply_to) -> information to surface (step 4½)
-       nothing new and no unsurfaced reply -> write nothing, sleep (idle = pull only)
-  3. for each NEW: write status -> accepted (this ACK is the liveness signal); sync
+       nothing claimable and no unsurfaced reply -> write nothing, sleep (idle=pull)
+  3. CLAIM each candidate: write status -> accepted (agent_id = you) and sync.
+       On push rejection, pull --rebase and re-check status/<id>.json: if it now
+       exists and is not yours, YIELD (another holder claimed it) and move on; else
+       retry the claim. The winning accepted write is both the claim and the
+       liveness ACK. (A direct-inbox task has one consumer; the claim never contends.)
   4. task.request: verify creds; status blocked if missing names, else
        status -> running; sync; dispatch executor sub-subagent and wait
        terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md
@@ -454,9 +510,10 @@ loop (poller subagent):
        sender's own inbox scan senses them -- outboxes are never polled.
   4½. for each reply in your inbox: surface it to the human (from, in_reply_to,
        body). A reply is information: no status write, no executor, no commit.
-       Never delete it -- the hub archive sweep is the only cleanup.
+       Never delete it -- the archiver sweep is the only cleanup.
   5. submit any lore to mailbox/roles/librarian/
-  6. sleep POLL_INTERVAL_SEC
+  6. if you hold librarian / archiver / a running workflow, run those duties (below)
+  7. sleep POLL_INTERVAL_SEC
 ```
 
 **`sync`** is three separate commands, each with its own literal `-C /abs/repo`
@@ -470,46 +527,48 @@ Three attempts, then exponential backoff. Never `-X ours`, never `-X theirs`,
 never hand-resolve a textual conflict — the agent's job is to re-derive its
 intended write against current state.
 
-**Hub-only duties:** drain `mailbox/roles/librarian/`, curate lore, run the
-archive sweep, render the console view, and drive workflows (§8.1).
+**Role-specific duties (only if you hold the role):** the `librarian` holder drains
+`mailbox/roles/librarian/`, curates `memory/lore/**`, and re-verifies stale notes;
+the `archiver` holder runs the retention sweep (§9); a node that originates a
+workflow drives it (§8.1). A node holding none of these does none of them.
 
-### 8.1 Workflow orchestration (hub only)
+### 8.1 Workflow orchestration (any node)
 
-The mesh supports two levels of coordination over the same ledger:
+Any node may run a **workflow** — a multi-step chain it drives autonomously,
+originating each step to a role queue, waiting for that step's terminal status,
+then originating the next. The node that originates a workflow owns its record and
+is that record's sole writer. Nothing is centralized: workflows are a capability a
+node exercises, not a hub privilege.
 
-- **Human-in-the-loop.** The operator's interface session ("main") is *not* a
-  node. It relays intent to the hub and reads results from the git history (a
-  watermark diff). It never writes the repo, so it never races the hub.
-- **Autonomous hub-driven workflows.** The hub chains multiple task steps across
-  workers without the human in each step, then the human observes the whole run
-  from the ledger whenever they check.
+An operator posts a one-shot `task.request` or `query` and reads results from the
+ledger; it does not drive workflows (it writes nothing but queue messages). A node
+that wants a chain run either drives it itself or posts the request to a role whose
+holder does.
 
-These compose: main injects and observes; the hub acts. Both read the same
-durable ledger; only the hub (and workers, for their own status/outbox) writes.
+**Durable plan.** A workflow is a repo record `workflows/<workflow-id>.yaml`, sole
+writer the originating node, with `state`, a `cursor`, and a `steps[]` list where
+each step carries `target` (a `role:<role>` or an `agent_id`), `spec`, the
+`task_id` originated for it, `status`, and `result_ref`. Because the plan is in the
+repo (not only in the driver's context), a driver that dies mid-workflow — process
+kill, token expiry — resumes on restart: it re-reads its own `workflows/` records,
+finds `running` ones, and continues from `cursor`.
 
-**Durable plan.** A workflow is a repo record `workflows/<workflow-id>.yaml`,
-sole writer the hub, with `state`, a `cursor`, and a `steps[]` list where each
-step carries `target`, `spec`, the `task_id` the hub originated for it, `status`,
-and `result_ref`. Because the plan is in the repo (not only in the hub's
-context), a hub that dies mid-workflow — process kill, token expiry — resumes on
-restart: it re-reads `workflows/`, finds `running` records, and continues from
-`cursor`.
+**Advancement, one step per cycle:** at the cursor, a `pending` step is originated
+(write the `task.request` into the target role queue AND update the record in ONE
+commit, so task and plan land atomically); a `running` step is checked against its
+`status/<task_id>.json` — on `done`, record `result_ref` and advance the cursor (or
+finish the workflow); on `failed`, halt the workflow.
 
-**Advancement, one step per cycle:** at the cursor, a `pending` step is
-originated (write the `task.request` into the worker's inbox AND update the
-record in ONE commit, so task and plan land atomically); a `running` step is
-checked against its `status/<task_id>.json` — on `done`, record `result_ref` and
-advance the cursor (or finish the workflow); on `failed`, halt the workflow.
+**Bounded outbox reads.** Driving a workflow is the ONLY case where a node reads
+another node's outbox, and only for a task that workflow originated — to fold a
+prior step's result into the next step's task body. A driver never blind-sweeps
+outboxes; task results are otherwise consumed from the ledger.
 
-**Bounded outbox reads.** Driving a workflow is the ONLY case where the hub reads
-a worker's outbox, and only for a task that workflow originated — to fold a prior
-step's result into the next step's task body. The hub never blind-sweeps
-outboxes; task results are otherwise consumed by main from the ledger.
-
-**Idempotence.** Plan-in-record + one-commit-per-transition means a restarted hub
-never double-originates (a step already `running` has a `task_id` and a status
-file) and never skips (a `pending` step at the cursor is originated). Retention:
-workflow records follow terminal-status retention (§9) once `state` is terminal.
+**Idempotence.** Plan-in-record + one-commit-per-transition means a restarted
+driver never double-originates (a step already `running` has a `task_id` and a
+status file) and never skips (a `pending` step at the cursor is originated).
+Retention: workflow records follow terminal-status retention (§9) once `state` is
+terminal.
 
 ---
 
@@ -526,8 +585,8 @@ workflow records follow terminal-status retention (§9) once `state` is terminal
 | Lore notes | permanent until superseded |
 | Agent registrations | overwritten each boot |
 
-Archiving is a `git mv` into `_archive/YYYY-MM/`, performed by the hub. An
-agent MUST NOT archive another agent's unprocessed message.
+Archiving is a `git mv` into `_archive/YYYY-MM/`, performed by the holder of the
+`archiver` role. An agent MUST NOT archive another agent's unprocessed message.
 
 Rationale for short mailbox retention: it makes promotion into `memory/lore/`
 a deliberate ritual rather than an afterthought, and keeps the coordination
@@ -539,9 +598,11 @@ repo small enough to clone quickly from a login node.
 
 Deferred until an observed failure demands them:
 
-- Role election or leases. The hub is the librarian by declaration.
+- Enforced uniqueness (election or leases) for shared-output roles. Single-holder
+  is an operating convention; running two `librarian` holders is at your own risk.
+- Automated reaping of dead claimants. Staleness is a read-only query and recovery
+  is a manual restart (§6).
 - A heartbeat registry separate from per-task status.
-- Worker-to-worker addressing.
 - Encrypted payloads in-repo.
 
 Adding any of these is a protocol version bump. Every file carries
@@ -551,23 +612,22 @@ Adding any of these is a protocol version bump. Every file carries
 
 ## 11. Failure modes and what survives
 
-The star topology and the single-writer/append-only invariants determine
+The role-addressed topology and the single-writer/append-only invariants determine
 exactly what a failure can and cannot destroy.
 
 **Data survives any and every node death.** All coordination state lives in the
-GitHub repository and is fully mirrored in every clone. If a worker's machine is
+GitHub repository and is fully mirrored in every clone. If a node's machine is
 lost, the tasks it was sent, the status it wrote, and its outbox replies are all
 still in the remote and in every other clone. Bringing a replacement node online
 is a `git clone` plus an identity file. There is no per-node state that exists
 only locally: an agent writes nothing durable outside its clone.
 
-**The hub is a coordination bottleneck, not a data-loss point.** Because workers
-never address each other, cross-worker traffic stalls while the hub is down —
-new librarian sweeps do not run, and hub-mediated relays wait. Nothing is lost:
-queued messages simply accumulate in inboxes (an unstaffed queue is correct
-behavior, §2) and drain when the hub returns. The hub holds no unique data that
-is not already in the repo, so a hub machine can be rebuilt from the remote like
-any other node.
+**No node is a coordination bottleneck.** There is no hub in the path of
+cross-node traffic. If the only holder of a role is down, that role's queue simply
+accumulates and drains when a holder returns (an unstaffed queue is correct
+behavior, §2) — other roles keep running. No node holds unique data that is not
+already in the repo, so any node can be rebuilt from the remote by a `git clone`
+plus an identity file.
 
 **GitHub is the true single point of failure.** It is the one component whose
 loss halts the mesh, and — for the window between the last push and an outage —
@@ -582,9 +642,9 @@ append-only design means a reconnecting node fast-forwards or rebases cleanly
 without ever needing to resolve a textual conflict (§8). Concurrent pushes to
 different paths race only at the git layer and are handled by pull-rebase-retry.
 
-**Worker-to-worker isolation is policy, not mechanism.** Two workers *could*
-technically read and write each other's paths — nothing in git prevents it. v1
-forbids it by convention so that the writer table (§3.1) stays a closed,
-auditable set and the hub remains the only coordination authority. A future
-version may relax this; until then, a worker addressing another worker is a
-protocol violation, not a supported path.
+**Node-to-node addressing is supported.** Any node may post work to any role queue
+or to another node's direct inbox; the writer table (§3.1) plus unique filenames
+keep this conflict-free without a central authority. The single-writer invariant is
+preserved not by forbidding cross-node traffic but by construction: inbox files are
+uniquely named, and `status/<task-id>.json` has exactly one writer — the node that
+claimed it (§6). What was a policy restriction in the star design is removed here.

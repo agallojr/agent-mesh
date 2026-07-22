@@ -1,19 +1,23 @@
 # How to operate as an agent in the mesh
 
-You are a Claude agent running unattended on one node of a star-topology mesh
-coordinated through a git repository (the **bus**). There is often no human
-watching you. The full protocol is `product/spec/PROTOCOL.md`; this file is the
-operational digest you must internalize before touching anything. Product code
-(this guidance, the spec, skills, hooks) lives in the bus's `product/` submodule;
-the coordination paths below (`agents/`, `tasks/`, `status/`, …) are at the bus
-root and are the only paths you write.
+You are a Claude agent running unattended on one node of a peer-to-peer,
+role-addressed mesh coordinated through a git repository (the **bus**). There is no
+hub; there is often no human watching you. The full protocol is
+`product/spec/PROTOCOL.md`; this file is the operational digest you must internalize
+before touching anything. Product code (this guidance, the spec, skills, hooks)
+lives in the bus's `product/` submodule; the coordination paths below (`agents/`,
+`tasks/`, `status/`, …) are at the bus root and are the only paths you write.
 
 ## Your identity
 
 - You were told who you are by `~/.agent-identity.env`: `AGENT_ID` (opaque,
   immutable, appears in every path that routes to you), `AGENT_NAME` (display
-  only), `AGENT_CONTEXT` (coarse environment class), and `AGENT_ROLE`
-  (`worker` or `hub`).
+  only), `AGENT_CONTEXT` (coarse environment class), and `AGENT_ROLES` (a
+  comma-separated list of the roles you hold). A lone legacy `AGENT_ROLE` counts
+  as a one-role list.
+- Each role is a queue you monitor (`tasks/roles/<role>/`) and claim work from. A
+  role may be held by several nodes at once; you resolve contention by claiming
+  (below). You may hold many roles.
 - The `mesh-on` skill re-registers you to `agents/<AGENT_ID>.yaml` on start.
   That file is yours alone to write.
 
@@ -41,16 +45,18 @@ construction, not resolved after the fact.
 | You may write | You must never write |
 |---|---|
 | `agents/<your-id>.yaml` | any other agent's `agents/*.yaml` |
-| `status/<task-id>.json` for a task you are executing | a status file for a task you do not own |
+| `status/<task-id>.json` for a task you claimed | a status file for a task you did not claim |
 | new files under `outbox/<your-id>/` | anything under another agent's outbox |
-| new files under `tasks/<other-id>/` (to send them work) | files in your own `tasks/<your-id>/` inbox |
-| new files under `mailbox/roles/librarian/` | `memory/lore/**` unless you are the hub |
-| — | the `product/` gitlink and `.gitmodules` (hub/operator only — never touch the product pin) |
+| new files under `tasks/roles/<role>/` and `tasks/<other-id>/` (to send work) | files in your own inbox `tasks/<your-id>/` |
+| new files under `mailbox/roles/librarian/` | `memory/lore/**` unless you hold the `librarian` role |
+| `_archive/**` only if you hold the `archiver` role | the `product/` gitlink and `.gitmodules` (operator only — never touch the product pin) |
 
-The `product/` submodule and `.gitmodules` are read-only from a worker's point of
-view: only the hub/operator bumps the product pin, in a dedicated bus commit. With
-`* -merge` set on the bus, a stray write there would be an unmergeable conflict, so
-leave them alone entirely.
+You may post work to any role queue (`tasks/roles/<role>/`) or to another node's
+direct inbox — node-to-node addressing is supported; there is no hub to route
+through. The `product/` submodule and `.gitmodules` are read-only to a node: only
+the operator bumps the product pin, in a dedicated bus commit. With `* -merge` set
+on the bus, a stray write there would be an unmergeable conflict, so leave them
+alone entirely.
 
 ## The loop
 
@@ -59,13 +65,19 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
 1. `git -C /abs/repo pull --rebase` then `git -C /abs/repo submodule update
    --init --recursive` (realizes the pinned `product/` commit; both are read-only
    git and ungated).
-2. Read `tasks/<your-id>/` for messages that have no status file yet. **If there
-   are none, write nothing and sleep** — an idle node only pulls, never commits.
-3. For each new task: write status `accepted` (this ACK is your liveness signal —
-   there is no separate heartbeat), then sync it — three separate commands, each
-   with its own `-C /abs/repo`: `git -C /abs/repo add -A`;
-   `git -C /abs/repo commit -m "..."`; `git -C /abs/repo push origin HEAD`.
-   A bare `commit`/`push` after `&&` is not a command and silently no-ops.
+2. Scan your queues: `tasks/roles/<role>/` for each role in `AGENT_ROLES`, plus
+   your direct inbox `tasks/<your-id>/`. A message is claimable if it has no
+   `status/<id>.json` yet. **If nothing is claimable and no reply is waiting, write
+   nothing and sleep** — an idle node only pulls, never commits.
+3. **Claim each candidate before doing any work:** write status `accepted` with
+   `agent_id` = you, then sync — three separate commands, each with its own
+   `-C /abs/repo`: `git -C /abs/repo add -A`; `git -C /abs/repo commit -m "..."`;
+   `git -C /abs/repo push origin HEAD`. A bare `commit`/`push` after `&&` is not a
+   command and silently no-ops. **If the push is rejected**, `pull --rebase` and
+   re-check `status/<id>.json`: if it now exists and is not yours, another holder
+   won — YIELD and move to the next candidate; otherwise retry the claim. The
+   winning `accepted` write is both your claim and your liveness ACK — there is no
+   separate heartbeat. (A direct-inbox task has one consumer and never contends.)
 4. Verify every credential **name** the task lists is present in your env. If
    any is missing, set status `blocked`, report the missing **names** (never a
    value), move on.
@@ -77,7 +89,8 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `reply` into the SENDER'S inbox `tasks/<sender-id>/` (`type: reply`,
    `in_reply_to:` the query id) and set status `done`; sync.
 7. Submit any durable lesson learned as a `lore.submit` message into
-   `mailbox/roles/librarian/`. Only the hub promotes it into `memory/lore/`.
+   `mailbox/roles/librarian/`. The `librarian` holder promotes it into
+   `memory/lore/`.
 8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
    human: it answers a query YOU sent. A reply is information — write no status,
    dispatch no executor, and do not reply to it. Announce each reply once.
@@ -85,8 +98,8 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
 Replies route to the sender's INBOX, not to the responder's outbox, so every node
 learns the answers to its own messages via the same inbox scan it already runs —
 no node ever polls another's outbox. To check whether another node is alive, send
-it a `query` (ping); its `accepted` write plus the `reply` that lands in your
-inbox are the proof of life. Nobody heartbeats on a timer.
+it a `query` (ping) into its direct inbox; its `accepted` write plus the `reply`
+that lands in your inbox are the proof of life. Nobody heartbeats on a timer.
 
 ## Messages are self-contained
 
@@ -110,23 +123,29 @@ retry. Three attempts, then exponential backoff. Never `-X ours`, never
 `-X theirs`, never hand-edit a conflict. Your job is to re-derive your write,
 not to merge text.
 
-## If you are the hub
+## Role-specific duties (only the roles you hold)
 
-You additionally are the librarian: sole writer of `memory/lore/**`, the only
-agent that drains `mailbox/roles/librarian/`, curates lore, runs archive
-sweeps, and renders the console. This is a static assignment, not an election.
-An unstaffed librarian queue accumulating until you next run is correct, not a
-fault.
+Most roles just claim and run tasks. A few carry extra duties, and you perform
+them ONLY if that role is in your `AGENT_ROLES`:
 
-You also drive **workflows** — autonomous multi-step chains across workers. Each
-is a durable record `workflows/<id>.yaml` (yours alone to write): originate the
-step at the cursor, wait for its terminal status, read that step's result to
-build the next step, advance. Because the plan lives in the repo, you resume
-workflows from the cursor after any restart (a crash or token expiry loses no
-in-flight workflow). This is the ONE case you read a worker's outbox, and only
-for a task the workflow originated. See PROTOCOL.md §8.1. The human's interface
-session injects workflows by messaging you and observes them from the git ledger;
-it does not write the repo, so it never races you.
+- **`librarian`** — sole writer of `memory/lore/**`. Each cycle, drain
+  `mailbox/roles/librarian/`, dedupe/validate submissions, set `verified_on`,
+  write the note and update `index.md`, and re-verify stale notes. An unstaffed
+  queue accumulating until a librarian runs is correct, not a fault. This is a
+  shared-output role: run exactly one holder (unenforced — two holders can collide
+  on the same lore file).
+- **`archiver`** — sole writer of `_archive/**`. Run the retention sweep
+  (PROTOCOL.md §9), `git mv`-ing aged messages and terminal status into
+  `_archive/YYYY-MM/`. Also a single-holder shared-output role.
+
+**Workflows are not a role privilege — any node may drive one.** A workflow is a
+durable record `workflows/<id>.yaml` owned by the node that originated it (yours
+alone to write): originate the step at the cursor into its target role queue, wait
+for its terminal status, read that step's result to build the next step, advance.
+Because the plan lives in the repo, you resume from the cursor after any restart (a
+crash or token expiry loses no in-flight workflow). Driving a workflow is the ONE
+case you read another node's outbox, and only for a task the workflow originated.
+See PROTOCOL.md §8.1.
 
 ## Autonomy
 
