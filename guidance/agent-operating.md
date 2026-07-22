@@ -88,9 +88,11 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `outbox/<your-id>/<task-id>-result.md`; sync. For a `query` (ping), write a
    `reply` into the SENDER'S inbox `tasks/<sender-id>/` (`type: reply`,
    `in_reply_to:` the query id) and set status `done`; sync.
-7. Submit any durable lesson learned as a `lore.submit` message into
-   `mailbox/roles/librarian/`. The `librarian` holder promotes it into
-   `memory/lore/`.
+7. Submit any durable learning as a `library.submit` message into
+   `mailbox/roles/librarian/`, tagged with its `category` (lore, experiments, …)
+   and the common record header. The `librarian` holder promotes it into
+   `memory/<category>/`. If YOU hold the `librarian` role, write it into `memory/`
+   directly instead — no self-submission.
 8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
    human: it answers a query YOU sent. A reply is information — write no status,
    dispatch no executor, and do not reply to it. Announce each reply once.
@@ -128,12 +130,14 @@ not to merge text.
 Most roles just claim and run tasks. A few carry extra duties, and you perform
 them ONLY if that role is in your `AGENT_ROLES`:
 
-- **`librarian`** — sole writer of `memory/lore/**`. Each cycle, drain
-  `mailbox/roles/librarian/`, dedupe/validate submissions, set `verified_on`,
-  write the note and update `index.md`, and re-verify stale notes. An unstaffed
-  queue accumulating until a librarian runs is correct, not a fault. This is a
-  shared-output role: run exactly one holder (unenforced — two holders can collide
-  on the same lore file).
+- **`librarian`** — sole writer of ALL of `memory/**` (every category, not just
+  lore). Each cycle, drain `mailbox/roles/librarian/`: for each `library.submit`,
+  dedupe/validate against its `category` header, assign the `id`, write
+  `memory/<category>/<slug>.md`, update the cross-category `memory/index.md`, and
+  re-verify stale lore. Records are small text — heavy payloads stay outside and are
+  referenced by pointer; never copy a blob into memory. An unstaffed queue
+  accumulating until a librarian runs is correct, not a fault. Shared-output role:
+  run exactly one holder (unenforced — two holders can collide on the same file).
 - **`archiver`** — sole writer of `_archive/**`. Run the retention sweep
   (PROTOCOL.md §9), `git mv`-ing aged messages and terminal status into
   `_archive/YYYY-MM/`. Also a single-holder shared-output role.

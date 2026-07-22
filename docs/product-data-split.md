@@ -149,12 +149,30 @@ alias, `pullmesh` = `git pull` followed by the `--remote` submodule update, so o
 command (`git -C /abs/bus pullmesh`) advances both the bus and the product tip.
 INSTALL registers this alias per clone.
 
-**The library stays in the bus.** `memory/` (lore + experiment logs) is written at
-runtime (the `librarian` role curates lore; a workflow writes experiment logs)
-and is meant to be read by every node — so a plain `git pull` of the bus delivers
-the latest lore and logs to everyone. It is deliberately *not* in the product
-submodule (which tracks the product repo, not deployment state) and *not* a
-separate repo (which would break one-pull propagation).
+**The library stays in the bus.** `memory/` (an open set of durable-knowledge
+categories — lore, experiments, and any others) is written at runtime solely by the
+holder of the `librarian` role and is meant to be read by every node — so a plain
+`git pull` of the bus delivers the latest knowledge to everyone. It is deliberately
+*not* in the product submodule (which tracks the product repo, not deployment state)
+and *not* a separate repo (which would break one-pull propagation).
+
+**An outer library repo may wrap the bus (optional deployment layout).** A human
+who keeps hand-authored research notes in their own git repo can mount the bus as a
+submodule of that notes repo (`--remote`, tracking `main`, the same trick used for
+`product/`):
+
+```
+research-notes/            OUTER repo — the human's hand-authored notes
+  └── bus/  = agent-mesh-bus   (submodule tracking main)
+        └── product/ = agent-mesh (submodule)
+```
+
+Then a recursive pull of `research-notes` gives the human *everything* — their notes
+plus the bus's `memory/`, coordination trail, and product — in one place, while a
+node still clones only the bus and gets exactly what it needs. Submodules nest one
+direction, so this is a clean single-writer split: the human writes the outer repo,
+the `librarian` writes `bus/memory/`, and each node writes only its own
+`outbox/`/`status/`. Nothing in the mesh writes or even clones the outer repo.
 
 **Blobs are handled outside the mesh.** Large binary payloads never enter the bus.
 Where they go — a git-LFS repo, an S3 bucket, a scratch filesystem, nothing at all

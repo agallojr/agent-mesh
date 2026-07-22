@@ -75,9 +75,10 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /status/<task-id>.json         live task state; writer: the agent that claimed it
 /outbox/<agent-id>/            results and replies; writer: that agent only
 /mailbox/roles/librarian/      lore submissions; writer: anyone
-/memory/lore/<slug>.md         curated notes; writer: holder of `librarian` role
-/memory/lore/index.md          union-merge safe index; writer: `librarian` role
-/memory/experiments/           experiment logs (the library); writer: `librarian`
+/memory/<category>/            the library — open set of durable-knowledge
+                               categories (lore/, experiments/, …); writer:
+                               `librarian` role only
+/memory/index.md               cross-category library catalog; writer: `librarian`
 /memory/best-practices.user.md deployment-specific rules; writer: human + librarian
 /workflows/<workflow-id>.yaml  durable multi-step workflow plans; writer: the node
                                that originated the workflow
@@ -117,7 +118,7 @@ queue it is established by the **first node to write an `accepted` status and pu
 ### 3.2 .gitattributes
 
 ```
-memory/lore/index.md merge=union
+memory/index.md merge=union
 * -merge
 ```
 
@@ -318,8 +319,10 @@ Concrete, checkable completion criteria.
 What to report, and how far to back off before giving up.
 ```
 
-**Types:** `task.request`, `task.cancel`, `query`, `reply`, `lore.submit`,
-`lore.deprecate`.
+**Types:** `task.request`, `task.cancel`, `query`, `reply`, `library.submit`,
+`library.deprecate`. (`library.submit` carries any durable-knowledge record for the
+librarian — a lore note, an experiment log, or any other category; it generalizes
+the older `lore.submit`.)
 
 **Addressing:** `to` is normally `role:<role>` — the sender posts into that role's
 queue and any holder claims it (§6). `to` may instead be a bare `agent_id` for a
@@ -417,22 +420,57 @@ staleness is inferred, never asserted by a third party.
 
 ---
 
-## 7. Lore notes
+## 7. The library (durable memory)
 
-Path: `memory/lore/<slug>.md`. One fact per file. Written by the `librarian` role
-only.
+`memory/` is the durable knowledge store — the **library**. It is an **open set of
+categories**, not a fixed schema: `memory/<category>/` holds records of one kind of
+durable learning. `lore/` (curated operational hints) and `experiments/` (run logs)
+are the first two categories; new ones are added by convention, with no protocol
+change.
+
+**One writer: the `librarian` role.** Every path under `memory/` is written solely
+by the holder of the `librarian` role — for all categories, not just lore. A node
+that does not hold `librarian` never writes `memory/`; it submits (below). A node
+that *does* hold `librarian` (a worker that is its own librarian) writes `memory/`
+directly and inline, with no self-submission. Either way `memory/` has exactly one
+writer. (Running two `librarian` holders risks a shared-path collision;
+single-holder is an operating convention, §10.)
+
+**Common record header.** Every library record, in any category, carries a minimal
+header so one index can span them all and the archiver knows what to keep:
+
+```yaml
+---
+schema_version: 1
+id: <assigned by the librarian>
+title: one line
+category: lore            # the memory/<category>/ it belongs to
+provenance: worker        # worker | workflow | human
+contexts: [frontier-login]
+discovered_by: a7f3c2
+discovered_on: 2026-07-18
+retention: permanent      # permanent | permanent-until-superseded | archive-after-Nd
+---
+```
+
+Category-specific fields may follow. **Lore** is the canonical curated example — it
+adds `tags`, `verified_on`, `confidence`, `supersedes`, and a symptom/cause/fix/scope
+body:
 
 ```markdown
 ---
 schema_version: 1
 id: lore-0042
 title: HDF5 must precede MPI in link order
+category: lore
+provenance: worker
 contexts: [frontier-login]
 tags: [build, cmake, hdf5]
 discovered_by: a7f3c2
 discovered_on: 2026-07-18
 verified_on: 2026-07-18
 confidence: high          # high | medium | stale
+retention: permanent-until-superseded
 supersedes: []
 ---
 
@@ -449,19 +487,31 @@ Exact commands or configuration. Be specific about where and when.
 Which machines, versions, or conditions this applies to — and which it does not.
 ```
 
-**Staleness.** A note unverified for 90 days is set to `confidence: stale` by
-the `librarian` holder. Stale notes are still surfaced, but flagged.
-Re-verification is part of the librarian's job, not an afterthought — a wrong
-operational gotcha is worse than no gotcha.
+**Payloads by pointer.** A record is small text (markdown/JSON). Any heavy payload
+it refers to — a dataset, a large result file, a binary — stays OUTSIDE the bus and
+is referenced by pointer (a URL, path, or job id) in the record. The library holds
+knowledge records and pointers, never large blobs (the git gate rejects blobs
+regardless). This keeps a recursive pull of the library from becoming a data-lake
+download.
 
-**Submission flow.** Nodes that do not hold the `librarian` role never write
-`memory/lore/`. They drop a `lore.submit` message in `mailbox/roles/librarian/`
-with the note body inline. The `librarian` holder dedupes against existing notes,
-validates schema, sets `verified_on`, assigns the `id`, writes the note, and
-updates `index.md`.
+**Submission flow (`library.submit`).** A node without the `librarian` role drops a
+`library.submit` message in `mailbox/roles/librarian/` with the record body inline
+and its `category` set. The `librarian` holder dedupes, validates the header,
+assigns the `id`, sets any category-specific verification (e.g. lore's
+`verified_on`), writes `memory/<category>/<slug>.md`, and updates the index. An
+unstaffed mailbox simply accumulates until a librarian runs — correct, not a fault.
+A node that is its own librarian performs the same steps inline instead of via the
+mailbox.
 
-**index.md** is a flat list of `id | title | contexts | confidence`, one per
-line, sorted by id. Order-independent and union-merge safe.
+**Staleness (lore).** A lore note unverified for 90 days is set to
+`confidence: stale` by the `librarian` holder. Stale notes are still surfaced but
+flagged. Re-verification is part of the librarian's job — a wrong operational gotcha
+is worse than no gotcha.
+
+**index.md** is the library catalog: a flat list of
+`id | category | title | contexts | retention`, one per line, sorted by id.
+Order-independent and union-merge safe. The librarian maintains one `memory/index.md`
+spanning all categories.
 
 ---
 
@@ -582,13 +632,13 @@ terminal.
 | Outbox results | archive after 7 days |
 | Workflow records, terminal | archive after 7 days |
 | Workflow records, running | never archived |
-| Lore notes | permanent until superseded |
+| Library records | per the record's `retention` header (default permanent) |
 | Agent registrations | overwritten each boot |
 
 Archiving is a `git mv` into `_archive/YYYY-MM/`, performed by the holder of the
 `archiver` role. An agent MUST NOT archive another agent's unprocessed message.
 
-Rationale for short mailbox retention: it makes promotion into `memory/lore/`
+Rationale for short mailbox retention: it makes promotion into `memory/`
 a deliberate ritual rather than an afterthought, and keeps the coordination
 repo small enough to clone quickly from a login node.
 

@@ -116,9 +116,11 @@ rejection, follow the conflict-handling rule below.
       cap 20 lines), AND write `outbox/«AGENT_ID»/<id>-result.md` (self-contained
       result: what was done, artifact pointers — URLs/paths/job-ids, NOT payloads).
       Sync.
-   f. If the executor surfaced a durable lesson, drop a `lore.submit` message into
-      `mailbox/roles/librarian/` (the `librarian` holder promotes it to
-      memory/lore).
+   f. If the executor surfaced a durable learning, drop a `library.submit` message
+      into `mailbox/roles/librarian/`, tagged with its `category` and the common
+      record header (the `librarian` holder promotes it into `memory/<category>/`).
+      If YOU hold `librarian`, write it into `memory/` directly instead of
+      self-submitting.
 
 4½. **Surface any `reply` messages in your inbox.** For each `reply` (a message
    with `type: reply` and an `in_reply_to`), emit a concise line to your output so
@@ -162,12 +164,14 @@ hand-edit a conflict.
 
 ## Role-specific duties (only for roles in your AGENT_ROLES)
 
-If you hold **`librarian`**: each cycle drain `mailbox/roles/librarian/` (dedupe,
-validate, set `verified_on`, assign id, write the `memory/lore/<slug>.md` note and
-update `memory/lore/index.md` — you are the sole writer there). An empty librarian
-queue is normal, not a fault. If you hold **`archiver`**: run the retention sweep
-per PROTOCOL.md §9. These are single-holder shared-output roles — do not run a
-second holder. Hold neither role and you skip this section entirely.
+If you hold **`librarian`**: each cycle drain `mailbox/roles/librarian/` — for each
+`library.submit`, dedupe, validate its `category` header, assign the id, write
+`memory/<category>/<slug>.md`, and update the cross-category `memory/index.md`. You
+are the sole writer of ALL of `memory/**`. Records are small text; heavy payloads
+stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is
+normal, not a fault. If you hold **`archiver`**: run the retention sweep per
+PROTOCOL.md §9. These are single-holder shared-output roles — do not run a second
+holder. Hold neither role and you skip this section entirely.
 
 ### Workflow orchestration (any node) — step 4¾ of the loop
 
