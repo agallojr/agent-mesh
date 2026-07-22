@@ -29,6 +29,9 @@ CLAUDE_CODE_CONFIG_DIR / CLAUDE_CONFIG_DIR, else ~/.claude), one absolute repo
 path per line, blank lines and #-comments ignored. Paths are resolved to real
 paths; a target matches if it equals, or is nested under, an allowlisted path.
 """
+# The hyphenated filename is fixed: settings.snippet.json and the install docs
+# reference hooks/git-gate.py, and it is executed as a script, never imported.
+# pylint: disable=invalid-name
 
 # Lazy annotations so PEP 604 unions (str | None) work under the pinned
 # /usr/bin/python3, which on some nodes is 3.9 (evaluates annotations eagerly
@@ -40,6 +43,7 @@ import os
 import re
 import shlex
 import sys
+from typing import NoReturn
 
 GATED = {"add", "commit", "push"}
 
@@ -73,7 +77,8 @@ VALUE_OPTS = {
 }
 
 
-def deny(reason: str) -> None:
+def deny(reason: str) -> NoReturn:
+    """Emit a PreToolUse deny decision and exit."""
     json.dump({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -84,12 +89,14 @@ def deny(reason: str) -> None:
     sys.exit(0)
 
 
-def allow_flow() -> None:
-    # Emit nothing: defer to the normal permission flow (broad Bash allow).
+def allow_flow() -> NoReturn:
+    """Exit emitting nothing: defer to the normal permission flow (the broad
+    Bash allow then lets the command through)."""
     sys.exit(0)
 
 
 def load_allowlist() -> list[str]:
+    """Read the allowlist file into resolved real paths ([] if missing)."""
     roots: list[str] = []
     try:
         with open(ALLOWLIST, encoding="utf-8") as fh:
@@ -115,6 +122,7 @@ def resolvable_literal(value: str) -> bool:
 
 
 def under_allowlist(target: str, roots: list[str]) -> bool:
+    """True if target equals, or is nested under, any allowlisted root."""
     target = os.path.realpath(target)
     for root in roots:
         if target == root:
@@ -265,20 +273,15 @@ def check_add_blobs(add_args: list[str], target_dir: str) -> None:
             ))
 
 
-def analyze_git(tokens: list[str], fragment: str, cwd: str,
-                roots: list[str], cwd_trusted: bool) -> None:
-    """Inspect one tokenized git invocation. Deny (and exit) if it is a gated
-    op whose target repo is not provably on the allowlist. Otherwise RETURN so
-    remaining invocations in a compound command are still inspected — never
-    exit-allow here, or `git status && git push` would slip the push through.
+def _parse_git_target(tokens: list[str], cwd: str) -> tuple[
+        str | None, list[str], str, bool, bool]:
+    """Scan git global options up to the subcommand.
 
-    cwd_trusted is False when the command contains a directory-changing
-    construct (cd/pushd/popd); a gated op that relies on cwd (no explicit
-    -C/--git-dir) is then denied, since the effective directory at exec time
-    may differ from the cwd the hook was given."""
-    if tokens == ["\0UNPARSEABLE"]:
-        deny("git command could not be parsed; denying gated git by policy")
-
+    Returns (subcommand, sub_args, target_dir, explicit_target,
+    target_resolvable): the subcommand token (None if absent), the tokens
+    after it, the effective repo dir after -C/--git-dir, whether the target
+    was set explicitly, and whether every target path token was a plain
+    literal the hook can resolve."""
     target_dir = cwd
     explicit_target = False  # set by -C / --git-dir
     target_resolvable = True  # cleared if a path token isn't a plain literal
@@ -324,8 +327,26 @@ def analyze_git(tokens: list[str], fragment: str, cwd: str,
         subcommand = t
         break
 
-    # tokens after the subcommand token (the add's path/flag args).
     sub_args = tokens[i + 1:] if subcommand is not None else []
+    return subcommand, sub_args, target_dir, explicit_target, target_resolvable
+
+
+def analyze_git(tokens: list[str], fragment: str, cwd: str,
+                roots: list[str], cwd_trusted: bool) -> None:
+    """Inspect one tokenized git invocation. Deny (and exit) if it is a gated
+    op whose target repo is not provably on the allowlist. Otherwise RETURN so
+    remaining invocations in a compound command are still inspected — never
+    exit-allow here, or `git status && git push` would slip the push through.
+
+    cwd_trusted is False when the command contains a directory-changing
+    construct (cd/pushd/popd); a gated op that relies on cwd (no explicit
+    -C/--git-dir) is then denied, since the effective directory at exec time
+    may differ from the cwd the hook was given."""
+    if tokens == ["\0UNPARSEABLE"]:
+        deny("git command could not be parsed; denying gated git by policy")
+
+    (subcommand, sub_args, target_dir, explicit_target,
+     target_resolvable) = _parse_git_target(tokens, cwd)
     cleanly_gated = subcommand in GATED
 
     # Fail-closed on command substitution: $(...) or backticks make shlex
@@ -383,6 +404,7 @@ def analyze_git(tokens: list[str], fragment: str, cwd: str,
 
 
 def main() -> None:
+    """Read the PreToolUse payload from stdin and gate any git invocations."""
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw else {}
