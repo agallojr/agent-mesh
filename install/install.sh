@@ -183,13 +183,14 @@ say "  Remove any blanket git add/commit/push deny (keep sudo)."
 say "  Merging JSON is the operator's call -- this script does NOT edit settings.json."
 
 # --- 6. symlink skills ------------------------------------------------------
-step "Step 6: symlink mesh-on / mesh-off skills"
+step "Step 6: symlink all product skills"
 SKILLS_DST="${HOME}/.claude/skills"
 mkdir -p "${SKILLS_DST}"
-say "ln -sfn ${BUS_PATH}/product/skills/mesh-on  ${SKILLS_DST}/mesh-on"
-ln -sfn "${BUS_PATH}/product/skills/mesh-on"  "${SKILLS_DST}/mesh-on"
-say "ln -sfn ${BUS_PATH}/product/skills/mesh-off ${SKILLS_DST}/mesh-off"
-ln -sfn "${BUS_PATH}/product/skills/mesh-off" "${SKILLS_DST}/mesh-off"
+for skill_dir in "${BUS_PATH}"/product/skills/*/; do
+  skill_name=$(basename "${skill_dir}")
+  say "ln -sfn ${skill_dir%/} ${SKILLS_DST}/${skill_name}"
+  ln -sfn "${skill_dir%/}" "${SKILLS_DST}/${skill_name}"
+done
 
 # --- 7. next steps (network-mutating -> operator runs these) ----------------
 step "Step 7: next steps (you run these -- network-mutating git is not automated)"

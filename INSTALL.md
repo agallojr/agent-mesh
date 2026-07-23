@@ -80,12 +80,15 @@ git deny, and keep sudo denied. The snippet uses a `REPLACE_WITH_HOME` token:
 and checking the decisions.
 
 ## 3. Install the skills (symlinks)
-Symlink the skills from the product submodule so they track the pinned commit.
+Symlink every skill from the product submodule so they track the pinned commit.
+Loop over the skills directory rather than naming skills individually, so new
+skills are picked up automatically:
 
-    ln -sfn "$REPO/product/skills/mesh-on" ~/.claude/skills/mesh-on
-    ln -sfn "$REPO/product/skills/mesh-off" ~/.claude/skills/mesh-off
+    for skill in "$REPO"/product/skills/*/; do
+        ln -sfn "${skill%/}" ~/.claude/skills/"$(basename "$skill")"
+    done
 
-Verify that `SKILL.md` and `poller-prompt.md` resolve through each symlink.
+Verify that `SKILL.md` resolves through each symlink.
 
 ## 4. Plant identity and credentials
 Copy the templates from the product submodule, then edit them.
