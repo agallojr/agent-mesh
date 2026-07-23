@@ -1,6 +1,8 @@
 # --- paste this into claude.ai/code "Setup script" (runs at session start, any repo) ---
 # Installs the repo-neutral `mesh-post` command onto PATH by fetching the canonical
-# copy from the bus repo. Requires GH_PAT_RESEARCH in the session env block.
+# copy from the agent-mesh (product) repo -- NOT agent-mesh-bus, where product is a
+# submodule gitlink and the Contents API would return a pointer, not the file.
+# Requires GH_PAT_RESEARCH in the session env block.
 set -e
 mkdir -p "$HOME/.local/bin"
 curl -fsSL \
