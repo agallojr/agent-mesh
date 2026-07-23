@@ -68,12 +68,11 @@ quick `git -C /abs/bus pull` then a look) to see state.
 | Path | Meaning |
 |------|---------|
 | `agents/<id>.yaml` | Self-registration; who exists and their `roles`/id. |
-| `tasks/roles/<role>/` | A role queue; work waiting for any holder to claim. |
+| `tasks/roles/<role>/` | A role queue; work waiting for any holder to claim. Also carries `library.submit` items for `role:librarian`, which the librarian drains rather than claims. |
 | `tasks/<id>/` | A node's direct inbox (replies, pings, targeted sends). |
 | `status/<task-id>.json` | Current state of a task (see section 4). |
 | `outbox/<id>/<task-id>-result.md` | A node's published result for a task. |
 | `workflows/<id>.yaml` | An in-flight multi-step chain and its cursor. |
-| `mailbox/roles/librarian/` | Lore submissions for the `librarian` holder. |
 | `memory/lore/`, `memory/experiments/` | The library (durable knowledge). |
 
 **Read a task's status.** Open `status/<task-id>.json` and look at its state

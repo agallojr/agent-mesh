@@ -32,7 +32,7 @@
 1. **Product code** — the mesh protocol, the `mesh-on`/`mesh-off` skills, the
    git-gate hook, env templates, the operating/permission guidance, and (new) an
    installer. Reusable, versionable software.
-2. **The coordination bus** — `agents/ tasks/ status/ outbox/ mailbox/ workflows/
+2. **The coordination bus** — `agents/ tasks/ status/ outbox/ workflows/
    _archive/` plus the **library** (`memory/`: lore + experiment logs). Per-
    deployment runtime state: the append-only ledger nodes read/write, and the
    shared knowledge store. It must stay a single writable Git repo (the bus *is*
@@ -94,7 +94,7 @@ composition path, one set of resolution semantics.
 | `guidance/CLAUDE.md`, `agent-operating.md`, `permissions.md`, `operator-interface.md` | Product | → product repo |
 | `guidance/best-practices.md` | **Mixed / contaminated** | **Not filtered into product history.** Author a fresh `guidance/best-practices.base.md` (universal rules only, no history) in the product. The personal half (q8020, `~/proj/src`, 0-kit, sweep policy) is born new in the bus library as `memory/best-practices.user.md`. See §6, §7. |
 | `README.md`, `INSTALL.md`, `.gitignore`, `.gitattributes` | Product | → product repo (bus keeps its own thin `.gitignore`) |
-| `agents/`, `tasks/`, `status/`, `outbox/`, `mailbox/`, `workflows/`, `_archive/` | Bus runtime | Stay in the bus |
+| `agents/`, `tasks/`, `status/`, `outbox/`, `workflows/`, `_archive/` | Bus runtime | Stay in the bus |
 | `memory/lore/` | Library | Stay in the bus |
 | `memory/experiments/` (the logs) | Library | Stay in the bus |
 | (future) large binary results | Blob | Not in the bus; pointer only |
@@ -112,7 +112,7 @@ agent-mesh-bus        BUS repo — PRIVATE; the repo every node clones, pulls, p
                       (This is the CURRENT repo, renamed from agent-mesh — see §7 step 2.)
   product/   ->  git submodule TRACKING product main (submodule.product.branch=main)
   .gitmodules         submodule url + branch=main; synced with --remote (§8)
-  agents/ tasks/ status/ outbox/ mailbox/ workflows/ _archive/
+  agents/ tasks/ status/ outbox/ workflows/ _archive/
   memory/             THE LIBRARY (text only):
     lore/                shared, curated by the `librarian` role
     experiments/         experiment logs

@@ -20,7 +20,7 @@ Target layout after migration:
 ```
 <REPO>/                     the bus clone; REPO_PATH points here
   product/                  submodule -> agent-mesh @ pinned tag (product code)
-  agents/ tasks/ status/ outbox/ mailbox/ workflows/ _archive/
+  agents/ tasks/ status/ outbox/ workflows/ _archive/
   memory/lore/ memory/experiments/ memory/best-practices.user.md
   guidance/CLAUDE.md         bus entry point (@-includes product + user rules)
   .gitmodules .gitignore .gitattributes

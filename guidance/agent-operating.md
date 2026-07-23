@@ -47,8 +47,8 @@ construction, not resolved after the fact.
 | `agents/<your-id>.yaml` | any other agent's `agents/*.yaml` |
 | `status/<task-id>.json` for a task you claimed | a status file for a task you did not claim |
 | new files under `outbox/<your-id>/` | anything under another agent's outbox |
-| new files under `tasks/roles/<role>/` and `tasks/<other-id>/` (to send work) | files in your own inbox `tasks/<your-id>/` |
-| new files under `mailbox/roles/librarian/` | `memory/lore/**` unless you hold the `librarian` role |
+| new files under `tasks/roles/<role>/` and `tasks/<other-id>/` (to send work, including a `library.submit` into `tasks/roles/librarian/`) | files in your own inbox `tasks/<your-id>/` |
+| — | `memory/lore/**` unless you hold the `librarian` role |
 | `_archive/**` only if you hold the `archiver` role | the `product/` gitlink and `.gitmodules` (operator only — never touch the product pin) |
 
 You may post work to any role queue (`tasks/roles/<role>/`) or to another node's
@@ -89,10 +89,11 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `reply` into the SENDER'S inbox `tasks/<sender-id>/` (`type: reply`,
    `in_reply_to:` the query id) and set status `done`; sync.
 7. Submit any durable learning as a `library.submit` message into
-   `mailbox/roles/librarian/`, tagged with its `category` (lore, experiments, …)
-   and the common record header. The `librarian` holder promotes it into
-   `memory/<category>/`. If YOU hold the `librarian` role, write it into `memory/`
-   directly instead — no self-submission.
+   `tasks/roles/librarian/` (the librarian's role queue), tagged with its
+   `category` (lore, experiments, …) and the common record header. It is a
+   submission, not a task — write no status file for it; the `librarian` holder
+   drains and promotes it into `memory/<category>/`. If YOU hold the `librarian`
+   role, write it into `memory/` directly instead — no self-submission.
 8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
    human: it answers a query YOU sent. A reply is information — write no status,
    dispatch no executor, and do not reply to it. Announce each reply once.
@@ -131,10 +132,11 @@ Most roles just claim and run tasks. A few carry extra duties, and you perform
 them ONLY if that role is in your `AGENT_ROLES`:
 
 - **`librarian`** — sole writer of ALL of `memory/**` (every category, not just
-  lore). Each cycle, drain `mailbox/roles/librarian/`: for each `library.submit`,
-  dedupe/validate against its `category` header, assign the `id`, write
-  `memory/<category>/<slug>.md`, update the cross-category `memory/index.md`, and
-  re-verify stale lore. Records are small text — heavy payloads stay outside and are
+  lore). Each cycle, drain the `library.submit` messages from your own role queue
+  `tasks/roles/librarian/`: for each, dedupe/validate against its `category`
+  header, assign the `id`, write `memory/<category>/<slug>.md`, update the
+  cross-category `memory/index.md`, and re-verify stale lore. A submission is never
+  claimed — write no status file for it. Records are small text — heavy payloads stay outside and are
   referenced by pointer; never copy a blob into memory. An unstaffed queue
   accumulating until a librarian runs is correct, not a fault. Shared-output role:
   run exactly one holder (unenforced — two holders can collide on the same file).

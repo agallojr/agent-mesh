@@ -69,12 +69,13 @@ state and the library.
 ```
 BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /agents/<agent-id>.yaml        self-registration; writer: that agent only
-/tasks/roles/<role>/           role queue; writer: anyone (claimed via §6)
+/tasks/roles/<role>/           role queue; writer: anyone. task.request/query are
+                               claimed (§6); a library.submit to role:librarian
+                               rides this same queue but is drained, not claimed (§7)
 /tasks/<agent-id>/             direct inbox (replies, targeted sends); writer:
                                anyone except that agent
 /status/<task-id>.json         live task state; writer: the agent that claimed it
 /outbox/<agent-id>/            results and replies; writer: that agent only
-/mailbox/roles/librarian/      lore submissions; writer: anyone
 /memory/<category>/            the library — open set of durable-knowledge
                                categories (lore/, experiments/, …); writer:
                                `librarian` role only
@@ -106,7 +107,6 @@ PRODUCT SUBMODULE (agent-mesh @ pinned tag) — read-only on nodes
 | `tasks/<X>/` | any agent **except** X (new files only) |
 | `status/<task-id>.json` | the agent that first accepted (claimed) that task |
 | `outbox/<X>/` | X (new files only) |
-| `mailbox/roles/librarian/` | any agent (new files only) |
 | `memory/lore/**` | holder of the `librarian` role |
 | `_archive/**` | holder of the `archiver` role |
 | `workflows/<id>.yaml` | the node that originated that workflow |
@@ -322,7 +322,12 @@ What to report, and how far to back off before giving up.
 **Types:** `task.request`, `task.cancel`, `query`, `reply`, `library.submit`,
 `library.deprecate`. (`library.submit` carries any durable-knowledge record for the
 librarian — a lore note, an experiment log, or any other category; it generalizes
-the older `lore.submit`.)
+the older `lore.submit`.) A `library.submit` is posted into the `librarian` role
+queue like any other message, but it is **drained, not claimed** — the librarian
+folds it into `memory/` (§7) and writes no `status/<id>.json` for it. The queue is
+one per role; the message `type` is what tells a consumer whether an item is
+claimable work (`task.request`/`query`) or a drain-and-curate submission
+(`library.submit`).
 
 **Addressing:** `to` is normally `role:<role>` — the sender posts into that role's
 queue and any holder claims it (§6). `to` may instead be a bare `agent_id` for a
@@ -495,13 +500,22 @@ regardless). This keeps a recursive pull of the library from becoming a data-lak
 download.
 
 **Submission flow (`library.submit`).** A node without the `librarian` role drops a
-`library.submit` message in `mailbox/roles/librarian/` with the record body inline
-and its `category` set. The `librarian` holder dedupes, validates the header,
-assigns the `id`, sets any category-specific verification (e.g. lore's
-`verified_on`), writes `memory/<category>/<slug>.md`, and updates the index. An
-unstaffed mailbox simply accumulates until a librarian runs — correct, not a fault.
-A node that is its own librarian performs the same steps inline instead of via the
-mailbox.
+`library.submit` message into `tasks/roles/librarian/` — the librarian's ordinary
+role queue — with the record header inline and its `category` set. This is *not* a
+claim: the submitter writes no `status/<id>.json`, and no node competes for it.
+Each cycle the `librarian` holder scans its queue, and for every `library.submit`
+it dedupes, validates the header, assigns the `id`, sets any category-specific
+verification (e.g. lore's `verified_on`), writes `memory/<category>/<slug>.md`, and
+updates the index. There is no per-submission status file and no outbox result —
+the `memory/<category>/` record *is* the outcome. An unstaffed queue simply
+accumulates until a librarian runs — correct, not a fault. A node that is its own
+librarian performs the same steps inline as it scans its own queue.
+
+This is why there is no separate submissions mailbox: one queue per role is enough.
+The librarian is a single-holder role, so the claim/status machinery a task needs
+(to pick exactly one runner among competing holders) would be pure overhead for a
+submission that one curator drains in bulk. The message `type` carries the
+distinction the path used to.
 
 **Staleness (lore).** A lore note unverified for 90 days is set to
 `confidence: stale` by the `librarian` holder. Stale notes are still surfaced but
@@ -545,6 +559,8 @@ loop (poller subagent):
      plus the direct inbox tasks/<AGENT_ID>/. Branch by message type:
        task.request/task.cancel/query with no status file -> claimable work (step 3)
        reply (has in_reply_to) -> information to surface (step 4½)
+       library.submit -> drain-and-curate if you hold librarian (step 6); never
+         claimed, no status file. A non-librarian ignores it.
        nothing claimable and no unsurfaced reply -> write nothing, sleep (idle=pull)
   3. CLAIM each candidate: write status -> accepted (agent_id = you) and sync.
        On push rejection, pull --rebase and re-check status/<id>.json: if it now
@@ -561,7 +577,7 @@ loop (poller subagent):
   4½. for each reply in your inbox: surface it to the human (from, in_reply_to,
        body). A reply is information: no status write, no executor, no commit.
        Never delete it -- the archiver sweep is the only cleanup.
-  5. submit any lore to mailbox/roles/librarian/
+  5. submit any durable knowledge as a library.submit into tasks/roles/librarian/
   6. if you hold librarian / archiver / a running workflow, run those duties (below)
   7. sleep POLL_INTERVAL_SEC
 ```
@@ -578,7 +594,8 @@ never hand-resolve a textual conflict — the agent's job is to re-derive its
 intended write against current state.
 
 **Role-specific duties (only if you hold the role):** the `librarian` holder drains
-`mailbox/roles/librarian/`, curates `memory/lore/**`, and re-verifies stale notes;
+the `library.submit` messages from its own role queue `tasks/roles/librarian/`,
+curates `memory/**`, and re-verifies stale notes;
 the `archiver` holder runs the retention sweep (§9); a node that originates a
 workflow drives it (§8.1). A node holding none of these does none of them.
 
@@ -636,11 +653,15 @@ terminal.
 | Agent registrations | overwritten each boot |
 
 Archiving is a `git mv` into `_archive/YYYY-MM/`, performed by the holder of the
-`archiver` role. An agent MUST NOT archive another agent's unprocessed message.
+`archiver` role. An agent MUST NOT archive another agent's unprocessed message. A
+`library.submit` follows task-message retention (archive after 3 days); since a
+staffed `librarian` drains its queue every cycle, a submission is normally promoted
+into `memory/` long before that window elapses, so archiving the swept message
+loses nothing (the durable copy lives in `memory/`).
 
-Rationale for short mailbox retention: it makes promotion into `memory/`
-a deliberate ritual rather than an afterthought, and keeps the coordination
-repo small enough to clone quickly from a login node.
+Rationale for short task-message retention: promotion into `memory/` becomes a
+deliberate ritual rather than an afterthought, and the coordination repo stays
+small enough to clone quickly from a login node.
 
 ---
 

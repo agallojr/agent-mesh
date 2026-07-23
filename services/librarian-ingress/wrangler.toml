@@ -1,0 +1,23 @@
+name = "agent-mesh-librarian-ingress"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# Non-secret config. Secrets (CONNECTOR_TOKEN, GITHUB_TOKEN) are set with
+# `wrangler secret put`, never committed.
+[vars]
+BUS_OWNER = "agallojr"
+BUS_REPO = "agent-mesh-bus"
+BUS_BRANCH = "main"
+LIBRARIAN_ROLE = "librarian"
+SENDER_ID = "op-phone"
+# Memory category a note files under when the tool call omits `category`.
+# The library category set is open; the librarian creates it if new.
+DEFAULT_CATEGORY = "lore"
+MAX_BODY_BYTES = "65536"
+
+# Optional idempotency store. Create with:
+#   wrangler kv namespace create IDEMPOTENCY
+# then paste the returned id below and uncomment.
+# [[kv_namespaces]]
+# binding = "IDEMPOTENCY"
+# id = "<kv-namespace-id>"

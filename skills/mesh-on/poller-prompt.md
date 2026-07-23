@@ -32,9 +32,9 @@ unparseable. Keep commit messages to plain words and simple punctuation:
 ## Single-writer discipline (never violate)
 
 - You may write ONLY: `status/<task-id>.json` for tasks you CLAIMED, new files
-  under `outbox/«AGENT_ID»/`, new files under `mailbox/roles/librarian/`, and new
-  files under role queues `tasks/roles/<role>/` or other agents' direct inboxes
-  `tasks/<their-id>/` (to send work).
+  under `outbox/«AGENT_ID»/`, and new files under role queues `tasks/roles/<role>/`
+  (including a `library.submit` into `tasks/roles/librarian/`) or other agents'
+  direct inboxes `tasks/<their-id>/` (to send work).
 - You must NEVER write another agent's `agents/*.yaml`, a status file for a task
   you did not claim, or your own direct inbox `tasks/«AGENT_ID»/`.
 - `memory/lore/**` is writable only if you hold the `librarian` role; `_archive/**`
@@ -67,6 +67,11 @@ Repeat until stop (see "Stopping" below):
    - `reply` — a response to a `query` YOU sent earlier (it carries
      `in_reply_to`). This is information, NOT work: never dispatch an executor
      and never write a status file for it. Handle in step 4½ (surface it).
+   - `library.submit` — a durable-knowledge submission for the librarian, riding
+     the `tasks/roles/librarian/` queue. It is NEVER claimed: write no status file
+     and dispatch no executor. If you hold the `librarian` role, drain and curate
+     it in the role-duties step below; if you do not, ignore it entirely (it is not
+     yours to process).
 
    **If nothing is claimable and there is no unsurfaced reply, write NOTHING and go
    straight to sleep** — an idle node only pulls, it never commits. This is what
@@ -117,9 +122,10 @@ rejection, follow the conflict-handling rule below.
       result: what was done, artifact pointers — URLs/paths/job-ids, NOT payloads).
       Sync.
    f. If the executor surfaced a durable learning, drop a `library.submit` message
-      into `mailbox/roles/librarian/`, tagged with its `category` and the common
-      record header (the `librarian` holder promotes it into `memory/<category>/`).
-      If YOU hold `librarian`, write it into `memory/` directly instead of
+      into `tasks/roles/librarian/`, tagged with its `category` and the common
+      record header (the `librarian` holder drains and promotes it into
+      `memory/<category>/`). It is a submission, not a task: write no status file
+      for it. If YOU hold `librarian`, write it into `memory/` directly instead of
       self-submitting.
 
 4½. **Surface any `reply` messages in your inbox.** For each `reply` (a message
@@ -164,10 +170,12 @@ hand-edit a conflict.
 
 ## Role-specific duties (only for roles in your AGENT_ROLES)
 
-If you hold **`librarian`**: each cycle drain `mailbox/roles/librarian/` — for each
-`library.submit`, dedupe, validate its `category` header, assign the id, write
-`memory/<category>/<slug>.md`, and update the cross-category `memory/index.md`. You
-are the sole writer of ALL of `memory/**`. Records are small text; heavy payloads
+If you hold **`librarian`**: each cycle drain the `library.submit` messages from your
+own role queue `tasks/roles/librarian/` — for each, dedupe, validate its `category`
+header, assign the id, write `memory/<category>/<slug>.md`, and update the
+cross-category `memory/index.md`. Write NO status file for a submission (it is
+drained, never claimed); the `memory/` record is its only outcome. You are the sole
+writer of ALL of `memory/**`. Records are small text; heavy payloads
 stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is
 normal, not a fault. If you hold **`archiver`**: run the retention sweep per
 PROTOCOL.md §9. These are single-holder shared-output roles — do not run a second
