@@ -215,6 +215,18 @@ missing **name** and disables the email duty for the session (mirrors PROTOCOL
 §4.2's "blocked on missing credential name" posture) — it does not crash the poll
 loop.
 
+**TLS interception (corporate proxies).** A node behind a TLS-inspecting proxy
+(e.g. Zscaler) is served Google endpoints re-signed by the proxy's CA, which
+OpenSSL 3 may reject (`CERTIFICATE_VERIFY_FAILED: Basic Constraints ... not marked
+critical`). Do NOT disable verification — verify against the OS trust store, which
+already trusts the MDM-installed proxy CA. On macOS the email-monitor calls
+`truststore.inject_into_ssl()` (verify via the Keychain) before any Gmail request;
+on Linux, point `SSL_CERT_FILE` at the exported proxy root CA. Verification stays
+ON either way. Note the proxy may intercept the Gmail data plane
+(`gmail.googleapis.com`) even when it lets the token endpoint
+(`oauth2.googleapis.com`) through, so a working token exchange does not imply a
+working mailbox read — test the data-plane call.
+
 ---
 
 ## 7. Ingest pipeline
