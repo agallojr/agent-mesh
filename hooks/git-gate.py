@@ -343,7 +343,20 @@ def analyze_git(tokens: list[str], fragment: str, cwd: str,
     -C/--git-dir) is then denied, since the effective directory at exec time
     may differ from the cwd the hook was given."""
     if tokens == ["\0UNPARSEABLE"]:
-        deny("git command could not be parsed; denying gated git by policy")
+        # We could not tokenize this git fragment — almost always because a
+        # quoted shell metacharacter (e.g. |, ;, & inside '...') made
+        # split_subcommands cut through a quoted string, leaving a dangling
+        # quote that shlex rejects. Only the three gated verbs justify failing
+        # closed here; a read-only op (config/status/log/diff/...) that merely
+        # tripped the splitter must NOT be denied. If the fragment names a
+        # gated verb we still deny (can't trust the parse); otherwise defer.
+        if re.search(r"(^|\s)(add|commit|push)(\s|$)", fragment):
+            deny(
+                "git command could not be parsed and names a gated op "
+                "(add/commit/push); denying by policy. Emit a literal "
+                "`git -C /abs/repo <add|commit|push> ...` on its own line."
+            )
+        return
 
     (subcommand, sub_args, target_dir, explicit_target,
      target_resolvable) = _parse_git_target(tokens, cwd)

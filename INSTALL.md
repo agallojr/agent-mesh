@@ -44,13 +44,14 @@ recorded commit instead of the `main` tip — see Notes):
     git -C "$REPO" config alias.pullmesh \
       '!f() { git pull "$@" && git submodule update --init --remote --recursive; }; f'
 
-This works on a fresh install because it runs before the git gate (step 2) is
-active. If you re-run it on a node whose gate is already installed, the gate
-denies it ("git command could not be parsed"): the gate splits commands on
-`&&`/`;` before inspecting them, and the alias value itself contains both, so it
-sees broken fragments and fails closed. (`config` is not even a gated op — this
-is a false positive.) In that case, add the alias to `.git/config` directly
-instead, which is what `git config` would do — append under an `[alias]` section:
+This works whether or not the git gate (step 2) is active. The gate still
+splits commands on `&&`/`;` before inspecting them, so the alias value (which
+contains both) yields fragments shlex cannot tokenize — but the gate now only
+fails closed on an unparseable fragment when that fragment names a gated verb
+(`add`/`commit`/`push`). `config` is not gated, so it defers (allows) instead of
+denying. If for any reason it is still denied, add the alias to `.git/config`
+directly, which is what `git config` would do — append under an `[alias]`
+section:
 
     pullmesh = "!f() { git pull \"$@\" && git submodule update --init --remote --recursive; }; f"
 
