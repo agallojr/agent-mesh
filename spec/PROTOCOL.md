@@ -53,6 +53,11 @@ Roles split by what they write:
   their shared writes stay single-writer. This is an operating convention, not a
   mechanism the mesh enforces — running two holders of a shared-output role risks
   a textual conflict on the shared path, at the operator's own risk.
+- **Single-holder ingress roles** (e.g. `email-monitor`, see §7 and
+  `spec/librarian-email-ingress.md`) write only their own `outbox/`, but must be
+  held by exactly one node because they drain a shared *external* resource (one
+  mailbox); two holders would double-submit. Same one-holder convention, different
+  reason than shared-output.
 
 An **operator** is a person's interface to the mesh (§5, and `operator-interface.md`).
 It is not a node: it holds no roles, runs no loop, and never writes `status/**`. It
@@ -526,6 +531,15 @@ is worse than no gotcha.
 `id | category | title | contexts | retention`, one per line, sorted by id.
 Order-independent and union-merge safe. The librarian maintains one `memory/index.md`
 spanning all categories.
+
+**Email ingress (second submission source).** Besides nodes and the phone-facing
+ingress Worker, a single-holder **`email-monitor`** role may watch a Gmail mailbox
+and turn an authenticated message into a `library.submit` on the librarian queue.
+It is an ordinary *producer*: it validates the mail (transport auth + sender
+allowlist + shared secret), strips the secret before any bus write, and posts the
+same `library.submit` envelope above — it never writes `memory/` itself, so the
+single-writer rule is unchanged. The librarian drains it identically to any other
+submission. Full design in `spec/librarian-email-ingress.md`.
 
 ---
 
