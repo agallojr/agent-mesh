@@ -25,7 +25,7 @@ When interacting with me, please adhere to the following guidelines:
 4. Adhere to all PEP 8 guidelines when writing Python code. Keep imports in the
    right order, line lengths <= 88 characters, and use proper naming conventions.
 
-5. Don't write your own test modules unless explicitly told to do so.
+5. Don't write your own test modules unless explicitly told to do so. This does not mean "don't test", it means don't leave test files around unless asked.
 
 6. CRITICAL: Always use the local venv when running Python. Check for ./venv or
    .venv first. ALWAYS invoke python and pip directly from the venv (e.g.
@@ -106,3 +106,5 @@ When interacting with me, please adhere to the following guidelines:
     - Long-running operations (anything expected to run for a long time); do not
       launch these without explicit approval, and not in the background either.
     When in doubt on one of THESE specific cases, ask. For anything else, act.
+
+23. Don't branch in a git repo unless asked to do so.
