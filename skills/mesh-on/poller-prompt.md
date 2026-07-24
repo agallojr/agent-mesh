@@ -181,61 +181,39 @@ normal, not a fault. If you hold **`archiver`**: run the retention sweep per
 PROTOCOL.md §9. These are single-holder shared-output roles — do not run a second
 holder. Hold none of these roles and you skip that duty entirely.
 
-If you hold **`email-monitor`** (single-holder) AND `LIBRARIAN_EMAIL_ENABLED=true`:
-watch the ingress mailbox and turn authenticated mail into `library.submit`
-messages for the librarian. You NEVER write `memory/` — you are an ordinary
-producer, like any node submitting a learning. Full design:
-`product/spec/librarian-email-ingress.md`. Each cycle (throttled by
-`LIBRARIAN_EMAIL_POLL_SEC` if set, else the normal cadence):
+If you hold **`email-monitor`** (single-holder): watch the ingress mailbox and
+turn authenticated mail into `library.submit` messages for the librarian. You
+NEVER write `memory/` — you are an ordinary producer, like any node submitting a
+learning. Full design: `product/spec/librarian-email-ingress.md`.
 
-1. **Credentials.** If `GMAIL_LIBRARIAN_OAUTH` or `LIBRARIAN_EMAIL_SECRET` is
-   absent from your env, log the missing NAME (never a value), skip this duty for
-   the session, and continue the rest of the loop. This is a node-config gap, not
-   an ingress attempt — write nothing to the bus.
-2. **List** unread messages under the `LIBRARIAN_EMAIL_LABEL` (default
-   `mesh-ingress`) label, oldest first, at most ~20 per cycle.
-3. **Authenticate each — all three must pass (PROTOCOL trust model §3 of the
-   spec):** (a) `dkim=pass` AND `dmarc=pass` in `Authentication-Results`, domain
-   aligned to `From`; (b) the DKIM-verified `From` is an exact, case-insensitive
-   member of `LIBRARIAN_EMAIL_ALLOWED_SENDERS` (no substring/suffix match); (c) the
-   `X-Mesh-Key:` body line equals `LIBRARIAN_EMAIL_SECRET` under a CONSTANT-TIME
-   compare. Any failure → reject (step 8). The allowlist alone is NOT authorization.
-4. **Strip the secret** from the body IMMEDIATELY, before composing or logging
-   anything. The secret must never reach a message, commit, log, status, or your
-   transcript.
-5. **Parse (spec §5):** Subject → `title`; consume/strip the `X-Mesh-*` directive
-   lines (`Intent`, `Category`, `Tags`, `Contexts`); remaining Markdown → body.
-   Enforce `X-Mesh-Intent: learning` (default if omitted); any other intent →
-   reject as out-of-scope for v1 (step 8, `decision: intent-unsupported`).
-6. **Attachments (spec §8):** fetch each up to `LIBRARIAN_EMAIL_MAX_ATTACH_MB`.
-   Text-class and small → inline into the body. Blob-class (binary, or over the
-   git-gate `BLOB_EXTS`/5 MB limits) → file into the external store and reference
-   by pointer in `artifacts[]`; NEVER stage a blob into the bus. No store
-   configured → post anyway with a note that the blob was dropped and why.
-7. **Idempotency:** set `email_message_id: <RFC Message-ID>` on the submission.
-   Before posting, check `tasks/roles/librarian/` and your
-   `outbox/«AGENT_ID»/.ingested-emails` index for that id; if already handled, skip
-   the post and go straight to "mark processed" (step 9).
-8. **Post the `library.submit`** into `tasks/roles/librarian/<ts>-<seq>-<slug>.md`
-   with the envelope from spec §7a (type `library.submit`, `to: role:librarian`,
-   the inline record header, secret already stripped), append the id to your
-   `.ingested-emails` index, and sync (three separate `-C «REPO»` commands; plain
-   commit message like `post library.submit from email <ts>-<seq>`). It is a
-   submission: write NO status file, dispatch NO executor. Only after the push
-   succeeds do you mark the mail read.
-   **Reject (steps 3/5 failures):** write a metadata-only audit to
-   `outbox/«AGENT_ID»/<ts>-reject.md` — `{email_message_id, dkim, dmarc, from,
-   decision, ts}`, NEVER the body, secret, or attachments — sync, then label the
-   mail `mesh-rejected` and mark read. A hostile sender gets no reply.
-9. **Mark processed:** label the mail `mesh-processed` (accepted) or
-   `mesh-rejected` (rejected), mark read, optionally archive. On a transient Gmail
-   API / rate-limit error, back off and leave the mail UNREAD (no audit — nothing
-   was decided); it retries next cycle. On bus push rejection, follow the
-   push-conflict rule and leave the mail unread until the submit is durably pushed.
+**Run the tested helper — do NOT hand-implement this duty.** The listener logic
+(fetch labeled unread mail; validate DKIM/DMARC + exact sender allowlist + shared
+secret under a constant-time compare; strip the secret before any write; parse
+`X-Mesh-*` directives; route attachments by the blob rule; post a sanitized
+`library.submit` into `tasks/roles/librarian/`; write metadata-only reject audits;
+label `mesh-processed`/`mesh-rejected` + mark read; idempotency on the RFC
+`Message-ID`) all lives in a script. It reads its own config and credentials from
+`~/.agent-identity.env` and `~/.agent-credentials.env` (they are NOT exported into
+your shell — the script loads the FILES itself) and self-gates on
+`LIBRARIAN_EMAIL_ENABLED`. Each cycle (throttled by `LIBRARIAN_EMAIL_POLL_SEC` if
+set, else the normal cadence), invoke it once with the node's venv:
 
-The librarian drains what you post with no change — it cannot tell an emailed
-submission from a Worker or node one. If you also hold `librarian`, the submit you
-post is drained by your own librarian duty in the same or a later cycle.
+```
+<venv>/bin/python «REPO»/product/services/librarian-email-monitor/email_monitor.py --once
+```
+
+Use the repo's venv python (e.g. the `.venv` beside the bus's parent checkout).
+The script does its own git sync with literal `-C «REPO»` paths and plain commit
+messages, so it complies with the git gate. Do it BEFORE the librarian drain so
+mail ingested this cycle is curated the same cycle. Report its stdout (accept/
+reject lines) as your progress. If it prints that `LIBRARIAN_EMAIL_ENABLED` is not
+true or a credential NAME is missing, that is a config gap, not an error — note it
+once and carry on with the rest of the loop. Do not paste its output verbatim if a
+secret ever appears (it should not — the script strips it).
+
+The librarian drains what the script posts with no change — it cannot tell an
+emailed submission from a Worker or node one. If you also hold `librarian`, that
+submit is drained by your own librarian duty the same cycle (email step first).
 
 Hold none of the role-duty roles above and you skip this whole section.
 
