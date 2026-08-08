@@ -80,6 +80,13 @@ class Config:
             for a in ident.get("LIBRARIAN_EMAIL_ALLOWED_SENDERS", "").split(",")
             if a.strip()
         }
+        self.internal_domains = {
+            d.strip().lower()
+            for d in ident.get(
+                "LIBRARIAN_EMAIL_INTERNAL_DOMAINS", ""
+            ).split(",")
+            if d.strip()
+        }
         self.poll_sec = int(ident.get("LIBRARIAN_EMAIL_POLL_SEC", "300"))
         self.enabled = ident.get("LIBRARIAN_EMAIL_ENABLED", "false") == "true"
         self.secret = cred.get("LIBRARIAN_EMAIL_SECRET", "")
@@ -140,6 +147,7 @@ class Parsed:
         self.sender = ""
         self.dkim = False
         self.dmarc = False
+        self.auth_header_present = False
         self.secret_line_ok = False
         self.intent = "learning"
         self.category = ""
@@ -158,6 +166,7 @@ def parse_message(cfg: Config, msg: dict) -> Parsed:
     m = re.search(r"[\w.+-]+@[\w.-]+", hdrs.get("from", ""))
     p.sender = m.group(0).lower() if m else ""
     ar = hdrs.get("authentication-results", "").lower()
+    p.auth_header_present = "authentication-results" in hdrs
     p.dkim = "dkim=pass" in ar
     p.dmarc = "dmarc=pass" in ar
     p.message_id = hdrs.get("message-id", "").strip()
@@ -196,8 +205,32 @@ def parse_message(cfg: Config, msg: dict) -> Parsed:
     return p
 
 
+def _sender_domain(sender: str) -> str:
+    return sender.rsplit("@", 1)[-1] if "@" in sender else ""
+
+
+def _transport_ok(cfg: Config, p: Parsed) -> bool:
+    """Transport authentication (trust check #1, spec §3).
+
+    Normal path: DKIM and DMARC both pass. Internal-delivery exception: a
+    self-send within the org's own Workspace delivers without any
+    `Authentication-Results` header (Gmail only stamps it on externally-received
+    mail), so DKIM/DMARC are unknowable rather than failing. Accept that case
+    ONLY when the header is entirely absent AND the sender's domain is an
+    explicitly configured internal domain — the shared secret (checked
+    separately) still gates it. A spoof from outside arrives WITH the header
+    (showing dkim/dmarc=fail), so header-absent is a reliable internal signal,
+    not a bypass."""
+    if p.dkim and p.dmarc:
+        return True
+    if (not p.auth_header_present
+            and _sender_domain(p.sender) in cfg.internal_domains):
+        return True
+    return False
+
+
 def decide(cfg: Config, p: Parsed) -> tuple[bool, str]:
-    if not (p.dkim and p.dmarc):
+    if not _transport_ok(cfg, p):
         return False, "auth-failed"
     if p.sender not in cfg.allowed:
         return False, "sender-not-allowlisted"
@@ -310,7 +343,9 @@ def run_once(cfg: Config, token: str, dry: bool) -> None:
         else:
             audit = {
                 "email_message_id": p.message_id, "from": p.sender,
-                "dkim": p.dkim, "dmarc": p.dmarc, "decision": reason,
+                "dkim": p.dkim, "dmarc": p.dmarc,
+                "auth_header_present": p.auth_header_present,
+                "decision": reason,
                 "ts": datetime.now(timezone.utc).isoformat(),
             }
             rel = f"outbox/{cfg.agent_id}/{ts}-{ref['id']}-reject.json"

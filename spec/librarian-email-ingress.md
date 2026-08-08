@@ -87,6 +87,21 @@ pass; any failure means the message is ignored and never acted upon:
    domain aligned to the `From` domain. This is what makes the `From` address
    meaningful at all. (Gmail computes these on receipt; the email-monitor reads
    the header — see §6.)
+
+   **Internal-delivery exception.** A self-send within the ingress mailbox's own
+   Workspace org is delivered *internally* and Gmail stamps **no**
+   `Authentication-Results` header at all — so DKIM/DMARC are unknowable rather
+   than failing, and check #1 as stated would reject legitimate internal mail.
+   The email-monitor therefore also passes check #1 when the header is **entirely
+   absent** *and* the sender's domain is on the operator-configured
+   `LIBRARIAN_EMAIL_INTERNAL_DOMAINS` list. This is not a spoofing hole: mail
+   received from *outside* the org always arrives *with* an
+   `Authentication-Results` header (showing `dkim=fail`/`dmarc=fail` for a
+   forgery), so "header absent" is a reliable proxy for "delivered internally",
+   not something an external attacker can produce. The exception still requires
+   checks #2 (allowlist) and #3 (secret); it narrows trust for that one path to
+   *(org-internal origin + shared secret)* instead of *(DKIM/DMARC + allowlist +
+   secret)*, which the operator accepts for a domain they control.
 2. **Sender is on the allowlist.** The DKIM-verified `From` (not the raw display
    address) is a member of `LIBRARIAN_EMAIL_ALLOWED_SENDERS`. Match on the exact
    RFC-5321 address, case-insensitive, no substring or domain-suffix matching.
@@ -190,6 +205,7 @@ LIBRARIAN_EMAIL_ENABLED=true
 LIBRARIAN_EMAIL_ADDRESS=mesh-ingress@example.com        # the watched address/alias
 LIBRARIAN_EMAIL_LABEL=mesh-ingress                       # Gmail label/query scope
 LIBRARIAN_EMAIL_ALLOWED_SENDERS=alice@lab.org,bob@lab.org # exact addresses, csv
+LIBRARIAN_EMAIL_INTERNAL_DOMAINS=lab.org                 # optional; §3 internal-delivery exception
 LIBRARIAN_EMAIL_DEFAULT_CATEGORY=lore
 LIBRARIAN_EMAIL_POLL_SEC=300         # optional; defaults to POLL_INTERVAL_SEC
 LIBRARIAN_EMAIL_MAX_ATTACH_MB=25     # per-attachment ceiling the node will fetch
