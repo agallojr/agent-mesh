@@ -65,7 +65,27 @@ poller is not killed on its first check:
 rm -f ~/.mesh-stop
 ```
 
-## Step 3 — sync and self-register
+## Step 3 — load operating guidance (do this before registering)
+
+Identity tells you *who* you are; this step tells you *how to behave*. Per
+PROTOCOL.md §4.4, the bus root holds a single well-known entry point that composes
+this deployment's full rule set:
+
+```
+${REPO_PATH}/guidance/CLAUDE.md
+```
+
+Read it and follow its `@`-import chain in order — the best-practices base, this
+deployment's user overlay, `agent-operating.md`, and `permissions.md`. These are
+your operating rules for every task this session: autonomy posture, git
+literal-path discipline, single-writer rules, credential-name-only handling, and
+coding conventions. Load them now, before self-registration, so the rules govern
+everything that follows. (`git pull` in the next step keeps this file
+byte-identical across all nodes; a fresh clone may need `git -C /abs/repo
+submodule update --init --remote --recursive` first so `product/` — which the
+chain imports from — is present.)
+
+## Step 4 — sync and self-register
 
 Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
 
@@ -88,19 +108,22 @@ Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
    On push rejection: `git -C /abs/repo pull --rebase`, re-derive your file
    against current state, retry (3x, then back off). Never resolve textually.
 
-## Step 4 — spawn the background poller subagent
+## Step 5 — spawn the background poller subagent
 
 Spawn ONE background subagent (the poller). Give it the concrete identity values
 and the literal repo path inline — it has no access to your conversation. Use the
 prompt in `poller-prompt.md` in this skill directory as the poller's instructions,
-with the placeholders filled in. Spawn with `run_in_background: true` so your main
+with the placeholders filled in. The poller prompt itself instructs the poller to
+load `${REPO_PATH}/guidance/CLAUDE.md` on startup (it does not inherit the rules
+you loaded in Step 3 — it is a fresh context), so the operating rules govern it and
+every executor it dispatches. Spawn with `run_in_background: true` so your main
 session returns immediately and stays interactive.
 
 Record the returned poller handle (agent id) in your own context and also note it
 for the user, so `/mesh-off` in THIS session can stop it directly. Cross-session,
 `/mesh-off` stops it via the `~/.mesh-stop` sentinel regardless.
 
-## Step 5 — report and return
+## Step 6 — report and return
 
 Tell the user, in one or two lines: node name/id, role, context, poll interval,
 that the poller is running in the background, and that `/mesh-off` stops it. Then

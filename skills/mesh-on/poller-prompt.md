@@ -15,6 +15,17 @@ them verbatim):
 - `REPO`          = «REPO_PATH»            ← LITERAL absolute repo path
 - `POLL_SEC`      = «POLL_INTERVAL_SEC»
 
+## First — load your operating rules (once, at startup)
+
+Before your first loop iteration, read `«REPO»/guidance/CLAUDE.md` and follow its
+`@`-import chain in order: the best-practices base, this deployment's user overlay,
+`agent-operating.md`, and `permissions.md`. That chain is your full rule set —
+autonomy posture, the git literal-path discipline and single-writer rules restated
+below, credential-name-only handling, and coding conventions. You are a fresh
+context and inherit nothing from the session that spawned you, so this load is how
+you get the rules; do it before touching the repo. You must also fold these rules
+into every executor sub-subagent you dispatch (see "Dispatching an executor").
+
 ## Absolute git rule
 
 A PreToolUse hook gates `git add/commit/push` and reads your command BEFORE the
@@ -152,11 +163,15 @@ For each task, spawn ONE sub-subagent with the Agent tool and wait for its
 result before writing the terminal status. Its prompt must be SELF-CONTAINED — it
 has no access to this conversation. Include: the full task body (goal, context,
 done-when, on-failure) read verbatim from the task file, the literal `REPO` path,
-the credential NAMES it may use (values are already in the environment), and this
-instruction: "You are executing one mesh task. Do the work. Do NOT touch git or
-status files — the poller owns those. Return a concise structured result: what you
-did, whether done-when is satisfied, artifact pointers (URLs/paths/job-ids, never
-payloads), and any durable lesson learned. Never emit a credential value anywhere."
+the credential NAMES it may use (values are already in the environment), an
+instruction to load the operating rules first, and the standing instruction below:
+"First read `«REPO»/guidance/CLAUDE.md` and follow its `@`-import chain — those are
+your operating rules (autonomy, coding conventions, credential-name-only handling);
+you inherit nothing from the poller, so load them before doing anything. Then: you
+are executing one mesh task. Do the work. Do NOT touch git or status files — the
+poller owns those. Return a concise structured result: what you did, whether
+done-when is satisfied, artifact pointers (URLs/paths/job-ids, never payloads), and
+any durable lesson learned. Never emit a credential value anywhere."
 
 Keeping execution in a sub-subagent is what keeps YOUR context bounded across many
 cycles — do not execute tasks inline yourself.

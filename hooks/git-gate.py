@@ -48,12 +48,18 @@ from typing import NoReturn
 GATED = {"add", "commit", "push"}
 
 # Blob-rejection layer: extensions and size that must not be staged into git.
+# Data/model blobs are always denied (belong outside the bus, by pointer).
 BLOB_EXTS = frozenset({
-    ".nc", ".h5", ".hdf5", ".ckpt", ".npy", ".npz", ".png", ".jpg", ".jpeg",
-    ".mp4", ".tar", ".zip", ".gz", ".tgz", ".bin", ".pt", ".pth",
+    ".nc", ".h5", ".hdf5", ".ckpt", ".npy", ".npz", ".bin", ".pt", ".pth",
     ".safetensors",
 })
-BLOB_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB
+# Media/archive types handled via git-lfs: allowed at any size, so the
+# BLOB_SIZE_LIMIT below does NOT apply to them. Everything else is still
+# subject to the size limit (catches oversized text/logs/unknown blobs).
+LFS_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".mp4", ".tar", ".zip", ".gz", ".tgz",
+})
+BLOB_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB (not applied to LFS_EXTS)
 
 # Resolve the config dir the way Claude Code does, NOT via ~/.claude: on some
 # hosts HOME is not the config-dir parent (e.g. HOME=/quantum-data/agallojr/
@@ -204,6 +210,8 @@ def _blob_reason(path: str) -> str | None:
             f"Reference large results by pointer in the record's `artifacts` "
             f"field instead of committing them."
         )
+    if ext in LFS_EXTS:
+        return None  # git-lfs handles these at any size; skip the size check
     try:
         if os.path.isfile(path) and os.path.getsize(path) > BLOB_SIZE_LIMIT:
             return (
@@ -228,8 +236,11 @@ def _find_blob_in_tree(root: str) -> str | None:
                 dirnames.remove(".git")  # never recurse into a .git dir
             for name in filenames:
                 full = os.path.join(dirpath, name)
-                if os.path.splitext(name)[1].lower() in BLOB_EXTS:
+                ext = os.path.splitext(name)[1].lower()
+                if ext in BLOB_EXTS:
                     return full
+                if ext in LFS_EXTS:
+                    continue  # git-lfs handles these at any size
                 try:
                     if os.path.getsize(full) > BLOB_SIZE_LIMIT:
                         return full
