@@ -78,7 +78,7 @@ skill symlinks.
 
 The coordination directories (`agents/`, `tasks/`, `status/`, `outbox/`,
 `workflows/`, `_archive/`) and the library (`memory/lore/`,
-`memory/experiments/`, `memory/best-practices.user.md`) live at the **bus** root,
+`memory/workflows/`, `memory/best-practices.user.md`) live at the **bus** root,
 not here. The bus's own `guidance/CLAUDE.md` composes the product base with the
 deployment's user overlay (see `spec/PROTOCOL.md` §4.4).
 

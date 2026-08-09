@@ -73,7 +73,7 @@ quick `git -C /abs/bus pull` then a look) to see state.
 | `status/<task-id>.json` | Current state of a task (see section 4). |
 | `outbox/<id>/<task-id>-result.md` | A node's published result for a task. |
 | `workflows/<id>.yaml` | An in-flight multi-step chain and its cursor. |
-| `memory/lore/`, `memory/experiments/` | The library (durable knowledge). |
+| `memory/lore/`, `memory/workflows/` | The library (durable knowledge; `memory/workflows/` = curated write-ups of finished processes, distinct from the live `workflows/` above). |
 
 **Read a task's status.** Open `status/<task-id>.json` and look at its state
 field. That single file tells you accepted / running / done / failed / blocked, and
@@ -168,9 +168,10 @@ field.
 - **Submodule pin** — the exact product commit the bus points at. Bumping it in
   one bus commit rolls a product update out to the whole mesh.
 - **Library / lore** — durable shared knowledge under `memory/lore/` and
-  `memory/experiments/`, curated by the holder of the `librarian` role.
+  `memory/workflows/`, curated by the holder of the `librarian` role.
 - **Workflow** — an autonomous multi-step chain, recorded as `workflows/<id>.yaml`,
-  driven by the node that originated it, resumable from its cursor.
+  driven by the node that originated it, resumable from its cursor. Its durable
+  write-up, once finished, is curated into `memory/workflows/` by the librarian.
 - **Operator** — your interface session; not a node, holds no roles, writes only
   new messages into queues.
 - **Inbox / outbox** — `tasks/<id>/` is a node's direct inbox; `outbox/<id>/`

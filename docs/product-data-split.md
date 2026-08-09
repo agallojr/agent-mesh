@@ -33,7 +33,7 @@
    git-gate hook, env templates, the operating/permission guidance, and (new) an
    installer. Reusable, versionable software.
 2. **The coordination bus** — `agents/ tasks/ status/ outbox/ workflows/
-   _archive/` plus the **library** (`memory/`: lore + experiment logs). Per-
+   _archive/` plus the **library** (`memory/`: lore + workflow records). Per-
    deployment runtime state: the append-only ledger nodes read/write, and the
    shared knowledge store. It must stay a single writable Git repo (the bus *is*
    Git), and it is what every node pulls.
@@ -49,7 +49,7 @@ without dragging along private state; letting the third in bloats every clone.
 
 The design ships shared material *inside* the bus so **every node gets the latest
 from one `git pull`** — byte-identical protocol/guidance/skills, and the latest
-lore and experiment logs. Nodes consume the product at fixed paths
+lore and workflow records. Nodes consume the product at fixed paths
 (`${REPO_PATH}/product/spec/…`, `${REPO_PATH}/product/guidance/…`, skills
 symlinked from `product/skills/`). Any split must keep that one-pull property
 true.
@@ -70,7 +70,7 @@ vendoring, and we accept it in exchange for a clean product/bus boundary.
 |---|---|---|
 | **product** / **code** | the mesh software: protocol, skills, hooks, templates, guidance, installer | its own repo (`agent-mesh`), **public** |
 | **bus** | the coordination repo nodes pull & push | private repo (`agent-mesh-bus`) |
-| **library** | the record store: **lore + experiment logs + the user best-practices** (`memory/`) | inside the **bus** |
+| **library** | the record store: **lore + workflow records + the user best-practices** (`memory/`) | inside the **bus** |
 | **blob store** | large binary results, referenced by pointer | **outside the mesh; user/workflow-specific — the mesh does not define or assume it** |
 
 "Library" = the knowledge/record store, **not** the code. The code is "product."
@@ -96,7 +96,7 @@ composition path, one set of resolution semantics.
 | `README.md`, `INSTALL.md`, `.gitignore`, `.gitattributes` | Product | → product repo (bus keeps its own thin `.gitignore`) |
 | `agents/`, `tasks/`, `status/`, `outbox/`, `workflows/`, `_archive/` | Bus runtime | Stay in the bus |
 | `memory/lore/` | Library | Stay in the bus |
-| `memory/experiments/` (the logs) | Library | Stay in the bus |
+| `memory/workflows/` (the process records) | Library | Stay in the bus |
 | (future) large binary results | Blob | Not in the bus; pointer only |
 
 ## 4. Target architecture — two repos we build, one boundary we enforce
@@ -115,7 +115,7 @@ agent-mesh-bus        BUS repo — PRIVATE; the repo every node clones, pulls, p
   agents/ tasks/ status/ outbox/ workflows/ _archive/
   memory/             THE LIBRARY (text only):
     lore/                shared, curated by the `librarian` role
-    experiments/         experiment logs
+    workflows/           durable write-ups of finished multi-agent processes
     best-practices.user.md   this operator's env-specific rules (composed by the bus, §6)
   guidance/CLAUDE.md  bus entry point: @-includes product/guidance/best-practices.base.md
                       AND memory/best-practices.user.md (the bus owns composition)
@@ -150,7 +150,7 @@ command (`git -C /abs/bus pullmesh`) advances both the bus and the product tip.
 INSTALL registers this alias per clone.
 
 **The library stays in the bus.** `memory/` (an open set of durable-knowledge
-categories — lore, experiments, and any others) is written at runtime solely by the
+categories — lore, workflows, and any others) is written at runtime solely by the
 holder of the `librarian` role and is meant to be read by every node — so a plain
 `git pull` of the bus delivers the latest knowledge to everyone. It is deliberately
 *not* in the product submodule (which tracks the product repo, not deployment state)
@@ -274,8 +274,8 @@ coordination.
    and `${REPO_PATH}/guidance` references → `…/product/…`. Update the bus
    `.gitignore` to block blobs (§5, first-line filter) and land the gate's blob
    rejection (§5, enforcement).
-3. **Keep the library in place.** `memory/lore/` and `memory/experiments/` (logs)
-   stay in the bus — no move, no separate data repo.
+3. **Keep the library in place.** `memory/lore/` and `memory/workflows/` (process
+   records) stay in the bus — no move, no separate data repo.
 4. **Land the user best-practices and wire bus composition.** Add the operator's
    env-specific rules to the bus library as `memory/best-practices.user.md`. Set
    the bus `guidance/CLAUDE.md` to `@`-include both `product/guidance/
@@ -359,8 +359,8 @@ commit. See §1's caveat and §9's footgun mitigation.
 - **Naming: product = `agent-mesh`; bus = `agent-mesh-bus`.** The original repo was
   renamed to `agent-mesh-bus`, freeing `agent-mesh` for the (now public) product.
   Resolves the former §7/§10 collision.
-- Library (lore + experiment logs) stays in the bus and propagates by plain pull;
-  no separate data repo for logs.
+- Library (lore + workflow records) stays in the bus and propagates by plain pull;
+  no separate data repo for records.
 - Best-practices splits: **product ships a self-contained
   `best-practices.base.md`** (universal rules, no reaching include); **the
   user-specific overlay lives in the bus library** (`memory/best-practices.user.md`);

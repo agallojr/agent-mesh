@@ -82,12 +82,14 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /status/<task-id>.json         live task state; writer: the agent that claimed it
 /outbox/<agent-id>/            results and replies; writer: that agent only
 /memory/<category>/            the library — open set of durable-knowledge
-                               categories (lore/, experiments/, …); writer:
+                               categories (lore/, workflows/, …); writer:
                                `librarian` role only
 /memory/index.md               cross-category library catalog; writer: `librarian`
 /memory/best-practices.user.md deployment-specific rules; writer: human + librarian
-/workflows/<workflow-id>.yaml  durable multi-step workflow plans; writer: the node
-                               that originated the workflow
+/workflows/<workflow-id>.yaml  LIVE multi-step workflow plans, cursor-driven and
+                               in-flight; writer: the node that originated it.
+                               Distinct from memory/workflows/ (§7), the librarian-
+                               curated DURABLE write-ups of finished processes.
 /guidance/CLAUDE.md            bus entry point composing product + user rules;
                                writer: human + operator
 /_archive/YYYY-MM/             swept messages and terminal status; writer: `archiver`
@@ -326,7 +328,7 @@ What to report, and how far to back off before giving up.
 
 **Types:** `task.request`, `task.cancel`, `query`, `reply`, `library.submit`,
 `library.deprecate`. (`library.submit` carries any durable-knowledge record for the
-librarian — a lore note, an experiment log, or any other category; it generalizes
+librarian — a lore note, a workflow record, or any other category; it generalizes
 the older `lore.submit`.) A `library.submit` is posted into the `librarian` role
 queue like any other message, but it is **drained, not claimed** — the librarian
 folds it into `memory/` (§7) and writes no `status/<id>.json` for it. The queue is
@@ -434,9 +436,15 @@ staleness is inferred, never asserted by a third party.
 
 `memory/` is the durable knowledge store — the **library**. It is an **open set of
 categories**, not a fixed schema: `memory/<category>/` holds records of one kind of
-durable learning. `lore/` (curated operational hints) and `experiments/` (run logs)
-are the first two categories; new ones are added by convention, with no protocol
-change.
+durable learning. `lore/` (curated operational hints) and `workflows/` (durable
+write-ups of finished multi-agent / multi-node processes) are the first two
+categories; new ones are added by convention, with no protocol change.
+
+> `memory/workflows/` (durable, curated records of processes that *ran*) is
+> deliberately distinct from the top-level `/workflows/` (§8.1), which holds the
+> LIVE, cursor-driven plan a node is still driving. Same word, two paths, related
+> by design: a live plan finishes, and its write-up is submitted for the
+> librarian to fold into `memory/workflows/` with a `wf_ref` back to the plan id.
 
 **One writer: the `librarian` role.** Every path under `memory/` is written solely
 by the holder of the `librarian` role — for all categories, not just lore. A node
@@ -456,12 +464,40 @@ id: <assigned by the librarian>
 title: one line
 category: lore            # the memory/<category>/ it belongs to
 provenance: worker        # worker | workflow | human
-contexts: [frontier-login]
-discovered_by: a7f3c2
+contexts: [frontier-login]   # WHERE it holds — coarse environment class (scopes relevance)
+tags: [build, hdf5]          # WHAT it is about — free subject keywords (scopes discovery)
+related: []                  # ids of related library records (record↔record cross-links)
+discovered_by: a7f3c2                # who learned it (agent id, human, session)
 discovered_on: 2026-07-18
+discovered_in: 20260720T2132-0001    # origin unit of work — a mesh task id or external session id (may be archived/gone)
+source_path: /abs/or/url/of/origin   # where the librarian ingested it from, if any
+source_sha256: <hex>                 # checksum of the source at ingest, if a file
+ingested_on: 2026-07-20              # when the librarian folded it in
+submitted_by: a7f3c2                 # node/agent that posted the library.submit
 retention: permanent      # permanent | permanent-until-superseded | archive-after-Nd
 ---
 ```
+
+`contexts` and `tags` are two distinct axes, and keeping them apart is what
+makes retrieval work: **`contexts`** answers *where a fact is true* (a coarse
+environment class — `frontier-login`, `linux-server`, `macos-laptop` — the same
+vocabulary as `AGENT_CONTEXT`, §4), while **`tags`** answers *what it is about*
+(free subject keywords — `solverfw`, `quantum-cfd`, `entropy-knee`). Do not
+overload `contexts` with subjects; a record with no environment scope leaves
+`contexts` empty and relies on `tags`. The ingest-provenance fields
+(`source_path`, `source_sha256`, `ingested_on`, `submitted_by`) are filled by the
+librarian at fold-in and are what let it dedupe, re-verify, and detect a stale
+source; leave any that do not apply (e.g. a fact with no file origin) unset.
+
+`related` and `discovered_in` are deliberately separate axes. **`related`** points
+at other *library* records (permanent id↔id cross-links) and supersedes the older
+ad-hoc `related_lore`. **`discovered_in`** is provenance — the unit of work the
+fact came out of (a mesh task id, or an external session id like a Claude
+session) — and supersedes the older `related_task`. Task ids decay (§9 sweeps them
+to `_archive/` and eventually deletes them), so `discovered_in` is a best-effort
+origin trail that may dangle, whereas a `related` id always resolves to a live
+record; keeping them in one field would mix a decaying namespace into a permanent
+one.
 
 Category-specific fields may follow. **Lore** is the canonical curated example — it
 adds `tags`, `verified_on`, `confidence`, `supersedes`, and a symptom/cause/fix/scope
@@ -497,6 +533,68 @@ Exact commands or configuration. Be specific about where and when.
 Which machines, versions, or conditions this applies to — and which it does not.
 ```
 
+**Workflows** is the other bundled category. A `workflows/` record is the durable
+write-up of a multi-agent / multi-node process that ran — what it did, who took
+part, and how it ended — so a later reader can understand or replay it without the
+originating node's history.
+
+Its layout is three levels — **project ⊃ workflow ⊃ artifacts** — because several
+physical workflows may feed one project over time, and each workflow may leave
+more than one artifact:
+
+```
+memory/workflows/
+  qtscope-data/                        <- PROJECT (a `project:` handle)
+    channelflow-ingest/                <- one workflow (its `id` == this slug)
+      record.md                        <- the write-up (frontmatter below)
+      channelflow-experiment-log.md    <- an artifact
+    <next-workflow>/
+      record.md
+      <artifacts…>
+```
+
+The workflow `id` is a **readable, pinned slug** (not a date+seq), a `project:`
+field names the enclosing project, and `wf_ref` is a **list** (a project's live
+plans may be several). It adds these process-specific fields on top of the common
+header:
+
+```markdown
+---
+schema_version: 1
+id: channelflow-ingest          # readable slug == the workflow's folder name
+title: Ingest genode's experiment log into the library
+category: workflows
+project: qtscope-data           # enclosing project folder
+provenance: workflow
+contexts: [linux-server, macos-laptop]
+tags: [librarian, ingest, channelflow]
+related: [lore-20260720-0006]
+discovered_by: 241f3c
+ingested_on: 2026-07-20
+wf_ref: [wf-20260720T1954-2ed1] # the live /workflows/<id>.yaml plan(s) this records
+participants: [241f3c, 60ad2c]  # agent ids that took part
+nodes: [macos-laptop, genode]   # hosts involved
+roles: [librarian]              # roles exercised
+started: 2026-07-20T19:54:00Z
+ended: 2026-07-20T20:07:00Z
+outcome: done                   # done | failed | abandoned
+retention: permanent-until-superseded
+---
+
+## Goal
+What the process set out to make true.
+
+## Steps
+The ordered steps as they actually ran (one line each), with the role queue each
+targeted and the result that advanced the cursor.
+
+## Outcome
+What is now true, where the durable artifacts landed, and any follow-on left open.
+
+## Artifacts
+Each sibling file in this workflow folder, one line on what it is.
+```
+
 **Payloads by pointer.** A record is small text (markdown/JSON). Any heavy payload
 it refers to — a dataset, a large result file, a binary — stays OUTSIDE the bus and
 is referenced by pointer (a URL, path, or job id) in the record. The library holds
@@ -528,9 +626,9 @@ flagged. Re-verification is part of the librarian's job — a wrong operational 
 is worse than no gotcha.
 
 **index.md** is the library catalog: a flat list of
-`id | category | title | contexts | retention`, one per line, sorted by id.
-Order-independent and union-merge safe. The librarian maintains one `memory/index.md`
-spanning all categories.
+`id | category | title | contexts | tags | retention`, one per line, sorted by
+id. Order-independent and union-merge safe. The librarian maintains one
+`memory/index.md` spanning all categories.
 
 **Email ingress (second submission source).** Besides nodes and the phone-facing
 ingress Worker, a single-holder **`email-monitor`** role may watch a Gmail mailbox

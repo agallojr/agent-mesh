@@ -57,7 +57,7 @@ email is just another producer feeding the one submission queue.
 
 **In scope (v1):** a valid email becomes one `library.submit` message on the bus
 (PROTOCOL §5), which the librarian folds into `memory/**` (PROTOCOL §7), plus any
-attachments filed by pointer. Categories: `lore`, `experiments`, or any other
+attachments filed by pointer. Categories: `lore`, `workflows`, or any other
 open library category (PROTOCOL §7), selectable per message, defaulting to a
 configured category.
 

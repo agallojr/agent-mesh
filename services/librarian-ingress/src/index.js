@@ -45,7 +45,7 @@ const TOOL_DEF = {
       category: {
         type: "string",
         description:
-          "Optional memory category to file under (e.g. 'lore', 'experiments', " +
+          "Optional memory category to file under (e.g. 'lore', 'workflows', " +
           "'research-notes'). Defaults to the server's DEFAULT_CATEGORY. The " +
           "library category set is open; the librarian creates the category if new.",
       },

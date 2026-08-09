@@ -90,7 +90,7 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `in_reply_to:` the query id) and set status `done`; sync.
 7. Submit any durable learning as a `library.submit` message into
    `tasks/roles/librarian/` (the librarian's role queue), tagged with its
-   `category` (lore, experiments, …) and the common record header. It is a
+   `category` (lore, workflows, …) and the common record header. It is a
    submission, not a task — write no status file for it; the `librarian` holder
    drains and promotes it into `memory/<category>/`. If YOU hold the `librarian`
    role, write it into `memory/` directly instead — no self-submission.

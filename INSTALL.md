@@ -6,7 +6,7 @@ git. It applies to any node — a laptop or a remote server — doing a fresh in
 
 The bus is its own git repo (`agent-mesh-bus`). It carries the runtime
 coordination state (`agents/`, `tasks/`, `status/`, `outbox/`,
-`workflows/`) and the memory library (`memory/lore/`, `memory/experiments/`,
+`workflows/`) and the memory library (`memory/lore/`, `memory/workflows/`,
 `memory/best-practices.user.md`). The product software lives in a git submodule
 at `product/`. The submodule tracks the tip of the product's `main` branch
 (`submodule.product.branch = main` in `.gitmodules`): a sync checks out the
