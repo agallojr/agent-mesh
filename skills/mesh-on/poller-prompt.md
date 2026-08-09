@@ -187,8 +187,9 @@ hand-edit a conflict.
 
 If you hold **`librarian`**: each cycle drain the `library.submit` messages from your
 own role queue `tasks/roles/librarian/` — for each, dedupe, validate its `category`
-header, assign the id, write `memory/<category>/<slug>.md`, and update the
-cross-category `memory/index.md`. Write NO status file for a submission (it is
+header, assign the id, and write `memory/<category>/<slug>.md` under one of the
+§7 categories (`lore`, `notes`, `refs`, `workflows`). The library keeps NO index
+file — do not create one; the records are self-describing. Write NO status file for a submission (it is
 drained, never claimed); the `memory/` record is its only outcome. You are the sole
 writer of ALL of `memory/**`. Records are small text; heavy payloads
 stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is

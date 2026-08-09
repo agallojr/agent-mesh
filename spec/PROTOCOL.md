@@ -81,10 +81,10 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
                                anyone except that agent
 /status/<task-id>.json         live task state; writer: the agent that claimed it
 /outbox/<agent-id>/            results and replies; writer: that agent only
-/memory/<category>/            the library — open set of durable-knowledge
-                               categories (lore/, workflows/, …); writer:
-                               `librarian` role only
-/memory/index.md               cross-category library catalog; writer: `librarian`
+/memory/<category>/            the library — the categories defined in §7
+                               (lore/, notes/, refs/, workflows/); writer:
+                               `librarian` role only. No index file: the records
+                               are self-describing (§7)
 /memory/best-practices.user.md deployment-specific rules; writer: human + librarian
 /workflows/<workflow-id>.yaml  LIVE multi-step workflow plans, cursor-driven and
                                in-flight; writer: the node that originated it.
@@ -125,12 +125,14 @@ queue it is established by the **first node to write an `accepted` status and pu
 ### 3.2 .gitattributes
 
 ```
-memory/index.md merge=union
 * -merge
 ```
 
-Union merge is permitted **only** on order-independent line-oriented indexes.
-Never on prose.
+Every tracked path uses `-merge`. Coordination files are single-writer and
+records are prose, so a same-path collision must surface as a conflict to be
+re-derived (§8), never be silently auto-merged. There is no union-merge
+exception: the library keeps no committed index (§7), which was the only file
+that ever justified one.
 
 ---
 
@@ -434,11 +436,52 @@ staleness is inferred, never asserted by a third party.
 
 ## 7. The library (durable memory)
 
-`memory/` is the durable knowledge store — the **library**. It is an **open set of
-categories**, not a fixed schema: `memory/<category>/` holds records of one kind of
-durable learning. `lore/` (curated operational hints) and `workflows/` (durable
-write-ups of finished multi-agent / multi-node processes) are the first two
-categories; new ones are added by convention, with no protocol change.
+`memory/` is the durable knowledge store — the **library**. This section is the
+**single source of truth** for its structure: the categories below are the whole
+set, and nothing elsewhere — a per-category index, a nested folder scheme, a
+sibling convention — may define, extend, or contradict it. A record's own
+front-matter is authoritative; the library is self-describing, and any catalog or
+view over it (see *Indexes* below) is derived from that metadata, never a second
+source of truth.
+
+The categories are:
+
+- **`lore/`** — curated, verified operational hints, each a symptom / cause / fix
+  / scope note. High-confidence gotchas so a node does not repeat a known
+  mistake.
+- **`notes/`** — durable research and design knowledge that is not one of the
+  narrower kinds below: specs, design docs, comparisons, plans, handoffs,
+  experiment logs, trackers. This category is **deliberately broad and is expected
+  to grow substantially over time**. Finer subcategories may be introduced later,
+  by convention, as an *extension* of this definition — never as a structure that
+  competes with it.
+- **`refs/`** — external reference artifacts (papers, slides, screenshots)
+  ingested as files, catalogued by pointer with per-file provenance.
+- **`workflows/`** — durable, curated write-ups of multi-agent / multi-node
+  processes that ran (layout `project ⊃ workflow ⊃ artifacts`; see below).
+
+New categories are added only by amending this list. Doing so needs no change to
+the machinery (the header and submission flow are category-agnostic), but this
+section remains their one definition — a category that is not defined here does
+not exist.
+
+**Naming — a record's path always contains its `id`.** This is the one naming
+invariant, and it is what lets an id-based cross-link resolve to a file with no
+lookup table (and no index):
+
+- Flat categories (`lore`, `notes`, `refs`) name each file `<id>-<slug>.md` — the
+  `id` first, so files sort by id and a link resolves by globbing `<id>-*`, and a
+  human `slug` after, so a directory listing is readable. The `slug` is
+  descriptive only: it may be reworded freely because links are by `id`, never by
+  filename.
+- `workflows` carries the `id` as the workflow folder name (`<project>/<id>/`,
+  with `record.md` inside), so the path still contains the id.
+- Agent records (`agents/<id>.yaml`) and messages (`<id>-<slug>.md`, §5) already
+  satisfy the invariant.
+
+Cross-references between records (`related`, `supersedes`, `wf_ref`,
+`discovered_in`) are always by `id`, never by path — so renaming a slug never
+breaks a link.
 
 > `memory/workflows/` (durable, curated records of processes that *ran*) is
 > deliberately distinct from the top-level `/workflows/` (§8.1), which holds the
@@ -455,7 +498,8 @@ writer. (Running two `librarian` holders risks a shared-path collision;
 single-holder is an operating convention, §10.)
 
 **Common record header.** Every library record, in any category, carries a minimal
-header so one index can span them all and the archiver knows what to keep:
+header so the records are self-describing (any view can be built from them) and the
+archiver knows what to keep:
 
 ```yaml
 ---
@@ -533,7 +577,7 @@ Exact commands or configuration. Be specific about where and when.
 Which machines, versions, or conditions this applies to — and which it does not.
 ```
 
-**Workflows** is the other bundled category. A `workflows/` record is the durable
+**Workflows** is the one category with a nested layout. A `workflows/` record is the durable
 write-up of a multi-agent / multi-node process that ran — what it did, who took
 part, and how it ended — so a later reader can understand or replay it without the
 originating node's history.
@@ -625,10 +669,16 @@ distinction the path used to.
 flagged. Re-verification is part of the librarian's job — a wrong operational gotcha
 is worse than no gotcha.
 
-**index.md** is the library catalog: a flat list of
-`id | category | title | contexts | tags | retention`, one per line, sorted by
-id. Order-independent and union-merge safe. The librarian maintains one
-`memory/index.md` spanning all categories.
+**There is no index file — the records are the library.** The single source of
+truth is the set of record front-matters; the library is self-describing, and
+discovery is a scan (a grep) over that metadata. Do **not** commit any `index.md`
+— not a cross-category one, not per-category. A checked-in catalog only
+duplicates the records and drifts from them, and it is the librarian's write
+effort every cycle for no gain the records don't already provide. If a fast
+overview is ever wanted, generate it on demand from the front-matter as a
+throwaway view — never a committed, hand-maintained file. Records are expected to
+move, merge, and be re-categorized over time; because each carries its own
+metadata, any index can be rebuilt from them at any moment.
 
 **Email ingress (second submission source).** Besides nodes and the phone-facing
 ingress Worker, a single-holder **`email-monitor`** role may watch a Gmail mailbox
@@ -774,6 +824,12 @@ loses nothing (the durable copy lives in `memory/`).
 Rationale for short task-message retention: promotion into `memory/` becomes a
 deliberate ritual rather than an afterthought, and the coordination repo stays
 small enough to clone quickly from a login node.
+
+**`_archive/` is frozen and out of scope for quality assurance.** Once a file is
+swept into `_archive/YYYY-MM/` it is a historical record, not live state: it is
+not re-validated, re-categorized, re-indexed, or held to the library's structure
+rules. Curation (dedupe, verification, staleness, the canonical categories of §7)
+applies to live `memory/` only. Do not "tidy" the archive.
 
 ---
 

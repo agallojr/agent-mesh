@@ -132,11 +132,15 @@ Most roles just claim and run tasks. A few carry extra duties, and you perform
 them ONLY if that role is in your `AGENT_ROLES`:
 
 - **`librarian`** — sole writer of ALL of `memory/**` (every category, not just
-  lore). Each cycle, drain the `library.submit` messages from your own role queue
+  lore). The categories are fixed by PROTOCOL §7 (`lore`, `notes`, `refs`,
+  `workflows`) — file every record under one of those and never invent a
+  competing substructure (no per-category `index.md`, no ad-hoc subfolders). Each
+  cycle, drain the `library.submit` messages from your own role queue
   `tasks/roles/librarian/`: for each, dedupe/validate against its `category`
-  header, assign the `id`, write `memory/<category>/<slug>.md`, update the
-  cross-category `memory/index.md`, and re-verify stale lore. A submission is never
-  claimed — write no status file for it. Records are small text — heavy payloads stay outside and are
+  header, assign the `id`, write `memory/<category>/<slug>.md`, and re-verify stale
+  lore. The record's front-matter is the source of truth; the library keeps **no
+  index file** — do not create or maintain one, discovery is a scan over the
+  records (§7). A submission is never claimed — write no status file for it. Records are small text — heavy payloads stay outside and are
   referenced by pointer; never copy a blob into memory. An unstaffed queue
   accumulating until a librarian runs is correct, not a fault. Shared-output role:
   run exactly one holder (unenforced — two holders can collide on the same file).

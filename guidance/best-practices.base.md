@@ -108,3 +108,20 @@ When interacting with me, please adhere to the following guidelines:
     When in doubt on one of THESE specific cases, ask. For anything else, act.
 
 23. Don't branch in a git repo unless asked to do so.
+
+24. When you write down a numeric value — in a result, a status update, a
+    library record, or any message — state its units next to it whenever it has
+    any. A bare number with an implied unit is ambiguous and cannot be compared
+    later without re-running the work that produced it. Write "8.48 s", "20429
+    bytes", "12 min", not "8.48", "20429", "12". If a number's meaning also
+    depends on a convention or a reference — a log base, a normalization, a
+    reference scale, a coordinate or unit system — state that alongside the
+    value. Plain prose is enough; no special notation is required — just never
+    leave a unit or convention implied.
+
+25. Prefer UTC for every date and time you record, written in a standard format
+    (ISO 8601, e.g. 2026-07-21T04:00:45Z). Nodes run in different timezones, so a
+    bare local time is not comparable across the mesh. When a source timestamp is
+    only available in local time, keep its explicit offset (e.g. 2026-07-18
+    15:22:50 -0400) rather than dropping it, and note UTC alongside where you
+    can.

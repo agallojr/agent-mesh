@@ -311,8 +311,8 @@ artifacts: [<attachment pointers…>]       # if any (§8)
 
 The librarian drains `tasks/roles/librarian/` exactly as today (PROTOCOL §7,
 poller-prompt): for each `library.submit` it dedupes, validates the header,
-assigns the final `id`, sets any category-specific verification, writes
-`memory/<category>/<slug>.md`, and updates `memory/index.md`. It does **not** know
+assigns the final `id`, sets any category-specific verification, and writes
+`memory/<category>/<slug>.md` (the library keeps no index file, §7). It does **not** know
 or care that this submission came from email rather than the Worker or a node —
 the envelope is identical. No librarian-side change is required.
 
@@ -395,7 +395,7 @@ in the ledger diff like any other bus write.
     `memory/` record.
 - **No new bus *path* and no `.gitattributes` change.** `library.submit` rides the
   existing `tasks/roles/librarian/` queue; reject audits ride the existing
-  `outbox/<agent-id>/`; `memory/index.md` stays union-merge-safe.
+  `outbox/<agent-id>/`; the librarian writes only `memory/<category>/` records.
 - **One new role name** (`email-monitor`) registered in `agents/<id>.yaml` like
   any other role; no protocol mechanism changes.
 
@@ -432,8 +432,8 @@ end-to-end cases, `librarian`) with the duty enabled:
 1. **Happy path (end to end).** An email from an allowlisted sender,
    DKIM/DMARC-passing, with the correct `X-Mesh-Key` and a Markdown body, produces
    a `library.submit` in `tasks/roles/librarian/` (secret stripped), which the
-   librarian drains into a new `memory/<category>/<slug>.md` with the §7 header and
-   an updated `memory/index.md`. The message is left read + `mesh-processed`. The
+   librarian drains into a new `memory/<category>/<slug>.md` with the §7 header.
+   The message is left read + `mesh-processed`. The
    secret appears in **no** file, message, commit, or log.
 2. **Spoof rejected.** The same email with a forged `From` (DKIM/DMARC fail) posts
    **no** `library.submit`, writes a metadata-only reject audit to the
