@@ -88,12 +88,20 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `outbox/<your-id>/<task-id>-result.md`; sync. For a `query` (ping), write a
    `reply` into the SENDER'S inbox `tasks/<sender-id>/` (`type: reply`,
    `in_reply_to:` the query id) and set status `done`; sync.
+6a. If the task was **result-bearing** (it produced a result or durable
+   artifacts, not just a ping reply), also emit a `runs` record for it — a
+   `library.submit` of `category: runs` (PROTOCOL §7) carrying `task_id`, the
+   executor `agent`, `contexts`, `started`/`ended` (UTC), `outcome`, a one-line
+   result (numbers with units), and artifact pointers (with `sha256` for fixed
+   blobs). Status and outbox are scratch and get swept; the `runs` record is the
+   durable audit trail, so make it stand alone (do not rely on `task_id` still
+   resolving). A plain query or a task that produced nothing durable needs none.
 7. Submit any durable learning as a `library.submit` message into
    `tasks/roles/librarian/` (the librarian's role queue), tagged with its
-   `category` (lore, workflows, …) and the common record header. It is a
-   submission, not a task — write no status file for it; the `librarian` holder
-   drains and promotes it into `memory/<category>/`. If YOU hold the `librarian`
-   role, write it into `memory/` directly instead — no self-submission.
+   `category` (lore, notes, refs, workflows, runs) and the common record header.
+   It is a submission, not a task — write no status file for it; the `librarian`
+   holder drains and promotes it into `memory/<category>/`. If YOU hold the
+   `librarian` role, write it into `memory/` directly instead — no self-submission.
 8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
    human: it answers a query YOU sent. A reply is information — write no status,
    dispatch no executor, and do not reply to it. Announce each reply once.
@@ -133,20 +141,28 @@ them ONLY if that role is in your `AGENT_ROLES`:
 
 - **`librarian`** — sole writer of ALL of `memory/**` (every category, not just
   lore). The categories are fixed by PROTOCOL §7 (`lore`, `notes`, `refs`,
-  `workflows`) — file every record under one of those and never invent a
+  `workflows`, `runs`) — file every record under one of those and never invent a
   competing substructure (no per-category `index.md`, no ad-hoc subfolders). Each
   cycle, drain the `library.submit` messages from your own role queue
   `tasks/roles/librarian/`: for each, dedupe/validate against its `category`
-  header, assign the `id`, write `memory/<category>/<slug>.md`, and re-verify stale
-  lore. The record's front-matter is the source of truth; the library keeps **no
+  header, assign the `id` (`<category>-<date>-<seq>`), write
+  `memory/<category>/<id>-<slug>.md`, and re-verify stale lore. `runs` submissions
+  are provenance records — promote them like any other; they are the durable audit
+  trail for result-bearing tasks whose scratch will be swept. The record's front-matter is the source of truth; the library keeps **no
   index file** — do not create or maintain one, discovery is a scan over the
   records (§7). A submission is never claimed — write no status file for it. Records are small text — heavy payloads stay outside and are
   referenced by pointer; never copy a blob into memory. An unstaffed queue
   accumulating until a librarian runs is correct, not a fault. Shared-output role:
   run exactly one holder (unenforced — two holders can collide on the same file).
 - **`archiver`** — sole writer of `_archive/**`. Run the retention sweep
-  (PROTOCOL.md §9), `git mv`-ing aged messages and terminal status into
-  `_archive/YYYY-MM/`. Also a single-holder shared-output role.
+  (PROTOCOL.md §9): sweep each aged task **as a unit** — its message, its terminal
+  `status/<id>.json`, and its `outbox/<id>/<id>-result.md` moved together in one
+  commit, never a terminal status left behind. Also collect pre-existing orphans:
+  any terminal status whose task message is already archived or gone gets swept
+  too. Never sweep a non-terminal (`accepted`/`running`) status — it is in flight
+  or a dead-node orphan to report, not retire. A quick self-check that the boundary
+  is held: no terminal `status/` record should have its task message already in
+  `_archive/`. Also a single-holder shared-output role.
 - **`email-monitor`** — watch the ingress Gmail mailbox and turn authenticated
   mail into `library.submit` messages for the librarian (full design:
   `product/spec/librarian-email-ingress.md`; guarded by `LIBRARIAN_EMAIL_ENABLED`).

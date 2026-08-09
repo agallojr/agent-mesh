@@ -132,12 +132,19 @@ rejection, follow the conflict-handling rule below.
       cap 20 lines), AND write `outbox/«AGENT_ID»/<id>-result.md` (self-contained
       result: what was done, artifact pointers — URLs/paths/job-ids, NOT payloads).
       Sync.
+   e2. If the task was result-bearing (produced a result or durable artifacts, not
+      just a ping reply), ALSO drop a `library.submit` of `category: runs` for it
+      (PROTOCOL §7): `task_id`, executor `agent`, `contexts`, `started`/`ended` in
+      UTC, `outcome`, a one-line result (numbers with units), artifact pointers
+      (with `sha256` for fixed blobs). Status and outbox are scratch and get swept;
+      the `runs` record is the durable audit trail, so make it stand alone. If YOU
+      hold `librarian`, write it into `memory/runs/` directly instead of submitting.
    f. If the executor surfaced a durable learning, drop a `library.submit` message
-      into `tasks/roles/librarian/`, tagged with its `category` and the common
-      record header (the `librarian` holder drains and promotes it into
-      `memory/<category>/`). It is a submission, not a task: write no status file
-      for it. If YOU hold `librarian`, write it into `memory/` directly instead of
-      self-submitting.
+      into `tasks/roles/librarian/`, tagged with its `category` (`lore`, `notes`,
+      `refs`, `workflows`, `runs`) and the common record header (the `librarian`
+      holder drains and promotes it into `memory/<category>/`). It is a submission,
+      not a task: write no status file for it. If YOU hold `librarian`, write it
+      into `memory/` directly instead of self-submitting.
 
 4½. **Surface any `reply` messages in your inbox.** For each `reply` (a message
    with `type: reply` and an `in_reply_to`), emit a concise line to your output so
@@ -187,15 +194,19 @@ hand-edit a conflict.
 
 If you hold **`librarian`**: each cycle drain the `library.submit` messages from your
 own role queue `tasks/roles/librarian/` — for each, dedupe, validate its `category`
-header, assign the id, and write `memory/<category>/<slug>.md` under one of the
-§7 categories (`lore`, `notes`, `refs`, `workflows`). The library keeps NO index
+header, assign the id, and write `memory/<category>/<id>-<slug>.md` under one of the
+§7 categories (`lore`, `notes`, `refs`, `workflows`, `runs`). The library keeps NO index
 file — do not create one; the records are self-describing. Write NO status file for a submission (it is
 drained, never claimed); the `memory/` record is its only outcome. You are the sole
 writer of ALL of `memory/**`. Records are small text; heavy payloads
 stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is
 normal, not a fault. If you hold **`archiver`**: run the retention sweep per
-PROTOCOL.md §9. These are single-holder shared-output roles — do not run a second
-holder. Hold none of these roles and you skip that duty entirely.
+PROTOCOL.md §9 — sweep each aged task as a unit (message + terminal
+`status/<id>.json` + `outbox/<id>/<id>-result.md` together in one commit, never a
+terminal status orphaned), and collect any pre-existing orphan status whose task is
+already archived; never sweep a non-terminal status. These are single-holder
+shared-output roles — do not run a second holder. Hold none of these roles and you
+skip that duty entirely.
 
 If you hold **`email-monitor`** (single-holder): watch the ingress mailbox and
 turn authenticated mail into `library.submit` messages for the librarian. You

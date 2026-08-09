@@ -82,7 +82,7 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /status/<task-id>.json         live task state; writer: the agent that claimed it
 /outbox/<agent-id>/            results and replies; writer: that agent only
 /memory/<category>/            the library — the categories defined in §7
-                               (lore/, notes/, refs/, workflows/); writer:
+                               (lore/, notes/, refs/, workflows/, runs/); writer:
                                `librarian` role only. No index file: the records
                                are self-describing (§7)
 /memory/best-practices.user.md deployment-specific rules; writer: human + librarian
@@ -398,6 +398,12 @@ credential-shaped before writing.
 `artifacts` holds pointers — repo URLs, filesystem paths, job IDs. Never
 payloads. Large results belong in the experiment results repository.
 
+A status file is **scratch**: it is swept to `_archive/` once terminal (§9), so it
+is not the durable record of what a task did. For a result-bearing task the durable
+provenance is its `runs/` record (§7), which the executor emits on `done` and which
+outlives the sweep. Write the status for live coordination; write the `runs` record
+for the audit trail.
+
 **Claiming a task from a role queue (accept-as-claim).** When several nodes hold
 the same role they all see the same queued task. Ownership is resolved with no
 coordinator, by the same `accepted` write above:
@@ -459,6 +465,11 @@ The categories are:
   ingested as files, catalogued by pointer with per-file provenance.
 - **`workflows/`** — durable, curated write-ups of multi-agent / multi-node
   processes that ran (layout `project ⊃ workflow ⊃ artifacts`; see below).
+- **`runs/`** — durable provenance records of result-bearing tasks: one compact
+  record per task that produced a result, capturing the who / what / when / where
+  of the run so it outlives the sweep of its scratch (message, status, outbox).
+  Emitted by the executor on `done` and promoted by the librarian like any other
+  submission; a plain query or a task that produced nothing durable needs none.
 
 New categories are added only by amending this list. Doing so needs no change to
 the machinery (the header and submission flow are category-agnostic), but this
@@ -639,6 +650,47 @@ What is now true, where the durable artifacts landed, and any follow-on left ope
 Each sibling file in this workflow folder, one line on what it is.
 ```
 
+**Runs** is the audit category. A `runs/` record is the durable provenance of a
+single result-bearing task — assembled from that task's message, status, and
+result at the moment it finishes, so the trail survives after the scratch is swept
+(§9). It is what makes a one-off task auditable, the same way a `workflows/` record
+makes a multi-node process auditable. The executor emits it as a `library.submit`
+on `done`; the librarian promotes it. It adds these run-specific fields on top of
+the common header:
+
+```markdown
+---
+schema_version: 1
+id: run-20260721-0400          # librarian-assigned, <cat>-<date>-<seq>
+title: 48^3 entropy sweep on tier2_48
+category: runs
+provenance: worker
+task_id: 20260721T0400-0001    # the originating task (may later archive/decay)
+agent: 60ad2c                  # executor agent id
+contexts: [linux-server]       # where it ran (environment class / backend)
+tags: [entropy-knee, channelflow, sweep]
+started: 2026-07-21T04:02:40Z  # UTC, from the status transitions
+ended: 2026-07-21T04:06:54Z
+outcome: done                  # done | failed
+retention: permanent-until-superseded
+---
+
+## What ran
+One or two lines: the task's goal and how it was actually run.
+
+## Result
+The key outcome in a sentence, numbers with units (best-practices §24).
+
+## Artifacts
+Each durable output as a pointer, with a `sha256` where it is a fixed blob — the
+same integrity discipline as the workflow record's `source_sha256`. Never a
+payload.
+```
+
+Because the `runs` record is the durable copy, it must stand alone: it carries the
+run's essential facts inline (goal, result, artifact pointers) and does not depend
+on the `task_id` still resolving — that scratch is expected to be swept.
+
 **Payloads by pointer.** A record is small text (markdown/JSON). Any heavy payload
 it refers to — a dataset, a large result file, a binary — stays OUTSIDE the bus and
 is referenced by pointer (a URL, path, or job id) in the record. The library holds
@@ -731,7 +783,9 @@ loop (poller subagent):
        liveness ACK. (A direct-inbox task has one consumer; the claim never contends.)
   4. task.request: verify creds; status blocked if missing names, else
        status -> running; sync; dispatch executor sub-subagent and wait
-       terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md
+       terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md;
+       for a result-bearing task, ALSO submit a `runs` record (library.submit, §7)
+       so the run's provenance outlives its swept scratch
        (no periodic heartbeat -- status is written only at transitions)
      query: write a reply into the SENDER'S inbox tasks/<sender-id>/ (type: reply,
        in_reply_to: <query id>); status -> done. Replies route to inboxes so the
@@ -820,6 +874,24 @@ Archiving is a `git mv` into `_archive/YYYY-MM/`, performed by the holder of the
 staffed `librarian` drains its queue every cycle, a submission is normally promoted
 into `memory/` long before that window elapses, so archiving the swept message
 loses nothing (the durable copy lives in `memory/`).
+
+**Sweep a task as a unit.** A task's message, its terminal `status/<id>.json`, and
+its `outbox/<id>/<id>-result.md` are one closed record — move them together, in the
+same sweep commit, never one without the others. A terminal status left behind when
+its message is archived is an **orphan**: it makes `status/` grow without bound and
+blurs the boundary between live and swept state. The sweep MUST also collect
+pre-existing orphans — any terminal `status/<id>.json` whose task message is already
+archived or gone is itself moved to `_archive/`. Only **terminal** status is ever
+swept; a non-terminal (`accepted`/`running`) status stays live (§6) — it is either
+in flight or a dead-node orphan to be diagnosed (staleness query), never retired by
+the sweep. The durable provenance of a swept run is its `runs/` record (§7), not
+the archived status; archiving therefore loses no audit, it only clears scratch.
+
+**The sweep is observable.** The `git mv` commit that performs it (message
+`archive sweep <YYYY-MM>`) is by construction the record of what was retired and
+when. Anyone can confirm the boundary is being held with a read-only check:
+`status/` should contain **no** terminal record whose task message already lives in
+`_archive/`. A non-empty result means the archiver is behind (or not running).
 
 Rationale for short task-message retention: promotion into `memory/` becomes a
 deliberate ritual rather than an afterthought, and the coordination repo stays
