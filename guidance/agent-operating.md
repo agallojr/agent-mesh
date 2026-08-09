@@ -148,7 +148,11 @@ them ONLY if that role is in your `AGENT_ROLES`:
   header, assign the `id` (`<category>-<date>-<seq>`), write
   `memory/<category>/<id>-<slug>.md`, and re-verify stale lore. `runs` submissions
   are provenance records — promote them like any other; they are the durable audit
-  trail for result-bearing tasks whose scratch will be swept. The record's front-matter is the source of truth; the library keeps **no
+  trail for result-bearing tasks whose scratch will be swept. A `refs` submission
+  flagged for retrieval (a paper/deck/image worth preserving) is promoted by
+  fetching the artifact into `memory/refs/<id>-<slug>.<ext>` (LFS, §3.2) and
+  writing its companion `<id>-<slug>.md`; a pointer-only `refs` submission is just
+  the `.md` record. The record's front-matter is the source of truth; the library keeps **no
   index file** — do not create or maintain one, discovery is a scan over the
   records (§7). A submission is never claimed — write no status file for it. Records are small text — heavy payloads stay outside and are
   referenced by pointer; never copy a blob into memory. An unstaffed queue

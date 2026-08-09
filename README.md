@@ -68,7 +68,7 @@ skill symlinks.
 | Path | Role |
 |---|---|
 | `spec/` | The protocol definition (`PROTOCOL.md`) — the normative reference. |
-| `skills/` | The `mesh-on` / `mesh-off` / `mesh-post` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
+| `skills/` | The `mesh-on` / `mesh-off` / `mesh-post` / `mesh-check` / `mesh-ref` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
 | `hooks/` | `git-gate.py` (path-scoped git gate + blob rejection), its settings snippet, and the allowlist template. |
 | `templates/` | `*.env.template` files copied to `$HOME` and filled in per node (never committed). |
 | `guidance/` | `best-practices.base.md` (universal, self-contained), `agent-operating.md`, `permissions.md`, `operator-interface.md`, and a product-side `CLAUDE.md`. |

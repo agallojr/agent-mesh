@@ -39,7 +39,7 @@ You only ever ADD a new, uniquely-named file to a queue. Because every message i
 new file, pushes never textually conflict -- a `pull --rebase` plus retry always
 resolves. This is the same property that lets several writers share `main`.
 
-## Two verbs
+## Verbs
 
 ### CHECK -- read the ledger (read-only, the common case)
 
@@ -77,6 +77,19 @@ pushes to you.
 If a node routes a `reply` to you (answering a `query` you sent), it lands as a new
 file in `tasks/<your-op-id>/`; you pick it up on CHECK. You never reply to a reply
 and never write status for it.
+
+### INGEST -- file a URL into the library (use the `mesh-ref` skill)
+
+To capture a web resource as durable memory, the `mesh-ref` skill takes one or more
+URLs, fetches and summarizes each, and files each as a `refs` record. A research
+paper, deck, or image is retrieved and stored in the bus (LFS) with a companion
+metadata/summary record; a general web page is kept pointer-only with the summary
+in its body. Because an operator may not write `memory/`, the skill posts a
+`library.submit` of `category: refs` into `tasks/roles/librarian/` (with a
+`retrieve: true` flag for artifacts to store); the `librarian` holder promotes it —
+fetching and storing the artifact for a retrieve case — on its next cycle, and you
+see the result on CHECK. (A node that itself holds `librarian` writes the record,
+and stores the artifact, directly instead of submitting.)
 
 ## Phone specifics (Claude Code on web / mobile app)
 

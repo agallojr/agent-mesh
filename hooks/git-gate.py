@@ -53,11 +53,15 @@ BLOB_EXTS = frozenset({
     ".nc", ".h5", ".hdf5", ".ckpt", ".npy", ".npz", ".bin", ".pt", ".pth",
     ".safetensors",
 })
-# Media/archive types handled via git-lfs: allowed at any size, so the
-# BLOB_SIZE_LIMIT below does NOT apply to them. Everything else is still
-# subject to the size limit (catches oversized text/logs/unknown blobs).
+# Media/archive/reference-document types handled via git-lfs: allowed at any
+# size, so the BLOB_SIZE_LIMIT below does NOT apply to them. These are the
+# reference artifacts the `refs` library category legitimately stores (papers,
+# slides, images). Everything else is still subject to the size limit (catches
+# oversized text/logs/unknown blobs). The bus `.gitattributes` must LFS-track
+# these same extensions, or they land as raw blobs.
 LFS_EXTS = frozenset({
-    ".png", ".jpg", ".jpeg", ".mp4", ".tar", ".zip", ".gz", ".tgz",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".tar", ".zip",
+    ".gz", ".tgz", ".pdf", ".pptx", ".docx",
 })
 BLOB_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB (not applied to LFS_EXTS)
 

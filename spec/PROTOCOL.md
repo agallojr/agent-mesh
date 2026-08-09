@@ -126,13 +126,30 @@ queue it is established by the **first node to write an `accepted` status and pu
 
 ```
 * -merge
+*.pdf  filter=lfs diff=lfs merge=lfs -text
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.jpg  filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.gif  filter=lfs diff=lfs merge=lfs -text
+*.webp filter=lfs diff=lfs merge=lfs -text
+*.mp4  filter=lfs diff=lfs merge=lfs -text
+*.tar  filter=lfs diff=lfs merge=lfs -text
+*.zip  filter=lfs diff=lfs merge=lfs -text
+*.gz   filter=lfs diff=lfs merge=lfs -text
+*.tgz  filter=lfs diff=lfs merge=lfs -text
+*.pptx filter=lfs diff=lfs merge=lfs -text
+*.docx filter=lfs diff=lfs merge=lfs -text
 ```
 
-Every tracked path uses `-merge`. Coordination files are single-writer and
-records are prose, so a same-path collision must surface as a conflict to be
-re-derived (§8), never be silently auto-merged. There is no union-merge
-exception: the library keeps no committed index (§7), which was the only file
-that ever justified one.
+`* -merge` first: coordination files are single-writer and records are prose, so
+a same-path collision must surface as a conflict to be re-derived (§8), never be
+silently auto-merged. There is no union-merge exception — the library keeps no
+committed index (§7), which was the only file that ever justified one. The
+`filter=lfs` lines make the stored **reference artifacts** the `refs` category
+holds (papers, slides, images — §7) go to git-LFS, so they do not bloat the pack
+and are not subject to the gate's 5 MB non-LFS blob limit; these extensions must
+match the gate's `LFS_EXTS` (`hooks/git-gate.py`). git-lfs must be available on
+every node that clones the bus, or these land as raw blobs.
 
 ---
 
@@ -461,8 +478,14 @@ The categories are:
   to grow substantially over time**. Finer subcategories may be introduced later,
   by convention, as an *extension* of this definition — never as a structure that
   competes with it.
-- **`refs/`** — external reference artifacts (papers, slides, screenshots)
-  ingested as files, catalogued by pointer with per-file provenance.
+- **`refs/`** — external reference artifacts (papers, slides, images, web pages).
+  A ref takes one of two shapes: (a) a **stored artifact** — the file is retrieved
+  into `refs/` (LFS-tracked, §3.2) alongside a **separate companion `.md` record**
+  that carries its metadata and summary, because the artifact itself is binary; or
+  (b) a **pointer-only** record — a single `.md` whose front-matter points at the
+  source URL, summary in its body, when the source is not worth storing. Retrieve
+  documents worth preserving (research papers, decks, images); leave general web
+  pages as pointers.
 - **`workflows/`** — durable, curated write-ups of multi-agent / multi-node
   processes that ran (layout `project ⊃ workflow ⊃ artifacts`; see below).
 - **`runs/`** — durable provenance records of result-bearing tasks: one compact
@@ -691,12 +714,26 @@ Because the `runs` record is the durable copy, it must stand alone: it carries t
 run's essential facts inline (goal, result, artifact pointers) and does not depend
 on the `task_id` still resolving — that scratch is expected to be swept.
 
-**Payloads by pointer.** A record is small text (markdown/JSON). Any heavy payload
-it refers to — a dataset, a large result file, a binary — stays OUTSIDE the bus and
-is referenced by pointer (a URL, path, or job id) in the record. The library holds
-knowledge records and pointers, never large blobs (the git gate rejects blobs
-regardless). This keeps a recursive pull of the library from becoming a data-lake
-download.
+**Refs — stored artifact + companion record.** When a ref is retrieved and stored,
+the binary lands at `memory/refs/<id>-<slug>.<ext>` and its companion record at
+`memory/refs/<id>-<slug>.md` — same `id` and `slug`, so they pair and both satisfy
+the naming invariant. The companion's front-matter adds, on top of the common
+header: `artifact` (the stored file's name, a local pointer), `source_path` (the
+origin URL), `source_sha256` (checksum of the stored file — now meaningful, since
+it is a fixed blob), and `retrieved_on` (UTC, since a URL's content is mutable). A
+pointer-only ref omits `artifact`/`source_sha256` and just carries `source_path`
+and `retrieved_on`. Either way the summary is the record body.
+
+**Payloads by pointer, artifacts by LFS.** A record is small text (markdown/JSON).
+Two different things it may refer to are handled differently. **Reference
+artifacts** — a paper, a deck, an image the `refs` category preserves — are stored
+in the bus under LFS (§3.2) and paired with a companion record. **Data / result
+payloads** — datasets, model checkpoints, large run outputs — stay OUTSIDE the bus
+and are referenced by pointer (a URL, path, or job id); the git gate hard-denies
+the data/model blob extensions regardless (`hooks/git-gate.py` `BLOB_EXTS`) and
+refuses a non-LFS file over the size limit. This keeps a recursive pull of the
+library from becoming a data-lake download while still letting the library hold the
+reference documents it is meant to curate.
 
 **Submission flow (`library.submit`).** A node without the `librarian` role drops a
 `library.submit` message into `tasks/roles/librarian/` — the librarian's ordinary
