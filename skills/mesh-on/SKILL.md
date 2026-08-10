@@ -113,11 +113,20 @@ Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
 Spawn ONE background subagent (the poller). Give it the concrete identity values
 and the literal repo path inline — it has no access to your conversation. Use the
 prompt in `poller-prompt.md` in this skill directory as the poller's instructions,
-with the placeholders filled in. The poller prompt itself instructs the poller to
-load `${REPO_PATH}/guidance/CLAUDE.md` on startup (it does not inherit the rules
-you loaded in Step 3 — it is a fresh context), so the operating rules govern it and
+with the placeholders filled in. Fill in `«SKILL_DIR»` with the literal absolute
+path of THIS skill directory (where `poller-prompt.md` and `mesh-scan-loop.sh`
+live — the bus's `product/skills/mesh-on/`); the poller needs it to launch the
+scan script. The poller prompt itself instructs the poller to load
+`${REPO_PATH}/guidance/CLAUDE.md` on startup (it does not inherit the rules you
+loaded in Step 3 — it is a fresh context), so the operating rules govern it and
 every executor it dispatches. Spawn with `run_in_background: true` so your main
 session returns immediately and stays interactive.
+
+The poller does NOT burn inference polling. It parks on a background shell scanner
+(`mesh-scan-loop.sh`) that pulls and scans the queues and blocks until there is
+real work, waking the poller only on a hit or a stop. An idle node therefore costs
+zero tokens and zero commits. The scanner runs on macOS and Linux (bash 3.2+, no
+external `timeout`).
 
 Record the returned poller handle (agent id) in your own context and also note it
 for the user, so `/mesh-off` in THIS session can stop it directly. Cross-session,

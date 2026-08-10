@@ -62,13 +62,20 @@ alone entirely.
 
 The `mesh-on` poller drives this; each git step uses the literal repo path.
 
-1. `git -C /abs/repo pull --rebase` then `git -C /abs/repo submodule update
-   --init --recursive` (realizes the pinned `product/` commit; both are read-only
-   git and ungated).
-2. Scan your queues: `tasks/roles/<role>/` for each role in `AGENT_ROLES`, plus
-   your direct inbox `tasks/<your-id>/`. A message is claimable if it has no
-   `status/<id>.json` yet. **If nothing is claimable and no reply is waiting, write
-   nothing and sleep** — an idle node only pulls, never commits.
+1. **Park on the scanner.** You do not pull or scan with your own inference. Launch
+   `skills/mesh-on/mesh-scan-loop.sh` (portable bash 3.2+, macOS and Linux) as a
+   background call and block on it. It loops internally — `pull --rebase` +
+   `submodule update --init --remote --recursive` (both read-only, ungated), scan
+   `tasks/roles/<role>/` for each role in `AGENT_ROLES` plus your inbox
+   `tasks/<your-id>/`, sleep, repeat — and exits ONLY when it finds a claimable
+   task / fresh reply (`WORK` + paths) or `~/.mesh-stop` exists (`STOP`). While it
+   blocks you are parked at zero token cost; the harness re-invokes you on exit.
+   **An idle node only pulls (inside the script) and never commits, and spends no
+   inference** — repo and token traffic both track real work, not poll frequency.
+2. Classify what the scanner returned. It lists only claimable messages (a
+   `task.request`/`task.cancel`/`query` with no `status/<id>.json` yet) and each
+   fresh reply once. Re-check claimability at claim time, since another node may
+   have claimed a task between the scan and your write.
 3. **Claim each candidate before doing any work:** write status `accepted` with
    `agent_id` = you, then sync — three separate commands, each with its own
    `-C /abs/repo`: `git -C /abs/repo add -A`; `git -C /abs/repo commit -m "..."`;

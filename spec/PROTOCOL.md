@@ -789,6 +789,20 @@ sub-subagent so its own context stays bounded across cycles. `mesh-off` stops th
 loop (a `~/.mesh-stop` sentinel checked at the top of every cycle, plus a direct
 stop if the poller was spawned in the current session).
 
+The poller does not poll with its own inference. The mechanical part of the loop
+— pull, scan the queues, and sleep until something is claimable — lives in a
+portable shell script (`skills/mesh-on/mesh-scan-loop.sh`, bash 3.2+, macOS and
+Linux, no external `timeout`) that the poller launches as a **background** call
+and blocks on. The script exits only when it finds a claimable task or a fresh
+reply (prints `WORK` + the file paths) or when `~/.mesh-stop` exists (prints
+`STOP`). While it blocks, the poller is parked on that one tool call and spends
+zero inference tokens; the harness re-invokes it only on exit. An idle node
+therefore costs zero tokens and zero commits — both repo traffic and token spend
+are proportional to real work, not to node-count × poll-frequency × uptime. The
+read-only `pull`/`submodule update` inside the script are ungated, so the git
+gate (which guards only add/commit/push, and only inside the Claude agent) is
+unaffected; every gated write still happens inside the poller when it wakes.
+
 ```
 boot (mesh-on, main session):
   source ~/.agent-identity.env
@@ -803,16 +817,21 @@ boot (mesh-on, main session):
   spawn background poller subagent; return (session stays interactive)
 
 loop (poller subagent):
-  0. if ~/.mesh-stop exists: end cleanly
-  1. git -C /abs/repo pull --rebase; git -C /abs/repo submodule update --init
-     --recursive   (a product bump on the bus takes effect here)
-  2. scan this node's queues: tasks/roles/<role>/ for each role in AGENT_ROLES,
-     plus the direct inbox tasks/<AGENT_ID>/. Branch by message type:
-       task.request/task.cancel/query with no status file -> claimable work (step 3)
-       reply (has in_reply_to) -> information to surface (step 4½)
-       library.submit -> drain-and-curate if you hold librarian (step 6); never
-         claimed, no status file. A non-librarian ignores it.
-       nothing claimable and no unsurfaced reply -> write nothing, sleep (idle=pull)
+  0. PARK on the background scanner (zero tokens while it blocks):
+       skills/mesh-on/mesh-scan-loop.sh /abs/repo <AGENT_ROLES> <AGENT_ID> <POLL>
+     the script loops internally -- pull --rebase + submodule update --init
+     --remote --recursive (a product bump on the bus takes effect here), scan
+     tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/, and
+     sleep POLL between scans -- exiting ONLY on:
+       STOP (exit 2): ~/.mesh-stop exists -> end cleanly
+       WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
+     it never returns "nothing to do"; an idle node stays parked in the sleep.
+  1-2. classify each returned path by message type:
+       task.request/task.cancel/query (scanner lists only those with no status
+         file) -> claimable work (step 3)
+       reply (has in_reply_to; scanner surfaces each once) -> surface it (step 4½)
+       library.submit -> not emitted by the scanner; drain-and-curate if you hold
+         librarian (step 6). Never claimed, no status file; non-librarian ignores.
   3. CLAIM each candidate: write status -> accepted (agent_id = you) and sync.
        On push rejection, pull --rebase and re-check status/<id>.json: if it now
        exists and is not yours, YIELD (another holder claimed it) and move on; else
@@ -832,7 +851,8 @@ loop (poller subagent):
        Never delete it -- the archiver sweep is the only cleanup.
   5. submit any durable knowledge as a library.submit into tasks/roles/librarian/
   6. if you hold librarian / archiver / a running workflow, run those duties (below)
-  7. sleep POLL_INTERVAL_SEC
+  7. re-park on the scanner (back to step 0) -- the sleep/re-pull happens inside
+     the script while parked, not as an inline model-driven sleep
 ```
 
 **`sync`** is three separate commands, each with its own literal `-C /abs/repo`

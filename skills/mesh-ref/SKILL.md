@@ -64,10 +64,12 @@ git -C /abs/repo pull --rebase
      content type when unsure (`curl -sSI <url>` → `content-type`).
    - **Pointer-only** for `text/html` pages and anything not worth preserving as a
      file.
-2. **Summarize**: read the content with `WebFetch` (for a paper, the abstract/intro
-   is enough for the summary) and derive `title`, `slug` (short kebab-case), and
-   `tags` (3–8 subject keywords; `contexts` stays `[]`). If fetch fails (404,
-   timeout, blocked), record the failure and move to the next URL.
+2. **Summarize**: read the content with `WebFetch` and derive `title`, `slug` (short
+   kebab-case), and `tags` (3–8 subject keywords; `contexts` stays `[]`). For a
+   research paper the exposition is TWO summaries at two altitudes (§4) — the
+   abstract/intro alone is not enough for the deeper one, so read into the body
+   (methods, results) to write it. If fetch fails (404, timeout, blocked), record
+   the failure and move to the next URL.
 3. **Provenance**: `retrieved_on` = current UTC (`date -u +%Y-%m-%dT%H:%M:%SZ`).
 
 ## Step 4 — build the record(s)
@@ -79,8 +81,17 @@ best-practices §24/§25:
 ## What it is
 One line: kind of resource, author/source, date if known.
 
-## Summary
-A few sentences of substance — enough to decide whether to open it.
+## Semi-technical overview
+Written for a bright non-specialist (calculus + basic linear algebra, but not an
+expert in this subfield). Plain language: what problem it tackles, the core idea,
+and why it matters. Define jargon on first use. Terse — a few tight paragraphs,
+no hype. This is the wider-audience altitude; write it FIRST.
+
+## Technical summary
+Written for a specialist / graduate reader already fluent in the field. Assume the
+vocabulary; go deeper than the overview: the actual method and its machinery, the
+key equations or algorithm, complexity/resource claims, the experimental setup and
+results, and where it sits relative to prior work. Precise, not padded.
 
 ## Key points
 - Specifics worth remembering (findings, claims, APIs, numbers with units).
@@ -88,6 +99,11 @@ A few sentences of substance — enough to decide whether to open it.
 ## Relevance
 Optional: the topic/work this serves; link related library records by `id`.
 ```
+
+The paper itself is the standard; the **technical summary** is the specialist
+distillation and the **semi-technical overview** is the wider-audience one. A
+non-paper resource (page, slide, image) may collapse these into a single
+`## Summary` when a two-altitude split adds nothing.
 
 **Retrieve case** — two files, shared `id` and `slug`:
 - artifact `memory/refs/<id>-<slug>.<ext>` (the downloaded file)
