@@ -57,19 +57,37 @@ git -C /abs/repo pull --rebase
 
 ## Step 3 — for EACH url: classify, fetch, summarize
 
-1. **Classify** retrieve vs pointer-only:
-   - **Retrieve** if the URL resolves to a document/binary: a PDF (by `.pdf`, or an
-     arXiv/DOI paper — for an arXiv `abs/` page resolve to its `pdf/` URL), an image
-     (`.png/.jpg/.jpeg/.gif/.webp`), or a slide/doc (`.pptx/.docx`). Confirm with the
-     content type when unsure (`curl -sSI <url>` → `content-type`).
+1. **Classify** retrieve vs pointer-only, and resolve the **download URL** (the
+   artifact to fetch) separately from the **metadata URL** (where you read
+   title/authors/abstract):
+   - **Retrieve** if the URL resolves to a document/binary: a PDF, an image
+     (`.png/.jpg/.jpeg/.gif/.webp`), or a slide/doc (`.pptx/.docx`). Confirm with
+     the content type when unsure (`curl -sSI <url>` → `content-type`).
+     - **Direct PDF** — the URL already points at the file (ends `.pdf`, or is a
+       `…/pdf/…` path). Use it verbatim as the download URL; no resolution needed.
+     - **arXiv, any form** — `arxiv.org/abs/<id>`, `arxiv.org/pdf/<id>`,
+       `arxiv.org/html/<id>`, or a DOI that resolves to an arXiv paper. The user
+       may hand you the **abstract page**, not the document — do NOT ingest the
+       abstract HTML. Mine the real paper: normalize to the canonical PDF
+       `https://arxiv.org/pdf/<id>` as the download URL, and use
+       `https://arxiv.org/abs/<id>` as the metadata URL. A bare `<id>` (no `vN`
+       suffix) always resolves to the **latest version** — the desired default;
+       honor an explicit `vN` only if the user gave one. Read the concrete version
+       actually served off the abs page (e.g. `[v3]`, with its submission date) and
+       record it in the `## What it is` line so the record pins what was ingested
+       even though `<id>` keeps tracking latest.
    - **Pointer-only** for `text/html` pages and anything not worth preserving as a
-     file.
-2. **Summarize**: read the content with `WebFetch` and derive `title`, `slug` (short
-   kebab-case), and `tags` (3–8 subject keywords; `contexts` stays `[]`). For a
-   research paper the exposition is TWO summaries at two altitudes (§4) — the
-   abstract/intro alone is not enough for the deeper one, so read into the body
-   (methods, results) to write it. If fetch fails (404, timeout, blocked), record
-   the failure and move to the next URL.
+     file — including an arXiv abstract page treated as a web page, which is NOT
+     what we want here: an arXiv paper is always the retrieve case above.
+2. **Summarize**: derive `title`, `slug` (short kebab-case), and `tags` (3–8 subject
+   keywords; `contexts` stays `[]`) from the **metadata URL** via `WebFetch` (for
+   arXiv, the `abs/` page — exact title, authors, version, abstract). For a research
+   paper the exposition is TWO summaries at two altitudes (§4) — the abstract/intro
+   alone is not enough for the deeper one, so read into the body (methods, results).
+   Note: `WebFetch` on a `…/pdf/…` URL often returns raw PDF bytes, not text — so
+   download the artifact (Step 5) and read the stored file with the `Read` tool's
+   `pages` parameter to write the deep summary, rather than fetching the PDF URL for
+   prose. If fetch fails (404, timeout, blocked), record the failure and move on.
 3. **Provenance**: `retrieved_on` = current UTC (`date -u +%Y-%m-%dT%H:%M:%SZ`).
 
 ## Step 4 — build the record(s)
@@ -137,8 +155,11 @@ retention: permanent-until-superseded
 - Assign `id` = `ref-<UTC-YYYYMMDD>-<NNNN>` — next unused 4-digit seq for that date;
   list `memory/refs/` and scan `ref-<date>-*` filenames (id is the filename prefix,
   §7), max + 1 (`0001` if none today).
-- Retrieve case: download the artifact (`curl -L -o memory/refs/<id>-<slug>.<ext>
-  <url>`), `sha256sum` it into `source_sha256`, then write the companion `.md`.
+- Retrieve case: download the artifact from the **download URL** resolved in Step 3
+  (`curl -L -o memory/refs/<id>-<slug>.<ext> <download-url>` — for arXiv this is
+  `https://arxiv.org/pdf/<id>`, never the abs page), `sha256sum` it into
+  `source_sha256`, then read the stored file to write the deep summary and the
+  companion `.md`. Set `source_path` to the download URL actually fetched.
 - Pointer-only case: write the single `.md`.
 
 **Submit (you do not hold `librarian`):**
