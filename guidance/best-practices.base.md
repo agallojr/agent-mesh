@@ -125,3 +125,14 @@ When interacting with me, please adhere to the following guidelines:
     only available in local time, keep its explicit offset (e.g. 2026-07-18
     15:22:50 -0400) rather than dropping it, and note UTC alongside where you
     can.
+
+26. INTERACTIVE LIBRARIAN REQUESTS START IMMEDIATELY. When the operator is
+    present and interactively asks to file something with the librarian (hand
+    off a report, ingest a reference, record a note), start that work right away
+    — spawn a subagent and begin now rather than dropping a `library.submit` for
+    the poller to drain on some later cycle. The batch queue + poller path is
+    for unattended nodes; you may still use it, or any convenient mechanism, so
+    long as the librarian work actually begins promptly rather than waiting on
+    the next poll. If this node holds the `librarian` role, the subagent writes
+    into `memory/<category>/` directly (no self-submission); otherwise it posts
+    the submission into `tasks/roles/librarian/` immediately.
