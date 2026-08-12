@@ -14,9 +14,13 @@ vehicle for re-injecting the instruction each turn.
 
 State model: mm-on / mm-off skills toggle a per-session flag file
     <config_dir>/mm-active/<session_id>.flag
-keyed by the session id. This hook checks for that file's existence for the
-current session_id (provided on stdin) and injects only when present, so the
-mode is scoped per session, not global.
+keyed by the session id. State is CONTENT-based, not existence-based: the mode
+is ACTIVE when the flag exists and its content is not "off" (mm-on writes "on";
+a legacy empty flag also counts as active), and INACTIVE when the file is
+missing or its content is "off". mm-off turns the mode off by WRITING "off"
+into the flag — never by deleting it — so neither skill has to run a
+destructive `rm` (which draws a confirmation prompt on nodes without a blanket
+Bash allow). Scoped per session, not global.
 
 A command hook cannot itself call tools / spawn an agent (docs). It only emits
 context. The actual QA spawn is performed by the primary agent, following the
@@ -100,10 +104,15 @@ def main() -> int:
     if not session_id:
         return 0
 
+    # Content-based state: active unless the flag is missing or says "off".
+    # A legacy empty flag (written by older mm-on) counts as active.
     try:
-        active = os.path.isfile(_flag_path(session_id))
+        with open(_flag_path(session_id)) as fh:
+            active = fh.read().strip().lower() != "off"
+    except OSError:
+        active = False  # missing/unreadable flag -> inactive
     except Exception:
-        return 0
+        return 0  # fail open on anything unexpected
 
     if not active:
         return 0

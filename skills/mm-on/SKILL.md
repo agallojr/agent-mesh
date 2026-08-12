@@ -29,9 +29,13 @@ that flag; the hook and the mm skill hold the actual protocol.
    ```bash
    DIR="${CLAUDE_CODE_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}/mm-active"
    mkdir -p "$DIR"
-   : > "$DIR/${CLAUDE_CODE_SESSION_ID}.flag"
+   printf 'on' > "$DIR/${CLAUDE_CODE_SESSION_ID}.flag"
    echo "mm QA mode ON for session ${CLAUDE_CODE_SESSION_ID}"
    ```
+
+   (Content-based state: the hook treats the flag as ACTIVE unless its content
+   is `off`. `/mm-off` writes `off` rather than deleting the file, so neither
+   toggle runs a destructive `rm`.)
 
 3. Confirm to the user that mm QA mode is ON and note the cost: every response
    now triggers a synchronous sub-agent spawn — real added latency and tokens
