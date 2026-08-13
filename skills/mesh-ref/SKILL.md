@@ -55,6 +55,34 @@ keep commit messages plain text (no `;`, `&&`, `|`, `$(...)`, backticks).
 git -C /abs/repo pull --rebase
 ```
 
+## Step 2.5 — skip URLs already in the library
+
+Dedup against what is already stored BEFORE fetching or summarizing — the skill
+must not re-download and duplicate a ref that already exists. For each URL, derive
+a match key and grep the `source_path:` lines of the existing companion records:
+
+- **arXiv** — normalize to the bare id (strip scheme/host, the `abs|pdf|html`
+  path segment, and any `vN` suffix), then match that id anywhere in a stored
+  `source_path` (records store the `…/pdf/<id>` download URL, so an `abs`/`html`
+  URL you were handed still matches the same paper):
+  `grep -rniE "arxiv\.org/(abs|pdf|html)/<id>" /abs/repo/memory/refs/*.md`
+- **Everything else** — match the exact URL against `source_path`:
+  `grep -rnF "source_path: <url>" /abs/repo/memory/refs/*.md`
+
+A hit means it is already stored: read that record, then SKIP this URL — do not
+fetch, summarize, assign an id, or write anything. Record it as "already stored:
+`<id>`" for the Step 7 report and move on to the next URL. This runs on BOTH paths;
+even a non-librarian operator can read `memory/refs/` (the session bus clone is a
+full clone), so the grep works before deciding to submit. On the submit path also
+scan `tasks/roles/librarian/` for an unpromoted `library.submit` naming the same
+URL and treat that as already-handled too. No hit → proceed to Step 3.
+
+Version note: a hit is a skip even when the stored record pins an older arXiv
+version — the bare `<id>` tracks latest, but re-ingesting to refresh a version is a
+deliberate act, not this skill's default. If the operator explicitly asked to
+refresh/re-ingest, update the existing record in place (keep its `id`) rather than
+minting a duplicate.
+
 ## Step 3 — for EACH url: classify, fetch, summarize
 
 1. **Classify** retrieve vs pointer-only, and resolve the **download URL** (the
@@ -184,10 +212,11 @@ git -C /abs/repo push origin HEAD
 
 ## Step 7 — report
 
-One line per URL: the URL, whether it was retrieved-and-stored or pointer-only, the
-record id and path(s) (or, on the submit path, the submission path and that the
-librarian will assign the id and promote it next cycle), and the one-line summary.
-List any URLs that failed to fetch, with the reason. You do NOT wait for the
+One line per URL: the URL, whether it was retrieved-and-stored, pointer-only, or
+**skipped (already stored)**, the record id and path(s) (or, on the submit path,
+the submission path and that the librarian will assign the id and promote it next
+cycle), and the one-line summary. For a skip, give the existing record's id and
+path. List any URLs that failed to fetch, with the reason. You do NOT wait for the
 librarian on the submit path.
 
 ## Relationship to the other mesh verbs
