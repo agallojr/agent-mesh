@@ -23,6 +23,8 @@ them verbatim):
 - `AGENT_ROLES`   = «AGENT_ROLES» (comma-separated; each is a queue you claim from)
 - `REPO`          = «REPO_PATH»            ← LITERAL absolute repo path
 - `POLL_SEC`      = «POLL_INTERVAL_SEC»
+- `MESH_PRODUCT_TRACK` = «MESH_PRODUCT_TRACK» (from identity env; empty/unset =
+  pin mode, the adopter default; `tip` = developer mode, track product `main`)
 
 ## First — load your operating rules (once, at startup)
 
@@ -71,15 +73,20 @@ until stop (see "Stopping" below):
    exits:
 
    ```
-   «SKILL_DIR»/mesh-scan-loop.sh «REPO» «AGENT_ROLES» «AGENT_ID» «POLL_SEC»
+   MESH_PRODUCT_TRACK=«MESH_PRODUCT_TRACK» \
+     «SKILL_DIR»/mesh-scan-loop.sh «REPO» «AGENT_ROLES» «AGENT_ID» «POLL_SEC»
    ```
 
-   `«SKILL_DIR»` is the directory this prompt lives in (the bus's
-   `product/skills/mesh-on/`); the spawning agent gives you its literal path. The
-   script pulls the repo (`pull --rebase` + `submodule update --init --remote
-   --recursive`, both read-only and ungated — the `--remote` flag tracks the tip of
-   `submodule.product.branch`, so `product/` is always latest, no pin bump), scans
-   every `«REPO»/tasks/roles/<role>/*.md` for your roles plus your inbox
+   Pass `MESH_PRODUCT_TRACK` on the command line as shown: a background Bash call
+   does NOT inherit your shell env, and the scanner reads that variable to choose
+   pin mode vs tip mode. If «MESH_PRODUCT_TRACK» is empty, just omit the prefix
+   (plain invocation = pin mode). `«SKILL_DIR»` is the directory this prompt lives
+   in (the bus's `product/skills/mesh-on/`); the spawning agent gives you its
+   literal path. The script pulls the repo (`pull --rebase` + `submodule update
+   --init --recursive`, both read-only and ungated — in **pin mode** it realizes the
+   product commit the bus records; in **tip mode** (`MESH_PRODUCT_TRACK=tip`) it adds
+   `--remote` to track `submodule.product.branch`), scans every
+   `«REPO»/tasks/roles/<role>/*.md` for your roles plus your inbox
    `«REPO»/tasks/«AGENT_ID»/*.md`, and **blocks — sleeping `POLL_SEC` and re-pulling
    — until there is something to do.** It exits only then. While it blocks you are
    parked on this one tool call and spend NO tokens; the harness re-invokes you when
@@ -93,10 +100,16 @@ until stop (see "Stopping" below):
    - `WORK` (exit 0) followed by one file path per line — the claimable tasks and
      fresh replies it found. Proceed to step 1 to classify and handle them, then
      loop back to step 0 to re-park.
+   - `UPGRADE` (exit 3) followed by `<bus-layout> <product-layout>` — the bus layout
+     is behind the product's expected layout. Apply the pending upgrade notes (see
+     "Layout upgrades" below), then re-park at step 0.
+   - `STALE_PRODUCT` (exit 4) followed by `<bus-layout> <product-layout>` — the bus
+     layout is AHEAD of this product checkout. Report that this checkout's product
+     is too old for this bus and END; never guess forward (see "Layout upgrades").
 
-   If the background call ever returns an error instead of WORK/STOP (e.g. a broken
-   invocation), do not hot-spin: note it and re-launch it once; if it fails again,
-   surface the error and END rather than loop tightly.
+   If the background call ever returns an error instead of one of the above (e.g. a
+   broken invocation), do not hot-spin: note it and re-launch it once; if it fails
+   again, surface the error and END rather than loop tightly.
 
 1. **Classify each returned file.** For each path the scanner emitted, read its
    `id:` and `type:` from the frontmatter and branch on `type`:
@@ -351,6 +364,39 @@ transition is one commit: a driver that dies mid-workflow and restarts re-reads 
 a step already `running` with a `task_id` is not re-originated (its status file
 already exists); a step still `pending` is originated. No double-sends, no lost
 steps.
+
+## Layout upgrades (scanner exit 3 / exit 4)
+
+The mesh version-controls the **bus layout**: the bus carries `«REPO»/BUS_LAYOUT`
+(an integer), the product carries `«REPO»/product/spec/LAYOUT_VERSION` (the layout
+this product version expects). The scanner compares them each cycle. You act only
+on drift; the operator does nothing — upgrades are agent-driven and invisible.
+
+**On `UPGRADE` (exit 3, `<bus> <prod>`):** the bus is behind. Bring it forward one
+layout at a time, in order, from `<bus>+1` up to `<prod>`:
+
+1. For `N` from `<bus>+1` to `<prod>`, read `«REPO»/product/upgrades/to-<N>.md` and
+   execute exactly what it says. The notes are idempotent — safe to re-run — and
+   include any node-side steps (e.g. re-linking hooks/skills). Do the bus steps and
+   the node steps the note lists.
+2. After each note completes, stamp the bus: write `<N>` (and a newline) into
+   `«REPO»/BUS_LAYOUT`.
+3. Commit the bus changes via the gated flow with a plain message, e.g.
+   `git -C «REPO» add -A`; `git -C «REPO» commit -m "layout upgrade to <N>"`;
+   `git -C «REPO» push origin HEAD`. (The note itself may specify the message; a
+   plain `layout upgrade to <N>` is fine.)
+4. When `BUS_LAYOUT` equals `<prod>`, relaunch the scan loop (step 0) and resume
+   the normal loop. No operator involvement at any point.
+
+If a note is missing (`to-<N>.md` does not exist for an `N` in range), stop and
+report the gap rather than skipping — a missing transition means this product
+checkout cannot complete the upgrade.
+
+**On `STALE_PRODUCT` (exit 4, `<bus> <prod>`):** the bus layout is AHEAD of this
+product checkout — this node's `product/` is older than the bus expects. Do NOT
+guess forward and do NOT downgrade the bus. Report that this checkout's product is
+too old for this bus (the operator advances the pin, or the node syncs to a newer
+product) and END.
 
 ## Stopping
 

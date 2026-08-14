@@ -12,7 +12,7 @@ set -euo pipefail
 
 # --- inputs (env vars, overridable by flags) --------------------------------
 PRODUCT_URL="${PRODUCT_URL:-}"
-PRODUCT_TAG="${PRODUCT_TAG:-v0.1.0}"
+PRODUCT_TAG="${PRODUCT_TAG:-}"
 BUS_URL="${BUS_URL:-}"
 BUS_PATH="${BUS_PATH:-}"
 
@@ -25,16 +25,18 @@ the git gate + skills on this node.
 
 Inputs (env var or flag; flag wins):
   --product-url URL   PRODUCT_URL   git URL of the agent-mesh product repo.
-  --product-tag TAG   PRODUCT_TAG   product tag to pin        (default v0.1.0).
+  --product-tag TAG   PRODUCT_TAG   product tag to pin (optional; if unset,
+                                    pins whatever HEAD the clone lands on).
   --bus-url URL       BUS_URL       git URL of the agent-mesh-bus remote.
+                                    Naming convention: agent-mesh-bus-<user>.
   --bus-path PATH     BUS_PATH      absolute path for the bus clone
-                                    (e.g. $HOME/agent-mesh).
+                                    (e.g. $HOME/agent-mesh-bus-you).
   -h, --help                        show this help.
 
 Example:
   PRODUCT_URL=git@github.com:you/agent-mesh.git \
-  BUS_URL=git@github.com:you/agent-mesh-bus.git \
-  BUS_PATH="$HOME/agent-mesh" \
+  BUS_URL=git@github.com:you/agent-mesh-bus-you.git \
+  BUS_PATH="$HOME/agent-mesh-bus-you" \
   ./install/install.sh --product-tag v0.1.0
 
 Network-mutating steps (bus first commit + push) are printed for you to run,
@@ -119,39 +121,60 @@ else
   git -C "${BUS_PATH}" submodule add "${PRODUCT_URL}" product
 fi
 
-say "checking out pinned tag inside submodule: ${PRODUCT_TAG}"
-git -C "${BUS_PATH}/product" fetch --tags --quiet || true
-git -C "${BUS_PATH}/product" checkout "${PRODUCT_TAG}"
+if [ -n "${PRODUCT_TAG}" ]; then
+  say "checking out pinned tag inside submodule: ${PRODUCT_TAG}"
+  git -C "${BUS_PATH}/product" fetch --tags --quiet || true
+  git -C "${BUS_PATH}/product" checkout "${PRODUCT_TAG}"
+else
+  say "no PRODUCT_TAG set; pinning whatever HEAD the submodule clone landed on"
+  say "  product HEAD: $(git -C "${BUS_PATH}/product" rev-parse --short HEAD)"
+fi
 
 say "staging .gitmodules and product pointer"
 git -C "${BUS_PATH}" add .gitmodules product
 
-# --- 4. generate the bus entry point + user overlay placeholder -------------
-step "Step 4: generate guidance/CLAUDE.md and memory/best-practices.user.md"
+# --- 4. bus entry point + user overlay (fallback; skeleton normally ships these)
+# The layout-1 bus-skeleton already provides guidance/CLAUDE.md, the overlay
+# stub, and BUS_LAYOUT, so the copy in step 2 normally puts them in place. These
+# if-missing blocks are an idempotent fallback for an older skeleton or a bus
+# path that pre-existed without them.
+step "Step 4: ensure guidance/CLAUDE.md and memory/best-practices.user.md exist"
 BUS_CLAUDE="${BUS_PATH}/guidance/CLAUDE.md"
 if [ -f "${BUS_CLAUDE}" ]; then
-  say "guidance/CLAUDE.md already exists; leaving it untouched."
+  say "guidance/CLAUDE.md present (from skeleton); leaving it untouched."
 else
-  say "writing bus entry point ${BUS_CLAUDE}"
+  say "guidance/CLAUDE.md missing; writing fallback bus entry point ${BUS_CLAUDE}"
+  mkdir -p "${BUS_PATH}/guidance"
   cat > "${BUS_CLAUDE}" <<'EOF'
 # Mesh agent guidance -- bus entry point (composes product base + user overlay)
 
-@product/guidance/best-practices.base.md
-@memory/best-practices.user.md
-@product/guidance/agent-operating.md
-@product/guidance/permissions.md
+@../product/guidance/best-practices.base.md
+@../memory/best-practices.user.md
+@../product/guidance/agent-operating.md
+@../product/guidance/permissions.md
 EOF
 fi
 
 USER_OVERLAY="${BUS_PATH}/memory/best-practices.user.md"
 if [ -f "${USER_OVERLAY}" ]; then
-  say "memory/best-practices.user.md already exists; leaving it untouched."
+  say "memory/best-practices.user.md present (from skeleton); leaving it untouched."
 else
-  say "writing placeholder ${USER_OVERLAY}"
+  say "memory/best-practices.user.md missing; writing fallback placeholder"
+  mkdir -p "${BUS_PATH}/memory"
   cat > "${USER_OVERLAY}" <<'EOF'
 <!-- Add this deployment's specific rules here. This user overlay is composed
      after the product base by guidance/CLAUDE.md. -->
 EOF
+fi
+
+# BUS_LAYOUT stamp (fallback; the skeleton ships it). Stamp the layout this
+# product version expects, read from spec/LAYOUT_VERSION.
+BUS_LAYOUT_FILE="${BUS_PATH}/BUS_LAYOUT"
+if [ -f "${BUS_LAYOUT_FILE}" ]; then
+  say "BUS_LAYOUT present (from skeleton); leaving it untouched."
+else
+  say "BUS_LAYOUT missing; stamping from product spec/LAYOUT_VERSION"
+  cp "${PRODUCT_ROOT}/spec/LAYOUT_VERSION" "${BUS_LAYOUT_FILE}"
 fi
 
 # --- 5. wire the git gate on THIS node --------------------------------------
@@ -159,9 +182,12 @@ step "Step 5: wire the git gate on this node"
 HOOKS_DST="${HOME}/.claude/hooks"
 say "mkdir -p ${HOOKS_DST}"
 mkdir -p "${HOOKS_DST}"
-say "copy product/hooks/git-gate.py -> ${HOOKS_DST}/git-gate.py"
-cp "${BUS_PATH}/product/hooks/git-gate.py" "${HOOKS_DST}/git-gate.py"
-chmod +x "${HOOKS_DST}/git-gate.py"
+# Symlink the hook (not a copy) so it upgrades with the product pin. chmod +x
+# the target for safety -- a symlink to an executable target is executable.
+GATE_SRC="${BUS_PATH}/product/hooks/git-gate.py"
+say "ln -sfn ${GATE_SRC} -> ${HOOKS_DST}/git-gate.py"
+chmod +x "${GATE_SRC}"
+ln -sfn "${GATE_SRC}" "${HOOKS_DST}/git-gate.py"
 
 ALLOWLIST="${HOME}/.claude/mesh-git-allowlist.txt"
 if [ ! -f "${ALLOWLIST}" ]; then
@@ -182,13 +208,21 @@ say "  Replace REPLACE_WITH_HOME with: ${HOME}"
 say "  Remove any blanket git add/commit/push deny (keep sudo)."
 say "  Merging JSON is the operator's call -- this script does NOT edit settings.json."
 
-# --- 6. symlink skills ------------------------------------------------------
-step "Step 6: symlink all product skills"
+# --- 6. symlink skills (product first, then bus overlay) --------------------
+step "Step 6: symlink product skills, then bus overlay skills"
 SKILLS_DST="${HOME}/.claude/skills"
 mkdir -p "${SKILLS_DST}"
 for skill_dir in "${BUS_PATH}"/product/skills/*/; do
   skill_name=$(basename "${skill_dir}")
   say "ln -sfn ${skill_dir%/} ${SKILLS_DST}/${skill_name}"
+  ln -sfn "${skill_dir%/}" "${SKILLS_DST}/${skill_name}"
+done
+# Bus overlay skills win over same-named product skills: link them last so the
+# instance override overwrites the product link. Skip if the bus has none.
+for skill_dir in "${BUS_PATH}"/skills/*/; do
+  [ -d "${skill_dir}" ] || continue
+  skill_name=$(basename "${skill_dir}")
+  say "overlay: ln -sfn ${skill_dir%/} ${SKILLS_DST}/${skill_name}"
   ln -sfn "${skill_dir%/}" "${SKILLS_DST}/${skill_name}"
 done
 

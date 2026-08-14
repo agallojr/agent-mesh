@@ -4,9 +4,11 @@ compatibility_date = "2026-07-01"
 
 # Non-secret config. Secrets (CONNECTOR_TOKEN, GITHUB_TOKEN) are set with
 # `wrangler secret put`, never committed.
+# BUS_OWNER / BUS_REPO are DEPLOYMENT-SPECIFIC: set them to YOUR bus before
+# deploying (the placeholders below will fail closed on the GitHub API).
 [vars]
-BUS_OWNER = "agallojr"
-BUS_REPO = "agent-mesh-bus"
+BUS_OWNER = "REPLACE_WITH_BUS_OWNER"
+BUS_REPO = "REPLACE_WITH_BUS_REPO"
 BUS_BRANCH = "main"
 LIBRARIAN_ROLE = "librarian"
 SENDER_ID = "op-phone"

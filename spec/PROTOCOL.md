@@ -85,23 +85,31 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
                                (lore/, notes/, refs/, workflows/, runs/); writer:
                                `librarian` role only. No index file: the records
                                are self-describing (§7)
-/memory/best-practices.user.md deployment-specific rules; writer: human + librarian
+/memory/best-practices.user.md deployment-specific rules (guidance overlay);
+                               writer: the operator (NOT the librarian — see §7)
 /workflows/<workflow-id>.yaml  LIVE multi-step workflow plans, cursor-driven and
                                in-flight; writer: the node that originated it.
                                Distinct from memory/workflows/ (§7), the librarian-
                                curated DURABLE write-ups of finished processes.
 /guidance/CLAUDE.md            bus entry point composing product + user rules;
                                writer: human + operator
+/skills/<name>/                instance skill overlays; a bus skill with the same
+                               name as a product skill wins at node link time;
+                               writer: operator
+/BUS_LAYOUT                    layout stamp (integer); writer: operator or the
+                               upgrading agent (see §3.3)
 /_archive/YYYY-MM/             swept messages and terminal status; writer: `archiver`
 /.gitmodules, /product (gitlink)  the product pin; writer: operator only
 
-PRODUCT SUBMODULE (agent-mesh @ pinned tag) — read-only on nodes
+PRODUCT SUBMODULE (agent-mesh @ recorded pin) — nodes ride the recorded pin
 /product/spec/PROTOCOL.md      this document
+/product/spec/LAYOUT_VERSION   the bus layout this product version expects (§3.3)
 /product/guidance/             best-practices.base.md, agent-operating.md,
                                permissions.md, operator-interface.md
 /product/hooks/                git-gate hook + settings snippet + allowlist tmpl
 /product/skills/               mesh-on / mesh-off / mesh-post skills
 /product/templates/            identity/credentials env templates
+/product/upgrades/             one to-<N>.md per bus-layout transition (§3.3)
 /product/install/              installer + bus-skeleton
 ```
 
@@ -117,6 +125,8 @@ PRODUCT SUBMODULE (agent-mesh @ pinned tag) — read-only on nodes
 | `memory/lore/**` | holder of the `librarian` role |
 | `_archive/**` | holder of the `archiver` role |
 | `workflows/<id>.yaml` | the node that originated that workflow |
+| `skills/<name>/` | the operator (instance skill overlay) |
+| `BUS_LAYOUT` | the operator, or the upgrading agent on a layout bump (§3.3) |
 
 Ownership of `status/<task-id>.json` is not pre-assigned: for a task on a role
 queue it is established by the **first node to write an `accepted` status and push**
@@ -150,6 +160,35 @@ holds (papers, slides, images — §7) go to git-LFS, so they do not bloat the p
 and are not subject to the gate's 5 MB non-LFS blob limit; these extensions must
 match the gate's `LFS_EXTS` (`hooks/git-gate.py`). git-lfs must be available on
 every node that clones the bus, or these land as raw blobs.
+
+### 3.3 Layout versioning and upgrades
+
+The versioned thing is the **bus layout** — the directory shapes and file
+contracts the product code assumes — not marketing versions and not commits. The
+bus states what it is in `BUS_LAYOUT` (an integer at the bus root); the product
+states what it expects in `product/spec/LAYOUT_VERSION` (an integer); and the
+product documents every transition in `product/upgrades/to-<N>.md`, each written
+for an agent to execute idempotently and covering both bus changes and any
+node-side steps. Narrative rationale is in `docs/architecture.md` §4.
+
+On every sync — the `mesh-on` poller, or any agent pulling the bus — after
+`git pull` + `submodule update` the agent compares the two integers. Equal is the
+common case: proceed at zero cost. Bus **behind**: apply `upgrades/to-<bus+1>.md`
+… up to `LAYOUT_VERSION` in order, stamping `BUS_LAYOUT` after each, then proceed
+— the agent does exactly what each note says, commits via the gated flow, and
+resumes. The whole upgrade is agent-driven and invisible to the operator.
+
+Bus **ahead** of the product checkout means this product is too old for this bus:
+**stop and report, never guess forward.** Because nodes ride the recorded pin
+(below), an upgrade reaches a node only when the operator — or the upgrade flow
+itself — advances the pin, so one bad push to product `main` cannot break a fleet.
+
+**Pin modes.** Adopter mode (the default): `submodule update` *without* `--remote`;
+a node runs exactly the product commit the bus records. Developer mode (the product
+maintainer's own mesh, opt-in via `MESH_PRODUCT_TRACK=tip` in the node's identity
+env): the poller tracks product `main` tip with `--remote`, and the maintainer's
+chained-pin tooling advances the recorded pin at each checkpoint. The two modes
+differ only in how often the pin moves.
 
 ---
 
@@ -523,13 +562,19 @@ breaks a link.
 > by design: a live plan finishes, and its write-up is submitted for the
 > librarian to fold into `memory/workflows/` with a `wf_ref` back to the plan id.
 
-**One writer: the `librarian` role.** Every path under `memory/` is written solely
-by the holder of the `librarian` role — for all categories, not just lore. A node
-that does not hold `librarian` never writes `memory/`; it submits (below). A node
-that *does* hold `librarian` (a worker that is its own librarian) writes `memory/`
-directly and inline, with no self-submission. Either way `memory/` has exactly one
-writer. (Running two `librarian` holders risks a shared-path collision;
-single-holder is an operating convention, §10.)
+**One writer: the `librarian` role — for the five categories.** Every path under
+the library **categories** — `memory/lore/`, `memory/notes/`, `memory/refs/`,
+`memory/workflows/`, `memory/runs/` — is written solely by the holder of the
+`librarian` role, for all five, not just lore. A node that does not hold
+`librarian` never writes those paths; it submits (below). A node that *does* hold
+`librarian` (a worker that is its own librarian) writes them directly and inline,
+with no self-submission. Either way the categories have exactly one writer.
+(Running two `librarian` holders risks a shared-path collision; single-holder is
+an operating convention, §10.) The one file under `memory/` that this rule does
+**not** cover is the guidance overlay `memory/best-practices.user.md`: it is the
+**operator's** file, not a library record and not a librarian-curated category, so
+the operator owns it (§4.4). The single-writer scope here is the five categories;
+the overlay's single writer is the operator.
 
 **Common record header.** Every library record, in any category, carries a minimal
 header so the records are self-describing (any view can be built from them) and the
@@ -1016,3 +1061,24 @@ keep this conflict-free without a central authority. The single-writer invariant
 preserved not by forbidding cross-node traffic but by construction: inbox files are
 uniquely named, and `status/<task-id>.json` has exactly one writer — the node that
 claimed it (§6). What was a policy restriction in the star design is removed here.
+
+---
+
+## 12. Non-goals — the plane boundary
+
+The three planes (product / bus / node; see `docs/architecture.md` for the
+narrative) have a boundary this protocol does not blur:
+
+- **The product carries no operator content.** No user names, machine paths,
+  deployment remotes, or credentials appear anywhere in the product repo. A file
+  that names any of those does not belong in the product.
+- **The bus carries no personal-notebook content.** The library holds the
+  mesh-facing digest of knowledge (§7), not an operator's private research
+  notebook. Test: if an agent on another node needs it to act, it is a KB record;
+  otherwise it stays out of the bus.
+- **Nothing references upward out of the bus.** A bus is complete standing alone;
+  neither the product submodule nor any bus file reaches into whatever repo may
+  contain the bus.
+- **Credentials live only on the node.** They exist solely in
+  `~/.agent-credentials.env` (§4.2); every plane above carries credential *names*
+  only. This is a designed property, not a convention.

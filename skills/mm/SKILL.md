@@ -24,12 +24,14 @@ guidance.
 
 ## 1. Reload the guidance stack (primary)
 
-The canonical sources (base rules, then this operator's private overlay) are
-imported directly below and always apply. They are the single source; do not
-restate rules here.
+The canonical sources (product base rules, then the deployment's private
+overlay) live in the bus. Resolve the bus root as `REPO_PATH` from
+`~/.agent-identity.env` (fall back to the bus clone this session is working
+in), then Read both files in full and treat them as binding. They are the
+single source; do not restate rules here.
 
-@/Users/agallojr/proj/src/research-notes/bus/product/guidance/best-practices.base.md
-@/Users/agallojr/proj/src/research-notes/bus/memory/best-practices.user.md
+- `<REPO_PATH>/product/guidance/best-practices.base.md`
+- `<REPO_PATH>/memory/best-practices.user.md` (may be absent — skip if so)
 
 ## 2. You are being watched — no bullshit
 
@@ -80,13 +82,14 @@ the primary needs the verdict before replying), with:
 A non-fork sub-agent inherits CLAUDE.md, the permission allowlist, and hooks
 automatically, but it does NOT see this conversation. So pass the user request
 and the primary's result **verbatim** in the prompt — the QA agent can only judge
-what you hand it. Fill in this prompt:
+what you hand it. Fill in this prompt, substituting `{REPO_PATH}` with the
+literal bus root resolved in step 1:
 
 > You are a mini-me QA validator — a peer-tier copy of the primary agent, bound
 > by the same guidance. First, reload the guidance stack by reading these two
 > files in full and treating them as binding:
-> - /Users/agallojr/proj/src/research-notes/bus/product/guidance/best-practices.base.md
-> - /Users/agallojr/proj/src/research-notes/bus/memory/best-practices.user.md
+> - {REPO_PATH}/product/guidance/best-practices.base.md
+> - {REPO_PATH}/memory/best-practices.user.md (skip if absent)
 >
 > You are given (a) the user's request and (b) the result the primary agent
 > produced. Judge whether the result actually satisfies the request, and grade

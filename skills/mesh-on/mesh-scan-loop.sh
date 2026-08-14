@@ -7,8 +7,13 @@
 # path is fine (the literal-path rule only guards the gate).
 #
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC]
-# Exit:  0 + "WORK\n<file>\n..."  -> claimable tasks and/or fresh replies
-#        2 + "STOP"               -> ~/.mesh-stop present
+# Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks and/or fresh replies
+#        2 + "STOP"                     -> ~/.mesh-stop present
+#        3 + "UPGRADE\n<bus> <prod>"    -> BUS_LAYOUT < product LAYOUT_VERSION
+#        4 + "STALE_PRODUCT\n<bus> <prod>" -> BUS_LAYOUT > product LAYOUT_VERSION
+#
+# Pin mode (default): the submodule update realizes the recorded product pin.
+# Developer mode (MESH_PRODUCT_TRACK=tip): it adds --remote to track product tip.
 #
 # Portable across macOS and Linux: verified under bash 3.2 (macOS default) as
 # well as bash 4/5, and uses only POSIX-safe sed/grep/git/sleep (BSD and GNU
@@ -38,7 +43,23 @@ while :; do
 
   # read-only, ungated; failures are transient -> keep looping
   git -C "$REPO" pull --rebase --quiet 2>/dev/null || true
-  git -C "$REPO" submodule update --init --remote --recursive --quiet 2>/dev/null || true
+  # pin mode by default; --remote only in developer mode (MESH_PRODUCT_TRACK=tip)
+  if [ "${MESH_PRODUCT_TRACK:-}" = tip ]; then
+    git -C "$REPO" submodule update --init --remote --recursive --quiet \
+      2>/dev/null || true
+  else
+    git -C "$REPO" submodule update --init --recursive --quiet 2>/dev/null || true
+  fi
+
+  # layout check: bus stamp vs product's expected layout (unstamped -> 0)
+  BUS=$(cat "$REPO/BUS_LAYOUT" 2>/dev/null || echo 0)
+  PROD=$(cat "$REPO/product/spec/LAYOUT_VERSION" 2>/dev/null || echo 0)
+  if [ "$BUS" -lt "$PROD" ] 2>/dev/null; then
+    printf 'UPGRADE\n%s %s\n' "$BUS" "$PROD"; exit 3
+  fi
+  if [ "$BUS" -gt "$PROD" ] 2>/dev/null; then
+    printf 'STALE_PRODUCT\n%s %s\n' "$BUS" "$PROD"; exit 4
+  fi
 
   hits=()
   IFS=',' read -ra RS <<< "$ROLES"

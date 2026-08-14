@@ -82,7 +82,7 @@ literal-path discipline, single-writer rules, credential-name-only handling, and
 coding conventions. Load them now, before self-registration, so the rules govern
 everything that follows. (`git pull` in the next step keeps this file
 byte-identical across all nodes; a fresh clone may need `git -C /abs/repo
-submodule update --init --remote --recursive` first so `product/` — which the
+submodule update --init --recursive` first so `product/` — which the
 chain imports from — is present.)
 
 ## Step 4 — sync and self-register
@@ -90,12 +90,14 @@ chain imports from — is present.)
 Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
 
 1. `git -C /abs/repo pull --rebase` then
-   `git -C /abs/repo submodule update --init --remote --recursive` (the
-   `--remote` flag tracks the tip of the branch in `.gitmodules`
-   (`submodule.product.branch`, currently `main`), so the product tree is always
-   the latest — not a pinned commit. The explicit update, not a clone-time
-   `--recurse` flag, is what guarantees the product tree is present). Neither op
-   is gated; the git gate only touches add/commit/push.
+   `git -C /abs/repo submodule update --init --recursive` (adopter mode, the
+   default: realize the product commit the bus records — nodes ride the recorded
+   pin, they do not chase product `main`). In **developer mode** only — when
+   `MESH_PRODUCT_TRACK=tip` is set in `~/.agent-identity.env` — add `--remote`
+   (`git -C /abs/repo submodule update --init --remote --recursive`) to track the
+   tip of `submodule.product.branch` (`main`). The explicit update, not a
+   clone-time `--recurse` flag, is what guarantees the product tree is present.
+   Neither op is gated; the git gate only touches add/commit/push.
 2. Overwrite `agents/<AGENT_ID>.yaml` (this file is yours alone) following the
    schema in PROTOCOL.md §4.3 — include `hostname`, `platform` (`uname -sr`),
    `repo_commit` (`git -C /abs/repo rev-parse --short HEAD`), `roles` (from
@@ -127,6 +129,22 @@ The poller does NOT burn inference polling. It parks on a background shell scann
 real work, waking the poller only on a hit or a stop. An idle node therefore costs
 zero tokens and zero commits. The scanner runs on macOS and Linux (bash 3.2+, no
 external `timeout`).
+
+Pass `MESH_PRODUCT_TRACK` through to the poller so it reaches the scanner. You
+sourced `~/.agent-identity.env`, so the value (if any) is in your environment;
+absent it, the node is in **pin mode** (adopter, the default). The poller launches
+the scanner as a background Bash call, and a background call does NOT inherit your
+shell env, so the poller must put the value on the command line explicitly, e.g.
+`MESH_PRODUCT_TRACK=tip «SKILL_DIR»/mesh-scan-loop.sh ...` (developer mode) or a
+plain invocation (pin mode). The poller prompt covers this; make sure the poller
+knows whether this node sets `MESH_PRODUCT_TRACK=tip`.
+
+The scanner also exits on **layout drift**, and the poller handles it (see the
+poller prompt): `UPGRADE` (exit 3) when the bus layout is behind the product's
+expected layout — apply `product/upgrades/to-<N>.md` in order, stamp `BUS_LAYOUT`,
+commit, relaunch; `STALE_PRODUCT` (exit 4) when the bus is ahead of this product
+checkout — report and stop, never guess forward. Both are agent-driven with no
+operator involvement.
 
 Record the returned poller handle (agent id) in your own context and also note it
 for the user, so `/mesh-off` in THIS session can stop it directly. Cross-session,

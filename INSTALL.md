@@ -4,14 +4,22 @@ This turns a machine into a mesh node: a Claude agent that joins the
 coordination bus, claims tasks from the role queues it holds, and syncs results by
 git. It applies to any node — a laptop or a remote server — doing a fresh install.
 
-The bus is its own git repo (`agent-mesh-bus`). It carries the runtime
+The bus is its own git repo (`agent-mesh-bus-<user>`). It carries the runtime
 coordination state (`agents/`, `tasks/`, `status/`, `outbox/`,
 `workflows/`) and the memory library (`memory/lore/`, `memory/workflows/`,
 `memory/best-practices.user.md`). The product software lives in a git submodule
-at `product/`. The submodule tracks the tip of the product's `main` branch
-(`submodule.product.branch = main` in `.gitmodules`): a sync checks out the
-latest product `main`, not a frozen pin. Every path below that starts with
-`${REPO}/product/...` resolves inside that submodule.
+at `product/`. Every path below that starts with `${REPO}/product/...` resolves
+inside that submodule.
+
+**Pin semantics — adopter mode (default).** A node rides the **recorded pin**:
+`submodule update` (without `--remote`) checks out exactly the product commit the
+bus records under `product/`. Nodes do not chase product `main`; a pin only moves
+when the operator (or an upgrade) advances it in a bus commit, so one bad push to
+product `main` cannot break a fleet. **Developer mode** — the product
+maintainer's own mesh — is opt-in: set `MESH_PRODUCT_TRACK=tip` in
+`~/.agent-identity.env` and the poller tracks product `main` tip (`--remote`),
+advancing the pin at each chained-pin checkpoint. Absent that variable, a node is
+in adopter mode.
 
 ## 0. Prerequisites
 - git and Python 3 (`/usr/bin/python3` is used by the hook).
@@ -19,30 +27,35 @@ latest product `main`, not a frozen pin. Every path below that starts with
 - Network access to the bus repo's git remote.
 
 ## 1. Clone the bus and realize the product submodule
-Clone `agent-mesh-bus`, not the old `agent-mesh`. After cloning you MUST init
-the submodule so the product is checked out under `product/`. Use `--remote` so
-`product/` lands on the tip of product `main`, not on the commit the bus
-happens to record:
+Clone your bus (`agent-mesh-bus-<user>`), not the old `agent-mesh`. After cloning
+you MUST init the submodule so the product is checked out under `product/`. In
+adopter mode (the default) you do **not** pass `--remote`: `product/` lands on the
+exact commit the bus records, which is what every node runs.
 
-    git clone <bus-url> ~/agent-mesh-bus
-    REPO="$HOME/agent-mesh-bus"
-    git -C "$REPO" submodule update --init --remote --recursive
+    git clone <bus-url> ~/agent-mesh-bus-you
+    REPO="$HOME/agent-mesh-bus-you"
+    git -C "$REPO" submodule update --init --recursive
 
 Do not rely on `git clone --recurse-submodules` alone. Always run the explicit
-`submodule update --init --remote --recursive` step: it is what the poller uses
-to sync the product to latest, and it is robust across git versions. Confirm
-the submodule is populated:
+`submodule update --init --recursive` step: it is what the poller uses to realize
+the recorded pin, and it is robust across git versions. Confirm the submodule is
+populated:
 
     ls "$REPO/product/spec/PROTOCOL.md"
 
 If `product/` is empty, the submodule was not realized. See Troubleshooting.
 
-Then register the `pullmesh` alias on this clone, so a later manual refresh gets
-the latest product in one command (a plain `git pull` would re-checkout the
-recorded commit instead of the `main` tip — see Notes):
+Then register the `pullmesh` alias on this clone, so a later manual refresh lands
+the bus tip and its recorded product pin in one command:
 
     git -C "$REPO" config alias.pullmesh \
-      '!f() { git pull "$@" && git submodule update --init --remote --recursive; }; f'
+      '!f() { git pull "$@" && git submodule update --init --recursive; }; f'
+
+`pullmesh` = `git pull` (advance the bus to its tip) followed by
+`submodule update --init --recursive` (realize whatever product pin that bus tip
+records). It does NOT chase product `main`; the recorded pin is the whole point of
+adopter mode. (Developer mode adds `--remote` — see the Pin semantics note at the
+top and the Notes section.)
 
 This works whether or not the git gate (step 2) is active. The gate still
 splits commands on `&&`/`;` before inspecting them, so the alias value (which
@@ -53,7 +66,7 @@ denying. If for any reason it is still denied, add the alias to `.git/config`
 directly, which is what `git config` would do — append under an `[alias]`
 section:
 
-    pullmesh = "!f() { git pull \"$@\" && git submodule update --init --remote --recursive; }; f"
+    pullmesh = "!f() { git pull \"$@\" && git submodule update --init --recursive; }; f"
 
 Then verify with the read-only `git -C "$REPO" config --get alias.pullmesh`.
 
@@ -112,14 +125,34 @@ bus clone (the value of `$REPO`) and MUST appear verbatim in
 Start Claude, then run `/mesh-on` to start the node; `/mesh-off` stops it. The
 poller is session-scoped, so run unattended nodes under tmux or screen.
 
+## Layout versioning
+The mesh version-controls the **bus layout** — the directory shapes and file
+contracts the product code assumes — not marketing versions or commits:
+
+- The bus states what it is: `BUS_LAYOUT` at the bus root (an integer).
+- The product states what it expects: `product/spec/LAYOUT_VERSION` (an integer).
+- The product documents every transition: `product/upgrades/to-<N>.md`, written
+  for an agent to execute idempotently, covering bus changes and any node steps.
+
+Every sync compares the two. Equal → proceed (the common case). Bus behind → the
+agent applies `product/upgrades/to-<bus+1>.md` … up to `LAYOUT_VERSION` in order,
+stamping `BUS_LAYOUT` after each, then proceeds. Bus ahead → this product checkout
+is too old for this bus; stop and report, never guess forward. The poller does
+this each cycle, so **the operator does nothing** — upgrades are agent-driven and
+invisible. Because nodes ride the recorded pin, an upgrade reaches a node only
+when the pin advances.
+
 ## Notes
-- Refreshing the product: the automated poller already syncs `product/` to the
-  tip of `main` every cycle (`git submodule update --init --remote --recursive`).
-  For a manual refresh, run `git -C <REPO> pullmesh` — a plain `git pull` (even
-  with `submodule.recurse` set) re-checks-out the commit the bus records under
-  `product/`, which lags the `main` tip. `pullmesh` = `git pull` followed by the
-  `--remote` submodule update, so one command lands the bus and the product tip
-  together.
+- Refreshing the product (adopter mode, default): a sync realizes the product pin
+  the bus records — it does NOT chase product `main`. For a manual refresh, run
+  `git -C <REPO> pullmesh` = `git pull` (bus tip) + `git submodule update --init
+  --recursive` (that tip's recorded pin). A plain `git pull` without the submodule
+  update leaves `product/` on the previously realized commit.
+- Developer mode (product maintainer's own mesh only): set `MESH_PRODUCT_TRACK=tip`
+  in `~/.agent-identity.env`. The poller then syncs `product/` to the tip of
+  `submodule.product.branch` (`main`) each cycle with `git submodule update --init
+  --remote --recursive`, and the maintainer's chained-pin tooling advances the
+  recorded pin at each checkpoint. Absent the variable, a node is in adopter mode.
 - Git literal-absolute-path rule: agents must run `git -C /abs/bus <subcmd>`
   with a literal path, never `git -C "$VAR" ...` or `cd ... && git ...`.
   Read-only git (pull, fetch, status, `submodule update`) is not gated.
@@ -130,12 +163,13 @@ poller is session-scoped, so run unattended nodes under tmux or screen.
 
 ## Troubleshooting
 - Submodule not checked out / `product/` empty: the clone did not realize the
-  submodule. Fix with `git -C <REPO> submodule update --init --remote --recursive`,
+  submodule. Fix with `git -C <REPO> submodule update --init --recursive`,
   then re-check `ls "$REPO/product/spec/PROTOCOL.md"`.
-- Product looks stale after `git pull`: a plain pull re-checks-out the recorded
-  `product/` commit, not the `main` tip. Run `git -C <REPO> pullmesh` (or
-  `git -C <REPO> submodule update --init --remote --recursive`) to advance to
-  the latest product `main`.
+- Product not on the pin you expect: adopter mode realizes the commit the bus
+  records, not the `main` tip. Run `git -C <REPO> pullmesh` (or
+  `git -C <REPO> submodule update --init --recursive`) to land the bus tip and its
+  recorded pin. To follow `main` tip instead, that is developer mode
+  (`MESH_PRODUCT_TRACK=tip`) — not the default; do not enable it on adopter nodes.
 - Blob `git add` denied by the gate: you tried to stage a large or binary file
   (see Notes). Do not commit it. Reference the artifact by pointer in the
   record's `artifacts` field and stage only the small text record.
@@ -151,3 +185,8 @@ poller is session-scoped, so run unattended nodes under tmux or screen.
   `$REPO/product/skills/` and that `SKILL.md` exists at the target.
 - Nothing happens (no tasks): the node is idle because no tasks are addressed
   to its `AGENT_ID`. Confirm identity, then wait for or assign a task.
+- Testing with local `file://` remotes: modern git blocks the `file` transport
+  for submodules by default (`fatal: transport 'file' not allowed`), so
+  `submodule add`/`update` fail against a local product repo. For a sandbox
+  test only, set `git config --global protocol.file.allow always` in the
+  sandbox HOME. Real installs over `git@`/`https://` are unaffected.

@@ -65,13 +65,19 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
 1. **Park on the scanner.** You do not pull or scan with your own inference. Launch
    `skills/mesh-on/mesh-scan-loop.sh` (portable bash 3.2+, macOS and Linux) as a
    background call and block on it. It loops internally — `pull --rebase` +
-   `submodule update --init --remote --recursive` (both read-only, ungated), scan
-   `tasks/roles/<role>/` for each role in `AGENT_ROLES` plus your inbox
-   `tasks/<your-id>/`, sleep, repeat — and exits ONLY when it finds a claimable
-   task / fresh reply (`WORK` + paths) or `~/.mesh-stop` exists (`STOP`). While it
-   blocks you are parked at zero token cost; the harness re-invokes you on exit.
-   **An idle node only pulls (inside the script) and never commits, and spends no
-   inference** — repo and token traffic both track real work, not poll frequency.
+   `submodule update --init --recursive` (both read-only, ungated; **pin mode** is
+   the default — realize the product commit the bus records — and only
+   `MESH_PRODUCT_TRACK=tip` adds `--remote` to track product `main`, for the
+   maintainer's own mesh), scan `tasks/roles/<role>/` for each role in
+   `AGENT_ROLES` plus your inbox `tasks/<your-id>/`, sleep, repeat — and exits ONLY
+   when it finds a claimable task / fresh reply (`WORK` + paths), `~/.mesh-stop`
+   exists (`STOP`), or the bus layout drifts from the product's expected layout
+   (`UPGRADE` / `STALE_PRODUCT`). While it blocks you are parked at zero token cost;
+   the harness re-invokes you on exit. **An idle node only pulls (inside the script)
+   and never commits, and spends no inference** — repo and token traffic both track
+   real work, not poll frequency. On `UPGRADE` the poller applies the product's
+   `upgrades/to-<N>.md` notes in order, stamps `BUS_LAYOUT`, commits, and resumes;
+   on `STALE_PRODUCT` it reports and stops (the `mesh-on` skill carries the detail).
 2. Classify what the scanner returned. It lists only claimable messages (a
    `task.request`/`task.cancel`/`query` with no `status/<id>.json` yet) and each
    fresh reply once. Re-check claimability at claim time, since another node may

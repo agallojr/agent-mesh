@@ -55,6 +55,36 @@ def _flag_path(session_id: str) -> str:
     return os.path.join(_config_dir(), "mm-active", f"{session_id}.flag")
 
 
+def _guidance_paths() -> str:
+    """Name the guidance files for the QA prompt, deployment-neutrally.
+
+    Resolve the bus root from REPO_PATH in ~/.agent-identity.env (the node's
+    identity, same source the mesh skills use). Without an identity, fall back
+    to generic wording the QA agent can resolve itself.
+    """
+    repo = ""
+    try:
+        with open(os.path.expanduser("~/.agent-identity.env")) as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("REPO_PATH="):
+                    repo = line.split("=", 1)[1].strip().strip("'\"")
+                    break
+    except Exception:
+        pass
+    if repo:
+        return (
+            f"{repo}/product/guidance/best-practices.base.md and "
+            f"{repo}/memory/best-practices.user.md (skip if absent)"
+        )
+    return (
+        "the bus's product/guidance/best-practices.base.md and "
+        "memory/best-practices.user.md (resolve the bus root from "
+        "~/.agent-identity.env REPO_PATH or the working bus clone; "
+        "skip the overlay if absent)"
+    )
+
+
 # The standing instruction injected each turn while the mode is active. Kept
 # self-contained (the mm skill is not in context during a persistent-mode
 # turn), but the mm skill at bus/product/skills/mm/SKILL.md remains canonical.
@@ -68,8 +98,8 @@ _INSTRUCTION = (
     "Fable->opus, Opus->sonnet, Sonnet->sonnet.\n"
     "2. Give it the user's request and your response VERBATIM, and this task: "
     "reload guidance by reading in full "
-    "research-notes/bus/product/guidance/best-practices.base.md and "
-    "research-notes/bus/memory/best-practices.user.md, then judge whether the "
+    + _guidance_paths()
+    + ", then judge whether the "
     "response satisfies the request on TWO axes, adversarially on both. "
     "FORM (grounding): claims asserted as fact but not verified against "
     "code/data/a cited source, overreach beyond the ask, guidance violations. "

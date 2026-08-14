@@ -13,7 +13,8 @@ ledger*, never by hand-editing coordination state.
   claims and runs it. Nodes talk to each other directly; nothing routes through a
   center.
 - **Git is the bus.** There is no message broker. Coordination happens entirely
-  through append-only files in a private git repo called `agent-mesh-bus`.
+  through append-only files in a private git repo (your bus,
+  `agent-mesh-bus-<user>`).
   Every node does `git pull --rebase`, then
   `git submodule update --init --recursive`, does its work, and pushes.
 - **Single-writer discipline.** Each node writes only the paths it owns
@@ -157,8 +158,8 @@ field.
 
 ## 7. Glossary
 
-- **Bus** — the private `agent-mesh-bus` git repo; the only channel nodes use
-  to coordinate.
+- **Bus** — your private bus git repo (`agent-mesh-bus-<user>`, one per user
+  mesh); the only channel nodes use to coordinate.
 - **Role** — a named queue (`tasks/roles/<role>/`) and the unit of addressing. Any
   node may hold several; a role may be held by several nodes.
 - **Claim (accept-as-claim)** — how competing holders of a role avoid double-running

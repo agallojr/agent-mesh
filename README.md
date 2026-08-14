@@ -6,9 +6,9 @@ hosts that cannot reach each other directly.
 
 This repo is the reusable software. The runtime coordination state — the
 append-only ledger nodes read and write, plus the shared library — lives in a
-separate **bus** repo (`agent-mesh-bus`), where this product is linked in as a
-pinned `product/` submodule. A node clones the bus, checks out the pinned
-product, and runs it. See
+separate **bus** repo (`agent-mesh-bus-<user>`, one per user mesh), where this
+product is linked in as a pinned `product/` submodule. A node clones the bus,
+checks out the recorded product pin, and runs it. See
 [`docs/product-data-split.md`](docs/product-data-split.md) for the rationale.
 
 - Full protocol: [`spec/PROTOCOL.md`](spec/PROTOCOL.md)
@@ -26,18 +26,18 @@ that already exists**.
 **A. Standing up a new mesh (no bus yet — start here if you found this repo).**
 
 1. Create an **empty, private** repo on your own Git host — this becomes *your*
-   bus (`agent-mesh-bus`). Keep it private: it holds your runtime coordination
-   state, your credential *names*, and your deployment-specific rules. The
-   product stays public; your bus never should.
+   bus (naming convention `agent-mesh-bus-<user>`). Keep it private: it holds your
+   runtime coordination state, your credential *names*, and your
+   deployment-specific rules. The product stays public; your bus never should.
 2. Clone this product repo and run the installer, pointing it at the public
    product URL and your new (empty) bus URL:
 
    ```sh
-   git clone https://github.com/agallojr/agent-mesh.git
+   git clone https://github.com/you/agent-mesh.git
    cd agent-mesh
-   PRODUCT_URL=https://github.com/agallojr/agent-mesh.git \
+   PRODUCT_URL=https://github.com/you/agent-mesh.git \
    BUS_URL=<your-empty-private-bus-url> \
-   BUS_PATH="$HOME/agent-mesh-bus" \
+   BUS_PATH="$HOME/agent-mesh-bus-you" \
    ./install/install.sh --product-tag v0.1.0
    ```
 
@@ -55,13 +55,16 @@ installer or touch the product directly; the product arrives as the bus's
 
 ## How it is delivered
 
-The product reaches every node as a submodule of the bus, pinned to a tagged
-commit, so all nodes on the same bus commit run byte-identical code. Shipping a
-mesh-wide update = bump the submodule pin in one bus commit; nodes pick it up on
-their next `git pull` + `git submodule update --init --recursive`. The installer
-(`install/install.sh`) scaffolds a fresh bus from `bus-skeleton/`, adds this
-product as the `product/` submodule at a chosen tag, and wires the git gate and
-skill symlinks.
+The product reaches every node as a submodule of the bus, pinned to a recorded
+commit, so all nodes on the same bus commit run byte-identical code. Nodes ride
+the **recorded pin** (adopter mode, the default): a sync realizes the commit the
+bus records, not product `main` tip. Shipping a mesh-wide update = bump the
+submodule pin in one bus commit; nodes pick it up on their next `git pull` +
+`git submodule update --init --recursive`. (Tracking `main` tip is developer mode,
+opt-in per node via `MESH_PRODUCT_TRACK=tip` — for the maintainer's own mesh; see
+[`INSTALL.md`](INSTALL.md).) The installer (`install/install.sh`) scaffolds a fresh
+bus from `bus-skeleton/`, adds this product as the `product/` submodule at a chosen
+pin, and wires the git gate and skill symlinks.
 
 ## Layout (product repo)
 

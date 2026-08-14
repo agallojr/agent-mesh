@@ -19,9 +19,11 @@ that flag; the hook and the mm skill hold the actual protocol.
 
 ## Steps
 
-1. Reload the guidance stack (read in full, treat as binding):
-   - /Users/agallojr/proj/src/research-notes/bus/product/guidance/best-practices.base.md
-   - /Users/agallojr/proj/src/research-notes/bus/memory/best-practices.user.md
+1. Reload the guidance stack (read in full, treat as binding). Resolve the bus
+   root as `REPO_PATH` from `~/.agent-identity.env` (fall back to the bus clone
+   this session is working in):
+   - `<REPO_PATH>/product/guidance/best-practices.base.md`
+   - `<REPO_PATH>/memory/best-practices.user.md` (may be absent — skip if so)
 
 2. Write the per-session flag keyed by the session id. The session id is in the
    `CLAUDE_CODE_SESSION_ID` env var (verified present to the Bash tool):
@@ -44,8 +46,8 @@ that flag; the hook and the mm skill hold the actual protocol.
 ## Prerequisite (one-time, per machine)
 
 The hook must be registered in `~/.claude/settings.json` under
-`hooks.UserPromptSubmit` pointing at
-`research-notes/bus/product/hooks/mm-qa-gate.py`. If continuous verdicts do not
+`hooks.UserPromptSubmit` pointing at the bus's copy of
+`product/hooks/mm-qa-gate.py`. If continuous verdicts do not
 appear after enabling, the hook is not installed — say so; do not pretend the
 mode is working. Installing/editing settings.json is a config change: use the
 update-config path, do not silently assume it is present.
