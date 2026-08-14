@@ -90,7 +90,7 @@ like *"librarian, keep this: …"* and Claude calls `note_to_librarian`.
 | `CONNECTOR_TOKEN` | secret | — | Bearer token the phone presents. |
 | `GITHUB_TOKEN` | secret | — | Fine-grained PAT, bus repo, contents:write. |
 | `BUS_OWNER` | var | — (required) | Owner of the bus repo; set in `wrangler.toml` before deploy. |
-| `BUS_REPO` | var | — (required) | Bus repo name (e.g. `agent-mesh-bus-<user>`); set before deploy. |
+| `BUS_REPO` | var | — (required) | Bus repo name (e.g. `agent-mesh-bus-<mesh>`); set before deploy. |
 | `BUS_BRANCH` | var | `main` | Branch to commit to. |
 | `LIBRARIAN_ROLE` | var | `librarian` | Role queue: `tasks/roles/<role>/`. |
 | `SENDER_ID` | var | `op-phone` | `from:` id on messages. |

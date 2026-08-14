@@ -6,6 +6,27 @@ and steer; you do not do heavy git surgery in the field. Everything below is
 framed so you can act by *posting to a role* in plain language and by *reading the
 ledger*, never by hand-editing coordination state.
 
+## 0. A complete turn, end to end
+
+You say, in plain language:
+
+> "Post to role `build`: run the nightly data export, put the result in the
+> outbox, and give me the task id."
+
+Your interface session writes ONE file — the task message — and pushes. The
+session replies: *"Posted `20260814T1502-0001` to role `build`."* Then the
+mesh takes over, and you watch it in the ledger:
+
+| You look at | You see |
+|---|---|
+| `status/20260814T1502-0001.json` | `accepted` — node `60ad2c` claimed it (and is alive) |
+| same file, later | `running`, then `done` |
+| `outbox/60ad2c/20260814T1502-0001-result.md` | the result, with artifact pointers |
+
+Later ask: *"What happened to task `20260814T1502-0001`?"* — the session pulls,
+reads those two files, and tells you. That is the whole interaction model: post
+to a role, read the ledger. Everything below is detail.
+
 ## 1. Mental model
 
 - **Peer-to-peer, role-addressed. No hub.** Every node holds one or more **roles**.
@@ -14,7 +35,7 @@ ledger*, never by hand-editing coordination state.
   center.
 - **Git is the bus.** There is no message broker. Coordination happens entirely
   through append-only files in a private git repo (your bus,
-  `agent-mesh-bus-<user>`).
+  `agent-mesh-bus-<mesh>`, named for the mesh).
   Every node does `git pull --rebase`, then
   `git submodule update --init --recursive`, does its work, and pushes.
 - **Single-writer discipline.** Each node writes only the paths it owns
@@ -74,7 +95,7 @@ quick `git -C /abs/bus pull` then a look) to see state.
 | `status/<task-id>.json` | Current state of a task (see section 4). |
 | `outbox/<id>/<task-id>-result.md` | A node's published result for a task. |
 | `workflows/<id>.yaml` | An in-flight multi-step chain and its cursor. |
-| `memory/lore/`, `memory/workflows/` | The library (durable knowledge; `memory/workflows/` = curated write-ups of finished processes, distinct from the live `workflows/` above). |
+| `memory/` | The library (durable knowledge): `lore/` (verified gotchas), `notes/` (research/design), `refs/` (external references), `workflows/` (curated write-ups of finished processes, distinct from the live `workflows/` above), `runs/` (provenance records — the audit trail of result-bearing tasks, which outlives the retention sweep). |
 
 **Read a task's status.** Open `status/<task-id>.json` and look at its state
 field. That single file tells you accepted / running / done / failed / blocked, and
@@ -158,8 +179,8 @@ field.
 
 ## 7. Glossary
 
-- **Bus** — your private bus git repo (`agent-mesh-bus-<user>`, one per user
-  mesh); the only channel nodes use to coordinate.
+- **Bus** — your private bus git repo (`agent-mesh-bus-<mesh>`, one per mesh,
+  named for the mesh); the only channel nodes use to coordinate.
 - **Role** — a named queue (`tasks/roles/<role>/`) and the unit of addressing. Any
   node may hold several; a role may be held by several nodes.
 - **Claim (accept-as-claim)** — how competing holders of a role avoid double-running
@@ -168,8 +189,9 @@ field.
   pinned to a tagged commit of the `agent-mesh` product repo.
 - **Submodule pin** — the exact product commit the bus points at. Bumping it in
   one bus commit rolls a product update out to the whole mesh.
-- **Library / lore** — durable shared knowledge under `memory/lore/` and
-  `memory/workflows/`, curated by the holder of the `librarian` role.
+- **Library** — durable shared knowledge under `memory/` (categories `lore`,
+  `notes`, `refs`, `workflows`, `runs`), curated by the holder of the
+  `librarian` role. `runs` is the durable audit trail of what executed.
 - **Workflow** — an autonomous multi-step chain, recorded as `workflows/<id>.yaml`,
   driven by the node that originated it, resumable from its cursor. Its durable
   write-up, once finished, is curated into `memory/workflows/` by the librarian.

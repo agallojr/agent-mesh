@@ -3,13 +3,27 @@
 This turns a machine into a mesh node: a Claude agent that joins the
 coordination bus, claims tasks from the role queues it holds, and syncs results by
 git. It applies to any node — a laptop or a remote server — doing a fresh install.
+(To create a brand-new mesh instead — no bus exists yet — use the installer:
+`install/README.md`.)
 
-The bus is its own git repo (`agent-mesh-bus-<user>`). It carries the runtime
-coordination state (`agents/`, `tasks/`, `status/`, `outbox/`,
-`workflows/`) and the memory library (`memory/lore/`, `memory/workflows/`,
-`memory/best-practices.user.md`). The product software lives in a git submodule
-at `product/`. Every path below that starts with `${REPO}/product/...` resolves
-inside that submodule.
+**The whole install, in one glance.** Five steps, ~10 minutes:
+
+    1. clone the bus + init the product submodule      (git)
+    2. install the git gate                            (hook + allowlist + settings)
+    3. symlink the skills into ~/.claude/skills/       (mesh-on, mesh-off, ...)
+    4. plant ~/.agent-identity.env + ~/.agent-credentials.env
+    5. start Claude, run /mesh-on
+
+When you are done the node sits parked on a zero-token scanner, pulls the bus
+on a cycle, and claims work addressed to its roles. Nothing further to babysit.
+
+The bus is its own git repo (`agent-mesh-bus-<mesh>`, named for the mesh). It
+carries the runtime coordination state (`agents/`, `tasks/`, `status/`,
+`outbox/`, `workflows/`) and the memory library (`memory/` — `lore/`, `notes/`,
+`refs/`, `workflows/`, `runs/` — plus the deployment's
+`memory/best-practices.user.md` overlay). The product software lives in a git
+submodule at `product/`. Every path below that starts with `${REPO}/product/...`
+resolves inside that submodule.
 
 **Pin semantics — adopter mode (default).** A node rides the **recorded pin**:
 `submodule update` (without `--remote`) checks out exactly the product commit the
@@ -27,13 +41,13 @@ in adopter mode.
 - Network access to the bus repo's git remote.
 
 ## 1. Clone the bus and realize the product submodule
-Clone your bus (`agent-mesh-bus-<user>`), not the old `agent-mesh`. After cloning
+Clone your bus (`agent-mesh-bus-<mesh>`), not the old `agent-mesh`. After cloning
 you MUST init the submodule so the product is checked out under `product/`. In
 adopter mode (the default) you do **not** pass `--remote`: `product/` lands on the
 exact commit the bus records, which is what every node runs.
 
-    git clone <bus-url> ~/agent-mesh-bus-you
-    REPO="$HOME/agent-mesh-bus-you"
+    git clone <bus-url> ~/agent-mesh-bus-mymesh
+    REPO="$HOME/agent-mesh-bus-mymesh"
     git -C "$REPO" submodule update --init --recursive
 
 Do not rely on `git clone --recurse-submodules` alone. Always run the explicit

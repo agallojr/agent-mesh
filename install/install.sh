@@ -28,15 +28,15 @@ Inputs (env var or flag; flag wins):
   --product-tag TAG   PRODUCT_TAG   product tag to pin (optional; if unset,
                                     pins whatever HEAD the clone lands on).
   --bus-url URL       BUS_URL       git URL of the agent-mesh-bus remote.
-                                    Naming convention: agent-mesh-bus-<user>.
+                                    Naming convention: agent-mesh-bus-<mesh>.
   --bus-path PATH     BUS_PATH      absolute path for the bus clone
-                                    (e.g. $HOME/agent-mesh-bus-you).
+                                    (e.g. $HOME/agent-mesh-bus-mymesh).
   -h, --help                        show this help.
 
 Example:
   PRODUCT_URL=git@github.com:you/agent-mesh.git \
-  BUS_URL=git@github.com:you/agent-mesh-bus-you.git \
-  BUS_PATH="$HOME/agent-mesh-bus-you" \
+  BUS_URL=git@github.com:you/agent-mesh-bus-mymesh.git \
+  BUS_PATH="$HOME/agent-mesh-bus-mymesh" \
   ./install/install.sh --product-tag v0.1.0
 
 Network-mutating steps (bus first commit + push) are printed for you to run,

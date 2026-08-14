@@ -6,7 +6,7 @@ and one upgrade path. Everything in the system lives in exactly one of them.
 | Plane | Form | Visibility | Owner / writer |
 |---|---|---|---|
 | **Product** | git repo (`agent-mesh`) | public | the product maintainers |
-| **Bus** (instance) | git repo (e.g. `agent-mesh-bus-<user>`) | private, one per user mesh | the operator + that mesh's nodes |
+| **Bus** (instance) | git repo (e.g. `agent-mesh-bus-<mesh>`) | private, one per mesh | the operator + that mesh's nodes |
 | **Node** | a machine's local install | local only, never in git | that machine's operator |
 
 ## 1. Product — the software

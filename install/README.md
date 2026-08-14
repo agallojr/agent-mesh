@@ -12,8 +12,8 @@ you already own; it does not create the remote for you. Before running it:
 
 1. Create an **empty, private** repository on your Git host — no README, no
    `.gitignore`, no license (the installer fills it). This is your bus; the
-   recommended naming convention is `agent-mesh-bus-<user>` (one bus per user
-   mesh). Its clone/SSH URL is the `BUS_URL` below.
+   recommended naming convention is `agent-mesh-bus-<mesh>` (one bus per mesh,
+   named for the mesh). Its clone/SSH URL is the `BUS_URL` below.
 2. Keep it **private**. The bus holds your runtime coordination ledger,
    credential *names*, and deployment-specific rules (`best-practices.user.md`).
    The product repo is public; your bus should not be. A private bus can still
@@ -59,15 +59,15 @@ Set as environment variables or pass the matching flag (the flag wins):
 | ------------- | --------------- | ----------------------------------------- |
 | `PRODUCT_URL` | `--product-url` | git URL of the agent-mesh product repo.   |
 | `PRODUCT_TAG` | `--product-tag` | product tag to pin (optional; unset pins clone `HEAD`). |
-| `BUS_URL`     | `--bus-url`     | git URL of your bus remote (`agent-mesh-bus-<user>`). |
+| `BUS_URL`     | `--bus-url`     | git URL of your bus remote (`agent-mesh-bus-<mesh>`). |
 | `BUS_PATH`    | `--bus-path`    | absolute path for the bus clone.          |
 
 ## Example
 
 ```sh
 PRODUCT_URL=git@github.com:you/agent-mesh.git \
-BUS_URL=git@github.com:you/agent-mesh-bus-you.git \
-BUS_PATH="$HOME/agent-mesh-bus-you" \
+BUS_URL=git@github.com:you/agent-mesh-bus-mymesh.git \
+BUS_PATH="$HOME/agent-mesh-bus-mymesh" \
 ./install/install.sh --product-tag v0.1.0
 ```
 
