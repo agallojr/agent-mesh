@@ -202,20 +202,35 @@ do them in a workstation session with the bus cloned:
 
 ## 8. Driving from a phone
 
-The same post-to-a-role / read-the-ledger model works from a phone — a Claude
-chat interface or a lightweight terminal — with a smaller footprint:
+The same post-to-a-role / read-the-ledger model works away from the
+workstation. "Phone" covers seats with different capabilities — what varies is
+how each one writes the bus:
 
-- **Steering only.** Post tasks, check status, read results, ping nodes —
-  everything in sections 0–7 except the maintenance actions above. From the
-  phone your job when something breaks is to *detect and describe* the problem
-  and hand it to a terminal session; do not attempt git repair, pin bumps, or
-  `product/` edits in the field.
-- **No git credential needed for library notes.** The optional
-  `librarian-ingress` Worker (`services/librarian-ingress/`) lets a phone hand
-  a note to the librarian over an authenticated MCP call — the phone is a
-  producer, never a bus writer.
-- **Identity.** A phone session posts as a reserved operator id (`op-phone`
-  rather than `op-main`), so the ledger records which seat sent what.
+- **Claude Code on mobile/web (claude.ai/code), bus cloned.** A real session:
+  the repo is pulled into a cloud sandbox, and git read / commit / **push all
+  work** (push is restricted to the current branch; the mesh lives on `main`,
+  so that is enough). Inference runs on your personal subscription. This seat
+  *can* edit code and do maintenance — the limits below are convention, not
+  capability.
+- **Claude Code session without a bus clone.** `mobile/mesh-post.sh` posts one
+  message over the GitHub Contents API (a PAT with Contents read/write, no
+  clone, no git) — same PROTOCOL §5 message, one PUT.
+- **Claude chat (no code environment, no git at all).** The optional
+  `librarian-ingress` Worker (`services/librarian-ingress/`) hands a note to
+  the librarian over an authenticated MCP call. Producer only.
+
+Conventions for any phone seat, chosen not forced:
+
+- **Prefer steering.** Post tasks, check status, read results, ping nodes —
+  everything in sections 0–7. Leave git surgery, pin bumps, and `product/`
+  edits to a workstation session: a cloud session has **no local PreToolUse
+  git gate**, so the operator write-set (`guidance/operator-interface.md`) is
+  the only guardrail — the reason to hold the discipline is that nothing else
+  will.
+- **Not a worker node.** Do not run `/mesh-on` from a phone seat; nodes are
+  installed machines with identity, credentials, and the gate.
+- **Identity.** Phone seats post as the reserved operator id `op-phone`
+  (vs `op-main`), so the ledger records which seat sent what.
 - **Orient a fresh phone session** in one step: "read
   `guidance/operator-interface.md` and follow it."
 
