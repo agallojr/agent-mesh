@@ -11,6 +11,7 @@ product is linked in as a pinned `product/` submodule. A node clones the bus,
 checks out the recorded product pin, and runs it. See
 [`docs/product-data-split.md`](docs/product-data-split.md) for the rationale.
 
+- Where this sits in the landscape: [`docs/positioning.md`](docs/positioning.md)
 - Full protocol: [`spec/PROTOCOL.md`](spec/PROTOCOL.md)
 - Fresh node install: [`INSTALL.md`](INSTALL.md)
 - Existing node migrating after the split: [`docs/reinstall-after-split.md`](docs/reinstall-after-split.md)
