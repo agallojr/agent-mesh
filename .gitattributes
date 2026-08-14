@@ -1,5 +1,7 @@
-memory/index.md merge=union
-* -merge
+# NOTE: no `* -merge` here. That rule belongs to the BUS (single-writer
+# discipline; conflicts are re-derived, never text-merged — PROTOCOL §3.2) and
+# ships in bus-skeleton/.gitattributes. The product is ordinary software,
+# maintained with normal git workflows, so normal text merges apply.
 
 # Git LFS: broad binary-blob coverage. Text formats (svg, obj, gltf, csv, json,
 # yaml, md) are intentionally excluded so they stay diffable.
