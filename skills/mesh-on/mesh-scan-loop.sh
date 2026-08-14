@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# mesh-scan-loop.sh — read-only mesh poll loop. Exits ONLY when there is real
-# work (or a stop signal), so the Claude poller spends zero inference tokens
-# while idle: it parks on this one background Bash call and is re-invoked only
-# on exit. Does NO gated git — add/commit/push stay inside Claude; the
-# read-only pull/submodule-update here were never gated, so a variable REPO
-# path is fine (the literal-path rule only guards the gate).
+# mesh-scan-loop.sh — read-only mesh poll loop. The Claude poller parks on this
+# script as ONE SYNCHRONOUS Bash call and acts on its exit. It exits when there
+# is real work (or a stop/layout signal), or with IDLE at MAX_WAIT_SEC so the
+# call always returns before the harness's hard tool timeout — the poller
+# re-launches immediately on IDLE (a token-trivial re-park, no commits). Never
+# launch it as a background call: a background child is not guaranteed to
+# survive the poller ending its turn, which orphans the node. Does NO gated
+# git — add/commit/push stay inside Claude; the read-only pull/submodule-update
+# here were never gated, so a variable REPO path is fine (the literal-path rule
+# only guards the gate).
 #
-# Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC]
+# Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
+#        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 540 (9 min — safely
+#        under the 10-min Bash tool ceiling). 0 disables the IDLE deadline.
 # Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks and/or fresh replies
 #        2 + "STOP"                     -> ~/.mesh-stop present
 #        3 + "UPGRADE\n<bus> <prod>"    -> BUS_LAYOUT < product LAYOUT_VERSION
 #        4 + "STALE_PRODUCT\n<bus> <prod>" -> BUS_LAYOUT > product LAYOUT_VERSION
+#        5 + "IDLE"                     -> no work within MAX_WAIT_SEC; re-park
 #
 # Pin mode (default): the submodule update realizes the recorded product pin.
 # Developer mode (MESH_PRODUCT_TRACK=tip): it adds --remote to track product tip.
@@ -23,8 +30,13 @@ set -uo pipefail
 
 REPO="${1:?repo path}"; ROLES="${2:?roles csv}"; AGENT_ID="${3:?agent id}"
 POLL="${4:-240}"
+MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-540}}"
 SEEN="${MESH_SEEN_FILE:-$HOME/.mesh-seen-replies}"
 touch "$SEEN" 2>/dev/null || true
+
+# IDLE deadline bookkeeping (bash 3.2-safe; SECONDS is builtin). MAX_WAIT=0
+# disables the deadline (old block-forever behavior, for non-harness callers).
+SECONDS=0
 
 fm() {  # fm <key> <file> -> first frontmatter value for key
   sed -n "s/^$1:[[:space:]]*//p" "$2" | head -1
@@ -79,6 +91,13 @@ while :; do
 
   if [ "${#hits[@]}" -gt 0 ]; then
     printf 'WORK\n'; printf '%s\n' "${hits[@]}"; exit 0
+  fi
+
+  # IDLE deadline: return before the harness tool timeout so the poller can
+  # re-park. Checked before sleeping so we never overshoot by a full POLL.
+  if [ "$MAX_WAIT" -gt 0 ] 2>/dev/null && \
+     [ $(( SECONDS + POLL )) -ge "$MAX_WAIT" ]; then
+    echo IDLE; exit 5
   fi
   sleep "$POLL"
 done

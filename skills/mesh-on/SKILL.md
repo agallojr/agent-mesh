@@ -124,17 +124,20 @@ loaded in Step 3 — it is a fresh context), so the operating rules govern it an
 every executor it dispatches. Spawn with `run_in_background: true` so your main
 session returns immediately and stays interactive.
 
-The poller does NOT burn inference polling. It parks on a background shell scanner
-(`mesh-scan-loop.sh`) that pulls and scans the queues and blocks until there is
-real work, waking the poller only on a hit or a stop. An idle node therefore costs
-zero tokens and zero commits. The scanner runs on macOS and Linux (bash 3.2+, no
-external `timeout`).
+The poller does NOT burn inference polling. It parks on ONE **synchronous** Bash
+call to the shell scanner (`mesh-scan-loop.sh`) — never a background call: a
+background child is not guaranteed to survive the poller ending its turn, and an
+orphaned scanner takes the node off the mesh while it looks parked. The scanner
+pulls and scans the queues and blocks until there is real work, a stop, or its
+idle deadline (~9 min, just under the Bash tool's 10-min ceiling), where it
+returns `IDLE` and the poller immediately re-parks. An idle node therefore costs
+zero commits and near-zero tokens (one trivial re-park per ~9 min). The scanner
+runs on macOS and Linux (bash 3.2+, no external `timeout`).
 
 Pass `MESH_PRODUCT_TRACK` through to the poller so it reaches the scanner. You
 sourced `~/.agent-identity.env`, so the value (if any) is in your environment;
-absent it, the node is in **pin mode** (adopter, the default). The poller launches
-the scanner as a background Bash call, and a background call does NOT inherit your
-shell env, so the poller must put the value on the command line explicitly, e.g.
+absent it, the node is in **pin mode** (adopter, the default). The poller must
+put the value on the scanner command line explicitly, e.g.
 `MESH_PRODUCT_TRACK=tip «SKILL_DIR»/mesh-scan-loop.sh ...` (developer mode) or a
 plain invocation (pin mode). The poller prompt covers this; make sure the poller
 knows whether this node sets `MESH_PRODUCT_TRACK=tip`.

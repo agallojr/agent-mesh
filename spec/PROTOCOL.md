@@ -837,13 +837,18 @@ stop if the poller was spawned in the current session).
 The poller does not poll with its own inference. The mechanical part of the loop
 — pull, scan the queues, and sleep until something is claimable — lives in a
 portable shell script (`skills/mesh-on/mesh-scan-loop.sh`, bash 3.2+, macOS and
-Linux, no external `timeout`) that the poller launches as a **background** call
-and blocks on. The script exits only when it finds a claimable task or a fresh
-reply (prints `WORK` + the file paths) or when `~/.mesh-stop` exists (prints
-`STOP`). While it blocks, the poller is parked on that one tool call and spends
-zero inference tokens; the harness re-invokes it only on exit. An idle node
-therefore costs zero tokens and zero commits — both repo traffic and token spend
-are proportional to real work, not to node-count × poll-frequency × uptime. The
+Linux, no external `timeout`) that the poller runs as ONE **synchronous** call
+and blocks on. Synchronous is load-bearing: a background child is not guaranteed
+to survive the poller ending its turn, and an orphaned scanner silently takes
+the node off the mesh while it appears parked. The script exits when it finds a
+claimable task or a fresh reply (prints `WORK` + the file paths), when
+`~/.mesh-stop` exists (prints `STOP`), or at its idle deadline (prints `IDLE`,
+default ~9 min — self-limiting under the harness's hard tool timeout), on which
+the poller immediately re-parks with no other action. While it blocks, the
+poller is parked on that one tool call and spends zero inference tokens. An
+idle node therefore costs zero commits and near-zero tokens (one trivial
+re-park per deadline window) — both repo traffic and token spend are
+proportional to real work, not to node-count × poll-frequency × uptime. The
 read-only `pull`/`submodule update` inside the script are ungated, so the git
 gate (which guards only add/commit/push, and only inside the Claude agent) is
 unaffected; every gated write still happens inside the poller when it wakes.
@@ -862,15 +867,18 @@ boot (mesh-on, main session):
   spawn background poller subagent; return (session stays interactive)
 
 loop (poller subagent):
-  0. PARK on the background scanner (zero tokens while it blocks):
+  0. PARK on the scanner -- ONE SYNCHRONOUS call (zero tokens while it blocks;
+     never a background call, which can be orphaned by end-of-turn):
        skills/mesh-on/mesh-scan-loop.sh /abs/repo <AGENT_ROLES> <AGENT_ID> <POLL>
      the script loops internally -- pull --rebase + submodule update --init
      --remote --recursive (a product bump on the bus takes effect here), scan
      tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/, and
-     sleep POLL between scans -- exiting ONLY on:
+     sleep POLL between scans -- exiting on:
        STOP (exit 2): ~/.mesh-stop exists -> end cleanly
        WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
-     it never returns "nothing to do"; an idle node stays parked in the sleep.
+       IDLE (exit 5): idle deadline (~9 min, under the tool timeout) -> re-park
+         immediately, no other action
+     an idle node cycles park -> IDLE -> re-park until work arrives.
   1-2. classify each returned path by message type:
        task.request/task.cancel/query (scanner lists only those with no status
          file) -> claimable work (step 3)

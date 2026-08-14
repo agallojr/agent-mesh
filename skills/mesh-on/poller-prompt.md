@@ -7,12 +7,21 @@ for more — until told to stop.
 
 **You do NOT poll with your own inference.** The pull-scan-sleep part of the loop
 is mechanical, so it lives in a shell script (`mesh-scan-loop.sh`, beside this
-prompt) that you launch as a **background** Bash call. That script pulls the repo,
-scans your queues, and — crucially — **blocks (sleeps and re-pulls) until there is
-real work**, exiting only when it finds a claimable task / a fresh reply, or when
-`~/.mesh-stop` appears. While it blocks you are parked on that one tool call and
-spend ZERO tokens: the harness re-invokes you only when the script exits. This is
-what makes an idle node cost nothing — you wake to act, never to check.
+prompt) that you run as ONE **synchronous** Bash call — a normal foreground call
+you wait on, NEVER `run_in_background: true`. That script pulls the repo, scans
+your queues, and **blocks (sleeps and re-pulls) until there is real work or its
+idle deadline**, exiting when it finds a claimable task / a fresh reply, when
+`~/.mesh-stop` appears, or with `IDLE` just before the Bash tool's hard timeout
+(the script self-limits to ~9 min; pass a `timeout` of 600000 ms on the call).
+While it blocks you are parked on that one tool call and spend ZERO tokens. On
+`IDLE` you immediately launch it again — a one-tool-call re-park costing a
+trivial number of tokens every ~9 min and no commits. This is what makes an
+idle node cost almost nothing — you wake to act (or to re-park), never to think.
+
+**Why synchronous is load-bearing:** a background child is not guaranteed to
+survive you ending your turn — an orphaned scanner dies silently and the node
+goes deaf while looking parked. The synchronous call keeps the scanner alive
+because you are awaiting it, and its exit IS your wake-up.
 
 The main agent that spawned you filled in these values (they are literal; use
 them verbatim):
@@ -68,31 +77,34 @@ unparseable. Keep commit messages to plain words and simple punctuation:
 Each iteration you **park on the scanner, then act on what it returns.** Repeat
 until stop (see "Stopping" below):
 
-0. **Wait for work — park on the background scanner.** Launch the scan script as a
-   **background** Bash call (`run_in_background: true`) and then do nothing until it
-   exits:
+0. **Wait for work — park on the scanner, synchronously.** Run the scan script as
+   ONE normal **synchronous** Bash call (NEVER `run_in_background: true` — an
+   orphaned background scanner dies when you end your turn and the node goes
+   deaf). Set the call's `timeout` to 600000 ms (the tool maximum); the script
+   self-limits to ~9 min and returns `IDLE` before that ceiling, so the call
+   always comes back:
 
    ```
    MESH_PRODUCT_TRACK=«MESH_PRODUCT_TRACK» \
      «SKILL_DIR»/mesh-scan-loop.sh «REPO» «AGENT_ROLES» «AGENT_ID» «POLL_SEC»
    ```
 
-   Pass `MESH_PRODUCT_TRACK` on the command line as shown: a background Bash call
-   does NOT inherit your shell env, and the scanner reads that variable to choose
-   pin mode vs tip mode. If «MESH_PRODUCT_TRACK» is empty, just omit the prefix
-   (plain invocation = pin mode). `«SKILL_DIR»` is the directory this prompt lives
-   in (the bus's `product/skills/mesh-on/`); the spawning agent gives you its
-   literal path. The script pulls the repo (`pull --rebase` + `submodule update
-   --init --recursive`, both read-only and ungated — in **pin mode** it realizes the
-   product commit the bus records; in **tip mode** (`MESH_PRODUCT_TRACK=tip`) it adds
-   `--remote` to track `submodule.product.branch`), scans every
-   `«REPO»/tasks/roles/<role>/*.md` for your roles plus your inbox
-   `«REPO»/tasks/«AGENT_ID»/*.md`, and **blocks — sleeping `POLL_SEC` and re-pulling
-   — until there is something to do.** It exits only then. While it blocks you are
-   parked on this one tool call and spend NO tokens; the harness re-invokes you when
-   it exits. An idle mesh therefore costs zero inference and zero commits — repo and
-   token traffic are both proportional to real work, not to node-count × poll
-   frequency. It runs on macOS and Linux alike (bash 3.2+, no `timeout`).
+   Pass `MESH_PRODUCT_TRACK` on the command line as shown; the scanner reads it to
+   choose pin mode vs tip mode. If «MESH_PRODUCT_TRACK» is empty, just omit the
+   prefix (plain invocation = pin mode). `«SKILL_DIR»` is the directory this
+   prompt lives in (the bus's `product/skills/mesh-on/`); the spawning agent gives
+   you its literal path. The script pulls the repo (`pull --rebase` + `submodule
+   update --init --recursive`, both read-only and ungated — in **pin mode** it
+   realizes the product commit the bus records; in **tip mode**
+   (`MESH_PRODUCT_TRACK=tip`) it adds `--remote` to track
+   `submodule.product.branch`), scans every `«REPO»/tasks/roles/<role>/*.md` for
+   your roles plus your inbox `«REPO»/tasks/«AGENT_ID»/*.md`, and **blocks —
+   sleeping `POLL_SEC` and re-pulling — until there is something to do or the
+   idle deadline hits.** While it blocks you are parked on this one tool call and
+   spend NO tokens. An idle mesh therefore costs zero commits and near-zero
+   inference (one thought per ~9 min re-park) — repo and token traffic are both
+   proportional to real work, not to node-count × poll frequency. It runs on
+   macOS and Linux alike (bash 3.2+, no `timeout` dependency).
 
    The script writes one of:
    - `STOP` (exit 2) — `~/.mesh-stop` exists. Write a final line that you are
@@ -100,15 +112,21 @@ until stop (see "Stopping" below):
    - `WORK` (exit 0) followed by one file path per line — the claimable tasks and
      fresh replies it found. Proceed to step 1 to classify and handle them, then
      loop back to step 0 to re-park.
+   - `IDLE` (exit 5) — no work within the idle deadline. Immediately re-launch
+     the same call (step 0 again). Do NOT think, summarize, or write anything
+     between IDLE and the re-park; the re-launch is the entire response.
    - `UPGRADE` (exit 3) followed by `<bus-layout> <product-layout>` — the bus layout
      is behind the product's expected layout. Apply the pending upgrade notes (see
      "Layout upgrades" below), then re-park at step 0.
    - `STALE_PRODUCT` (exit 4) followed by `<bus-layout> <product-layout>` — the bus
      layout is AHEAD of this product checkout. Report that this checkout's product
      is too old for this bus and END; never guess forward (see "Layout upgrades").
+   - If the call is killed by the tool timeout itself (no output — the harness
+     ceiling fired before the script's own deadline), treat it exactly like
+     `IDLE`: re-park immediately.
 
-   If the background call ever returns an error instead of one of the above (e.g. a
-   broken invocation), do not hot-spin: note it and re-launch it once; if it fails
+   If the call ever returns an error instead of one of the above (e.g. a broken
+   invocation), do not hot-spin: note it and re-launch it once; if it fails
    again, surface the error and END rather than loop tightly.
 
 1. **Classify each returned file.** For each path the scanner emitted, read its
@@ -202,9 +220,12 @@ rejection, follow the conflict-handling rule below.
    workflows writes nothing here.
 
 5. **Re-park.** Having handled every file the scanner returned, go back to step 0
-   and launch the background scanner again. Do NOT `sleep` inline and do NOT scan
-   the queues yourself — the sleeping and re-pulling happen inside the script while
-   you are parked, at zero token cost. One WORK/STOP return per wake, then re-park.
+   and run the synchronous scanner call again. Do NOT `sleep` inline and do NOT
+   scan the queues yourself — the sleeping and re-pulling happen inside the script
+   while you are parked, at zero token cost. One scanner return per wake, then
+   re-park. NEVER end your turn while the node is supposed to be live: ending
+   your turn with no scanner call in flight takes the node off the mesh. The only
+   clean exits are STOP, STALE_PRODUCT, and unrecoverable errors.
 
 ## Dispatching an executor sub-subagent
 
