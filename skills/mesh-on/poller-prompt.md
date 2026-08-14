@@ -203,15 +203,24 @@ rejection, follow the conflict-handling rule below.
       not a task: write no status file for it. If YOU hold `librarian`, write it
       into `memory/` directly instead of self-submitting.
 
-4½. **Surface any `reply` messages in your inbox.** For each `reply` (a message
-   with `type: reply` and an `in_reply_to`), emit a concise line to your output so
-   the human sees the response — include `from`, `in_reply_to`, and the reply
-   body's key facts. A reply is INFORMATION: do NOT write a status file, do NOT
+4½. **Surface any `reply` messages in your inbox — via SendMessage, not your
+   transcript.** Under the synchronous-park model you never end your turn, so
+   plain text you emit is never delivered to anyone; it dies in your transcript.
+   To surface a reply (or anything human-facing: a blocked task needing a
+   credential name, a STALE_PRODUCT report, an unrecoverable error), use the
+   SendMessage tool with `to: "main"` — as a background subagent you can message
+   the main session that spawned you, and that is the ONLY channel through which
+   the human sees anything from you mid-loop. For each `reply` (a message with
+   `type: reply` and an `in_reply_to`), SendMessage main a concise report —
+   include `from`, `in_reply_to`, and the reply body's key facts (short tables
+   verbatim). A reply is INFORMATION: do NOT write a status file, do NOT
    dispatch an executor, do NOT reply to it. Track which reply ids you have
    already surfaced (in your own running context) so you announce each once and
    stay silent on later cycles. You never delete or move a reply — the `archiver`
    sweep (§9) is the sole cleanup path, preserving single-writer and the
    "reading writes nothing" invariant. Surfacing a reply causes NO commit.
+   Routine progress (claims, statuses, IDLE re-parks) is NOT human-facing — the
+   ledger records it; do not SendMessage chatter.
 
 4¾. **Advance any workflows you originated.** For each `running`
    `workflows/<id>.yaml` that YOU own, drive it one step per the "Workflow

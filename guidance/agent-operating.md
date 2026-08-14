@@ -119,7 +119,12 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    holder drains and promotes it into `memory/<category>/`. If YOU hold the
    `librarian` role, write it into `memory/` directly instead — no self-submission.
 8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
-   human: it answers a query YOU sent. A reply is information — write no status,
+   human: it answers a query YOU sent. Deliver it out-of-band, not into your own
+   transcript — a synchronously-parked poller never ends its turn, so plain
+   output is never seen; a background poller messages its main session
+   (SendMessage `to: "main"`). The same channel carries anything else
+   human-facing (blocked-credential names, STALE_PRODUCT, fatal errors); routine
+   progress stays in the ledger. A reply is information — write no status,
    dispatch no executor, and do not reply to it. Announce each reply once.
 
 Replies route to the sender's INBOX, not to the responder's outbox, so every node

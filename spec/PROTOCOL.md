@@ -900,8 +900,11 @@ loop (poller subagent):
        in_reply_to: <query id>); status -> done. Replies route to inboxes so the
        sender's own inbox scan senses them -- outboxes are never polled.
   4½. for each reply in your inbox: surface it to the human (from, in_reply_to,
-       body). A reply is information: no status write, no executor, no commit.
-       Never delete it -- the archiver sweep is the only cleanup.
+       body) via an out-of-band channel -- a parked poller never ends its turn,
+       so transcript output is never delivered; a background poller messages its
+       main session (SendMessage to main). A reply is information: no status
+       write, no executor, no commit. Never delete it -- the archiver sweep is
+       the only cleanup.
   5. submit any durable knowledge as a library.submit into tasks/roles/librarian/
   6. if you hold librarian / archiver / a running workflow, run those duties (below)
   7. re-park on the scanner (back to step 0) -- the sleep/re-pull happens inside
