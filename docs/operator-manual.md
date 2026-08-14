@@ -1,10 +1,15 @@
-# Agent-Mesh Operator Manual (Mobile Edition)
+# Agent-Mesh Operator Manual
 
-For the human operator who drives the mesh from a phone — a Claude chat
-interface or a lightweight terminal — not from a full workstation. You observe
-and steer; you do not do heavy git surgery in the field. Everything below is
-framed so you can act by *posting to a role* in plain language and by *reading the
-ledger*, never by hand-editing coordination state.
+For the human operator who drives the mesh. The normal seat is a **terminal** —
+a Claude Code session on a workstation with the bus cloned locally: the
+`mesh-post` / `mesh-check` / `mesh-ref` skills are wired in, the ledger is
+right there to `grep` and `less`, and maintenance (pin bumps, node repair) is
+in reach when you need it. The same model also works from a **phone** (a Claude
+chat interface or a lightweight terminal); section 8 covers what changes there.
+
+Either way the interaction model is identical, and it is the whole manual: you
+act by *posting to a role* in plain language and by *reading the ledger*, never
+by hand-editing coordination state.
 
 ## 0. A complete turn, end to end
 
@@ -24,8 +29,10 @@ mesh takes over, and you watch it in the ledger:
 | `outbox/60ad2c/20260814T1502-0001-result.md` | the result, with artifact pointers |
 
 Later ask: *"What happened to task `20260814T1502-0001`?"* — the session pulls,
-reads those two files, and tells you. That is the whole interaction model: post
-to a role, read the ledger. Everything below is detail.
+reads those two files, and tells you. Or skip the session entirely: from a
+terminal, `git -C /abs/bus pull` and read the files yourself — the ledger is
+plain text. That is the whole interaction model: post to a role, read the
+ledger. Everything below is detail.
 
 ## 1. Mental model
 
@@ -41,15 +48,35 @@ to a role, read the ledger. Everything below is detail.
 - **Single-writer discipline.** Each node writes only the paths it owns
   (`agents/<id>.yaml`, its own `outbox/<id>/`, and `status/<task-id>.json` for
   tasks it claimed). Conflicts are prevented by construction, not by locking.
-- **Your interface session posts to role queues.** From your phone you drop a
-  message into a role's queue (`tasks/roles/<role>/`) and read the ledger to see
-  what happened. Your session writes nothing but that one message file — you are an
+- **Your interface session posts to role queues.** You drop a message into a
+  role's queue (`tasks/roles/<role>/`) and read the ledger to see what
+  happened. Your session writes nothing but that one message file — you are an
   operator, not a node, so you never write status or race anyone.
 
 Rule of thumb: **to make something happen, post to a role; to know what happened,
 read the ledger.**
 
-## 2. Daily driving
+## 2. Your verbs — the `mesh-*` skills
+
+At the terminal, the skills are how you drive. They are symlinked into
+`~/.claude/skills/` at install time (from `product/skills/`), so in any Claude
+Code session they are one slash-command away. Each SKILL.md is the full
+reference; this is the map:
+
+| Skill | Verb | What it does |
+|---|---|---|
+| `/mesh-post` | SEND | Post one task or query — to a role queue (any holder claims) or a node's direct inbox. Writes one message file, pushes, done. |
+| `/mesh-check` | READ | Pull the bus and summarize what's new since your last check: replies to you, results, status changes, new tasks, registrations, lore. Read-only. |
+| `/mesh-ref` | FILE | Ingest URLs into the library as `refs` records with summaries — papers/decks/images retrieved into LFS, web pages as pointers. |
+| `/mesh-on` | JOIN | Turn THIS machine into a node: spawn the background poller that claims and runs work. Node-side, not an operator action. |
+| `/mesh-off` | LEAVE | Stop this machine's poller. |
+
+The operator pair is `mesh-post` + `mesh-check`: send, then pull. The mesh
+never pushes to you — you learn every outcome by reading the ledger. `mesh-on`
+/ `mesh-off` are for machines that do work; you can be an operator on a machine
+that is not a node at all.
+
+## 3. Daily driving
 
 You steer in natural language. The interface session (via the `mesh-post` skill)
 turns your intent into one message in a role queue; a node holding that role claims
@@ -78,11 +105,11 @@ resumes where it left off — you do not relaunch.
 - Name the target **role** (or, to pin work to one machine, a node id).
 - State the goal and the finish condition ("put the result in my inbox",
   "tag the status so I can find it").
-- Name only credential **NAMES**, never values (see section 5).
+- Name only credential **NAMES**, never values (see section 6).
 - Reference large inputs by pointer, not by pasting them.
 - Ask for a task/workflow **id** back so you can watch the right file.
 
-## 3. Observing the mesh from the ledger
+## 4. Observing the mesh from the ledger
 
 The ledger is just files in the bus. Read them (in the interface, or with a
 quick `git -C /abs/bus pull` then a look) to see state.
@@ -92,7 +119,7 @@ quick `git -C /abs/bus pull` then a look) to see state.
 | `agents/<id>.yaml` | Self-registration; who exists and their `roles`/id. |
 | `tasks/roles/<role>/` | A role queue; work waiting for any holder to claim. Also carries `library.submit` items for `role:librarian`, which the librarian drains rather than claims. |
 | `tasks/<id>/` | A node's direct inbox (replies, pings, targeted sends). |
-| `status/<task-id>.json` | Current state of a task (see section 4). |
+| `status/<task-id>.json` | Current state of a task (see section 5). |
 | `outbox/<id>/<task-id>-result.md` | A node's published result for a task. |
 | `workflows/<id>.yaml` | An in-flight multi-step chain and its cursor. |
 | `memory/` | The library (durable knowledge): `lore/` (verified gotchas), `notes/` (research/design), `refs/` (external references), `workflows/` (curated write-ups of finished processes, distinct from the live `workflows/` above), `runs/` (provenance records — the audit trail of result-bearing tasks, which outlives the retention sweep). |
@@ -104,7 +131,7 @@ its `agent_id` tells you which node claimed it.
 **Find a result.** Look in `outbox/<claiming-node-id>/<task-id>-result.md` — the
 claiming node is the `agent_id` in the status file. Large binary outputs are
 **not** here — they are referenced by pointer in the record's `artifacts` field
-(see section 5, blob rule).
+(see section 6, blob rule).
 
 **See in-flight workflows.** List `workflows/*.yaml` and read the cursor to see
 which step is active and which are done.
@@ -119,7 +146,7 @@ Proof of life = the node writes `accepted` **and** a `reply` lands back in your
 inbox. A `reply` carries `in_reply_to`; it answers a query you sent — treat it as
 information to surface, not as a new task.
 
-## 4. Interpreting states
+## 5. Interpreting states
 
 - **accepted** — A node has claimed the task and acknowledged it. This is also
   the liveness signal. The node is alive and intends to work. Its `agent_id` in the
@@ -135,7 +162,7 @@ information to surface, not as a new task.
   credential exists in the node's `~/.agent-credentials.env` (a maintenance
   action), never to send the secret through the bus.
 
-## 5. Hygiene rules (do not break these)
+## 6. Hygiene rules (do not break these)
 
 - **Never paste secrets.** Values from `~/.agent-credentials.env` must never
   appear in a message, status, log, or result. Only credential **NAMES** are
@@ -148,10 +175,10 @@ information to surface, not as a new task.
   referenced by an **artifact pointer** in the record's `artifacts` field. If
   you need the blob, follow the pointer; do not ask for it inline.
 
-## 6. When something is stuck
+## 7. When something is stuck
 
 **Dead vs idle.** A silent node is not necessarily dead — a node with nothing
-claimable is simply idle. To distinguish, ping it (section 3):
+claimable is simply idle. To distinguish, ping it (section 4):
 
 > "Ping node `worker-3`. If no accepted/reply within a few minutes, flag it."
 
@@ -164,8 +191,8 @@ its `timeout_min` means its claimant likely died. The `agent_id` in that file na
 the node to restart. The mesh does not reap automatically — recovery is a manual
 restart of that node, after which its poller resumes and re-claims queued work.
 
-**Escalate to a real machine.** Some fixes cannot be done from the phone. Move
-to a full workstation session when you need to:
+**Maintenance actions (terminal).** Some fixes are maintenance, not steering —
+do them in a workstation session with the bus cloned:
 - **Bump the submodule pin** to ship a product update mesh-wide (one bus commit
   that repoints `product/`; nodes pick it up on their next pull +
   `submodule update`).
@@ -173,11 +200,26 @@ to a full workstation session when you need to:
   wedged git state.
 - Do any direct git surgery on the bus.
 
-From the phone your job is to *detect and describe* the problem and hand it to
-a maintenance session; do not attempt git repair or `product/` edits in the
-field.
+## 8. Driving from a phone
 
-## 7. Glossary
+The same post-to-a-role / read-the-ledger model works from a phone — a Claude
+chat interface or a lightweight terminal — with a smaller footprint:
+
+- **Steering only.** Post tasks, check status, read results, ping nodes —
+  everything in sections 0–7 except the maintenance actions above. From the
+  phone your job when something breaks is to *detect and describe* the problem
+  and hand it to a terminal session; do not attempt git repair, pin bumps, or
+  `product/` edits in the field.
+- **No git credential needed for library notes.** The optional
+  `librarian-ingress` Worker (`services/librarian-ingress/`) lets a phone hand
+  a note to the librarian over an authenticated MCP call — the phone is a
+  producer, never a bus writer.
+- **Identity.** A phone session posts as a reserved operator id (`op-phone`
+  rather than `op-main`), so the ledger records which seat sent what.
+- **Orient a fresh phone session** in one step: "read
+  `guidance/operator-interface.md` and follow it."
+
+## 9. Glossary
 
 - **Bus** — your private bus git repo (`agent-mesh-bus-<mesh>`, one per mesh,
   named for the mesh); the only channel nodes use to coordinate.
@@ -204,9 +246,11 @@ field.
 
 ---
 
-Summary: You drive the mesh from your phone by posting to roles in plain language
-and reading the git ledger (agents, status, outbox, workflows) — never by writing
-coordination state yourself. Work is addressed to a role; any holder claims it.
-States mean accepted (alive/ack), running, done, failed, or blocked (often missing
-credential NAMES, not values). Never paste secrets, keep big results as pointers,
-and escalate submodule pin bumps and dead-node repairs to a real-machine session.
+Summary: You drive the mesh by posting to roles in plain language and reading
+the git ledger (agents, status, outbox, workflows) — never by writing
+coordination state yourself. The normal seat is a terminal session with the
+`mesh-post` / `mesh-check` skills; a phone works for steering. Work is addressed
+to a role; any holder claims it. States mean accepted (alive/ack), running,
+done, failed, or blocked (often missing credential NAMES, not values). Never
+paste secrets, keep big results as pointers, and do maintenance (pin bumps,
+dead-node repairs) from a terminal.
