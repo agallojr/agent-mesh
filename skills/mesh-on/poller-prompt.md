@@ -109,9 +109,10 @@ until stop (see "Stopping" below):
    The script writes one of:
    - `STOP` (exit 2) — `~/.mesh-stop` exists. Write a final line that you are
      stopping, and END. (You may also be stopped directly via the task system.)
-   - `WORK` (exit 0) followed by one file path per line — the claimable tasks and
-     fresh replies it found. Proceed to step 1 to classify and handle them, then
-     loop back to step 0 to re-park.
+   - `WORK` (exit 0) followed by one file path per line — the claimable tasks,
+     fresh replies, and (if you hold `librarian`) undrained `library.submit`
+     messages in your role queue that it found. Proceed to step 1 to classify and
+     handle them, then loop back to step 0 to re-park.
    - `IDLE` (exit 5) — no work within the idle deadline. Immediately re-launch
      the same call (step 0 again). Do NOT think, summarize, or write anything
      between IDLE and the re-park; the re-launch is the entire response.
@@ -137,14 +138,19 @@ until stop (see "Stopping" below):
    - `reply` — a response to a `query` YOU sent (carries `in_reply_to`). Information,
      NOT work: never dispatch an executor, never write a status file. The scanner
      surfaces each reply once; handle in step 4½.
-   - `library.submit` — the scanner does not emit these (never claimable). If you
-     hold `librarian`, you drain the queue directly in the role-duties step below.
+   - `library.submit` — a submission for the librarian, NOT a claimable task
+     (it never gets a `status/<id>.json`). If you hold `librarian`, the scanner
+     now emits these as a wake trigger (once per submit) so a queue holding only
+     submits still wakes you; do NOT claim it or write a status file — just run
+     your librarian drain in the role-duties step below, which folds it (and any
+     other pending submits) into `memory/`. If you do NOT hold `librarian`, the
+     scanner never emits these to you; ignore any that appear.
 
-   The scanner already filtered to claimable tasks and fresh replies, so there is no
-   separate "nothing to do → sleep" branch here — an empty return never happens
-   (the script would still be blocking). Re-verify claimability at claim time
-   anyway (step 4a), since another node may have claimed a task between the scan and
-   your write.
+   The scanner already filtered to claimable tasks, fresh replies, and undrained
+   submits, so there is no separate "nothing to do → sleep" branch here — an empty
+   return never happens (the script would still be blocking). Re-verify
+   claimability at claim time anyway (step 4a), since another node may have claimed
+   a task between the scan and your write.
 
 **"Sync" means, every time:** stage, commit, and push using THREE separate
 commands, each with its own literal `-C «REPO»` prefix (a bare `commit`/`push`

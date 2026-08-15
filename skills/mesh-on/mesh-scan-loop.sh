@@ -13,7 +13,8 @@
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
 #        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 540 (9 min — safely
 #        under the 10-min Bash tool ceiling). 0 disables the IDLE deadline.
-# Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks and/or fresh replies
+# Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks, fresh replies, and/or
+#                                          undrained library.submits (librarian)
 #        2 + "STOP"                     -> ~/.mesh-stop present
 #        3 + "UPGRADE\n<bus> <prod>"    -> BUS_LAYOUT < product LAYOUT_VERSION
 #        4 + "STALE_PRODUCT\n<bus> <prod>" -> BUS_LAYOUT > product LAYOUT_VERSION
@@ -31,6 +32,9 @@ set -uo pipefail
 REPO="${1:?repo path}"; ROLES="${2:?roles csv}"; AGENT_ID="${3:?agent id}"
 POLL="${4:-240}"
 MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-540}}"
+# Wake-once ledger: one path per line for edge-triggered items that never get a
+# status file (replies to our queries, and library.submits we must drain). Kept
+# the historical filename for continuity. Purely a dedupe set of paths.
 SEEN="${MESH_SEEN_FILE:-$HOME/.mesh-seen-replies}"
 touch "$SEEN" 2>/dev/null || true
 
@@ -77,7 +81,18 @@ while :; do
   IFS=',' read -ra RS <<< "$ROLES"
   for r in "${RS[@]}"; do
     for f in "$REPO/tasks/roles/$r"/*.md; do
-      [ -e "$f" ] && claimable "$f" && hits+=("$f")
+      [ -e "$f" ] || continue
+      if claimable "$f"; then
+        hits+=("$f")
+      elif [ "$(fm type "$f")" = library.submit ] && ! grep -qxF "$f" "$SEEN"; then
+        # A library.submit is not claimable (never gets a status file) but the
+        # librarian must drain it. Wake the poller ONCE per submit — the drain
+        # does not delete the queue file (the archiver sweeps it), so an
+        # unguarded wake would re-fire every cycle. Same seen-once guard as
+        # replies. Only a librarian-holding node scans tasks/roles/librarian/,
+        # so this wake is naturally scoped to the node that can drain it.
+        hits+=("$f"); printf '%s\n' "$f" >> "$SEEN"   # wake once per submit
+      fi
     done
   done
   for f in "$REPO/tasks/$AGENT_ID"/*.md; do
