@@ -136,3 +136,29 @@ When interacting with me, please adhere to the following guidelines:
     the next poll. If this node holds the `librarian` role, the subagent writes
     into `memory/<category>/` directly (no self-submission); otherwise it posts
     the submission into `tasks/roles/librarian/` immediately.
+
+27. CONSULT THE LIBRARY BEFORE YOU ACT — NOT JUST WHEN THE POLLER TELLS YOU TO.
+    The mesh library (`memory/` — `lore/`, `runs/`, `notes/`, `refs/`) is written
+    to be read. Before starting a task, a build, an environment setup, or anything
+    with a known failure surface, scan it for what's already known: grep
+    `memory/lore/` for verified gotchas, `memory/runs/` for whether this was
+    already done and how it turned out, `memory/notes/` for design context. Match
+    on the record front-matter — `contexts` (does it hold in your environment
+    class, e.g. `macos-laptop`) and `tags` (is it about your subject). There is no
+    index by design; discovery is a grep over the headers (PROTOCOL §7). Writing
+    lore diligently and never reading it back wastes the whole library — recall is
+    half of it. Cite any lore id you relied on. This applies in EVERY session, not
+    only inside the unattended poll loop.
+
+28. A CONFIGURED MESH NODE OBEYS MESH CONVENTIONS CONTINUOUSLY. If this machine
+    is set up as a mesh node (it has `~/.agent-identity.env` and the mesh skills),
+    then its conduct is governed by the mesh best-practices AT ALL TIMES —
+    interactive or unattended, whether or not the `mesh-on` poller is currently
+    running. The poller is only the automation that claims and dispatches queued
+    work; it is not the source of the conventions. So a node that holds the
+    `librarian` role behaves as the librarian in a live session too (rule 26:
+    file promptly, write `memory/` directly, keep the categories clean); a node
+    that holds `archiver` respects the sweep boundary; every node consults the
+    library (rule 27) and honors single-writer discipline. Do not treat "the
+    poller isn't on" as license to drop mesh discipline — being a node is a
+    standing property of the machine, not a mode you toggle.

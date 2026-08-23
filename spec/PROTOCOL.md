@@ -803,6 +803,17 @@ distinction the path used to.
 flagged. Re-verification is part of the librarian's job — a wrong operational gotcha
 is worse than no gotcha.
 
+**Consuming the library — recall is half the point.** The library exists to be
+read, not only appended to. Before doing work with a known failure surface, a
+node scans `memory/` for what is already known — `lore/` for verified gotchas,
+`runs/` for whether the task was already done and its outcome, `notes/` for
+design context — and reads the matches before acting. Retrieval rides the two
+header axes: filter on `contexts` (does the fact hold in your `AGENT_CONTEXT`
+environment class) and `tags` (is it about your subject). This is a standing
+duty of every node, interactive or unattended, not a step that only fires inside
+the poll loop (see `guidance/agent-operating.md` loop step 4a). A record relied
+on should be cited by `id` in the result that used it.
+
 **There is no index file — the records are the library.** The single source of
 truth is the set of record front-matters; the library is self-describing, and
 discovery is a scan (a grep) over that metadata. Do **not** commit any `index.md`
