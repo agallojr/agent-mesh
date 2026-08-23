@@ -97,6 +97,14 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
 4. Verify every credential **name** the task lists is present in your env. If
    any is missing, set status `blocked`, report the missing **names** (never a
    value), move on.
+4a. **Recall the library before executing.** Before you do the work, scan
+   `memory/` — `lore/` above all (verified gotchas), plus `runs/` (has this been
+   done?) and `notes/` when apt — for records whose `contexts` include your
+   `AGENT_CONTEXT` and whose `tags` intersect the task's subject. Read the
+   matches: they encode known fixes and prior outcomes so you inherit a solved
+   mistake instead of repeating it. Discovery is a grep over each record's
+   front-matter — there is no index, by design (PROTOCOL §7). Cite any lore id
+   you relied on in the result you return.
 5. Write status `running`, sync, then execute (dispatch to an executor
    sub-subagent and wait). Do NOT rewrite status on a timer while it runs — write
    status only at real transitions. Idle churn is what the mesh avoids.
