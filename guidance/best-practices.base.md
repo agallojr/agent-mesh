@@ -1,164 +1,130 @@
 # Best practices (base)
 
 Universal agent + coding conventions that ship with the mesh product.
-Deployment-specific overrides live in the bus library
+Deployment-specific rules live in the bus overlay
 (`memory/best-practices.user.md`) and are layered on top by the bus's
-`guidance/CLAUDE.md`.
+`guidance/CLAUDE.md`. This file is the single source for the base rules — each
+is stated once; rely on it rather than looking for a reinforcing copy.
 
-IMPORTANT: Be maximally autonomous. Never ask for permission or confirmation
-unless the action is truly irreversible AND destructive. Do not narrate what you
-are about to do — just do it. Do not ask "shall I proceed?" or "would you like
-me to..." or "should I go ahead?" — the answer is always yes. If something fails,
-fix it and move on. Only stop to ask if you are genuinely blocked on a decision
-that requires human judgment (e.g. a design fork with real tradeoffs).
+## Loading — read once per session
 
-When interacting with me, please adhere to the following guidelines:
+Load these before doing any work; they are binding in every session. They may be
+imported more than once in a single session: an interactive session inside the
+workspace pulls them in through two chains at once (`~/.claude/CLAUDE.md` and the
+project `CLAUDE.md`). If you have already seen this content this session, treat
+the second copy as a duplicate — do not re-read, re-summarize, or re-derive it.
+One load is authoritative; the rules bind either way.
 
-1. Don't use exclamation marks in your messages or other flattering punctuation.
+## Working style — act, don't ask
 
-2. Be concise and to the point in your questions and requests.
+Default to acting. You have broad standing authorization — every Bash command and
+every Read/Edit/Write/Glob/Grep/WebFetch/WebSearch call is pre-approved at the
+harness level — so run commands, read and write files, build, test, install
+packages, patch, grep, delete, and do routine git (not commit/push) without asking
+or narrating first. Do not ask "shall I proceed?" or "would you like me to…" — the
+answer is yes. If something fails, fix it and move on.
 
-3. When inserting code, do not use trailing whitespace. Lines with no content
-   should be completely empty. Always fit code to the suggest 88 character line
-   width.
+When you have enough information to act, act — don't survey options you won't take,
+re-derive context you already have, or reconcile a rule against a near-duplicate of
+itself. Reserve questions for the two cases that genuinely need human judgment: an
+action that is both irreversible and destructive, or a real design fork with
+material tradeoffs. A file layout, a naming choice, a reorg is not one of those —
+pick the sensible default, state it in one line, and proceed; I will redirect if I
+disagree. Skip multi-option clarifying prompts (AskUserQuestion) for anything
+low-stakes or reversible.
 
-4. Adhere to all PEP 8 guidelines when writing Python code. Keep imports in the
-   right order, line lengths <= 88 characters, and use proper naming conventions.
+Read-only and trivially-reversible operations never warrant a prompt: shell
+builtins and navigation (`cd`, `ls`, `pwd`, `pushd`/`popd`, `echo`), globs and
+brace/tilde/variable expansions, `grep`/`find`/`cat`/`wc`/`stat`, file moves and
+renames within the workspace, `mkdir`, and read-only inspection such as
+`python3 -c "…"` to load a result file and print a few fields. Just do them —
+stalling to ask on a node with no human present is a failure mode, not caution.
 
-5. Don't write your own test modules unless explicitly told to do so. This does not mean "don't test", it means don't leave test files around unless asked.
+## Hard limits — the only things that need my say-so
 
-6. CRITICAL: Always use the local venv when running Python. Check for ./venv or
-   .venv first. ALWAYS invoke python and pip directly from the venv (e.g.
-   ./venv/bin/python, ./venv/bin/pip) — never use system python or a bare
-   `python`/`pip` command. This applies even after context resets or new
-   sessions.
+Honor these yourself; the harness deny list is prefix-only and cannot catch all of
+them. When in doubt on one of *these*, ask. For anything else, act.
 
-7. Put all includes at the top of the module unless there is a very good reason
-   not to.
+- **Git writes:** never `git add`, `git commit`, or `git push` (or force-push)
+  unless I explicitly ask, and don't create branches unless asked.
+- **sudo:** never run as root without asking.
+- **Sweeps / long-running work:** don't launch anything expected to run long, and
+  not in the background either — give me the exact command to run or approve. (A
+  deployment overlay may set the time threshold and the specific tools this covers.)
+- **Untrusted downloads:** never pipe a downloaded script into a shell
+  (`curl … | bash`, `wget … | sh`) or run an untrusted fetched binary.
+- **Recursive force-deletes** outside the workspace or `/tmp` — `rm -rf` on
+  `$HOME`, `/`, system paths, or broad globs you are unsure about.
 
-8. Group the includes. Standard libs first. Then 3rd party. Then local imports.
+## Python & code
 
-9. Run commands freely without asking — assume blanket permission for everything
-   except: running as sudo, push/force-push to git remotes, or executing
-   untrusted scripts/binaries downloaded from the internet. Everything else is
-   pre-approved: building, testing, installing packages, creating files,
-   overwriting files, deleting files, patching, grepping, piping, running
-   Python/Node scripts, git operations (except push), killing processes, chmod,
-   etc. Do NOT ask "shall I proceed?" or "would you like me to..." — just do it.
+- **venv, always.** Check for `./venv` or `.venv` first and invoke it directly
+  (`./venv/bin/python`, `./venv/bin/pip`) — never system `python`/`pip`, never a
+  bare `python`. This holds after every context reset or new session.
+- **Imports at the top, grouped:** standard library first, then third-party, then
+  local. Put all includes at the top unless there is a very good reason not to.
+- **PEP 8:** import order, naming, line length ≤ 88 chars.
+- **No trailing whitespace;** blank lines are completely empty; fit code to the
+  88-character width.
+- **Strong typing** where it helps — show argument and return types.
+- **Concise comments,** especially at the top of a module; skip long per-arg
+  docstrings unless the function is genuinely complex.
+- **Compilation is not a test.**
+- **Don't leave test files around.** This does not mean "don't test" — it means
+  write test modules only when asked, and don't leave them behind afterward.
+- **Keep test runs short:** run only the tests covering what you changed (a single
+  file or class). Skip the full suite and slow/integration tests unless asked, and
+  skip any test over ~60 s.
+- **No separate spec files** unless asked.
 
-10. Keep your code comments especially at the top of the module concise and to
-    the point. We don't need long per-arg docstrings unless the function is
-    particularly complex.
+## Writing & communication
 
-11. Use strong typing where appropriate in Python code. Show the types of
-    function arguments and return values.
+- **Be concise and to the point** in questions, requests, and answers.
+- **No exclamation marks** or flattering punctuation — they read as filler and add
+  nothing.
+- **Units on every number.** A bare number with an implied unit is ambiguous and
+  can't be compared later without re-running the work that produced it. Write
+  "8.48 s", "20429 bytes", "12 min", not "8.48", "20429", "12". If a value's
+  meaning also depends on a convention or reference (log base, normalization,
+  reference scale, coordinate/unit system), state that alongside it. Plain prose is
+  enough — no special notation required; just never leave a unit or convention
+  implied.
+- **UTC, ISO 8601** for every date and time you record (e.g. `2026-07-21T04:00:45Z`)
+  — nodes run in different timezones, so a bare local time is not comparable across
+  the mesh. When a source is local-only, keep its explicit offset (`2026-07-18
+  15:22:50 -0400`) rather than dropping it, and note UTC alongside where you can.
 
-12. Compilation is not a test.
+## Images
 
-13. Don't produce separate files for specs unless asked for it.
+- **Preserve aspect ratio** when resizing, unless explicitly told otherwise.
 
-14. When resizing images, always preserve the aspect ratio unless explicitly
-    told otherwise.
+## Mesh & library
 
-15. Never run git add, git commit, or git push unless explicitly asked to do so.
-
-16. Always read and follow these Best-Practices guidelines at the start of every
-    session and conversation. Load them before doing any work.
-
-17. Keep test runs short. Run only the relevant unit tests for the code you
-    changed (e.g. a single test file or test class). Do NOT run the full test
-    suite or slow/integration tests unless explicitly asked. If a test takes more
-    than 60 seconds, skip it.
-
-18. Pre-approved safe operations — NEVER ask or prompt about these; just do them
-    silently (covered by rule 9):
-    - Shell navigation and builtins: cd, pwd, pushd/popd, ls, echo.
-    - Simple expansions: glob (*.toml), brace, tilde (~), and variable expansion.
-    - Any other read-only or trivially-reversible shell operation (grep, find,
-      cat, wc, stat, file moves/renames within the workspace, mkdir, etc.).
-    You ask too often. Default to acting.
-
-19. Do NOT use multi-option clarifying questions (AskUserQuestion) for low-stakes
-    or reversible choices. Pick the sensible default, state it in one line, and
-    proceed. Reserve questions for genuinely irreversible actions or real design
-    forks with material tradeoffs. A reorg, a file layout, a naming choice — just
-    pick the obvious option and do it; the user will redirect if they disagree.
-
-20. `python3 -c "..."` (and venv-python `-c "..."`) for read-only inspection —
-    loading a JSON/result file, printing a few fields, checking a value — is
-    always OK. It is a trivially-reversible read; never prompt about it.
-
-21. BLANKET TOOL AUTHORIZATION. I have pre-authorized, at the harness level
-    (~/.claude/settings.json permissions.allow), every Bash command and every
-    Read/Edit/Write/Glob/Grep/WebFetch/WebSearch call. You will not see an
-    approval prompt for these, and you must never wait for one or ask me to
-    confirm a routine command. Just run it. The ONLY commands still fenced off
-    (harness deny list) are: sudo, git push, git commit, git add. These four
-    plus the carve-outs below are the complete set of things that still need my
-    say-so — everything else is yours to run.
-
-22. STILL OFF-LIMITS without my explicit say-so (harness deny rules are
-    prefix-only and cannot catch these, so honor them yourself):
-    - Piping a downloaded script straight into a shell (curl … | bash, wget …
-      | sh, or running any untrusted binary fetched from the net).
-    - Recursive force-deletes of anything outside the workspace or /tmp
-      (rm -rf on $HOME, /, system paths, or broad globs you're unsure about).
-    - Long-running operations (anything expected to run for a long time); do not
-      launch these without explicit approval, and not in the background either.
-    When in doubt on one of THESE specific cases, ask. For anything else, act.
-
-23. Don't branch in a git repo unless asked to do so.
-
-24. When you write down a numeric value — in a result, a status update, a
-    library record, or any message — state its units next to it whenever it has
-    any. A bare number with an implied unit is ambiguous and cannot be compared
-    later without re-running the work that produced it. Write "8.48 s", "20429
-    bytes", "12 min", not "8.48", "20429", "12". If a number's meaning also
-    depends on a convention or a reference — a log base, a normalization, a
-    reference scale, a coordinate or unit system — state that alongside the
-    value. Plain prose is enough; no special notation is required — just never
-    leave a unit or convention implied.
-
-25. Prefer UTC for every date and time you record, written in a standard format
-    (ISO 8601, e.g. 2026-07-21T04:00:45Z). Nodes run in different timezones, so a
-    bare local time is not comparable across the mesh. When a source timestamp is
-    only available in local time, keep its explicit offset (e.g. 2026-07-18
-    15:22:50 -0400) rather than dropping it, and note UTC alongside where you
-    can.
-
-26. INTERACTIVE LIBRARIAN REQUESTS START IMMEDIATELY. When the operator is
-    present and interactively asks to file something with the librarian (hand
-    off a report, ingest a reference, record a note), start that work right away
-    — spawn a subagent and begin now rather than dropping a `library.submit` for
-    the poller to drain on some later cycle. The batch queue + poller path is
-    for unattended nodes; you may still use it, or any convenient mechanism, so
-    long as the librarian work actually begins promptly rather than waiting on
-    the next poll. If this node holds the `librarian` role, the subagent writes
-    into `memory/<category>/` directly (no self-submission); otherwise it posts
-    the submission into `tasks/roles/librarian/` immediately.
-
-27. CONSULT THE LIBRARY BEFORE YOU ACT — NOT JUST WHEN THE POLLER TELLS YOU TO.
-    The mesh library (`memory/` — `lore/`, `runs/`, `notes/`, `refs/`) is written
-    to be read. Before starting a task, a build, an environment setup, or anything
-    with a known failure surface, scan it for what's already known: grep
-    `memory/lore/` for verified gotchas, `memory/runs/` for whether this was
-    already done and how it turned out, `memory/notes/` for design context. Match
-    on the record front-matter — `contexts` (does it hold in your environment
-    class, e.g. `macos-laptop`) and `tags` (is it about your subject). There is no
-    index by design; discovery is a grep over the headers (PROTOCOL §7). Writing
-    lore diligently and never reading it back wastes the whole library — recall is
-    half of it. Cite any lore id you relied on. This applies in EVERY session, not
-    only inside the unattended poll loop.
-
-28. A CONFIGURED MESH NODE OBEYS MESH CONVENTIONS CONTINUOUSLY. If this machine
-    is set up as a mesh node (it has `~/.agent-identity.env` and the mesh skills),
-    then its conduct is governed by the mesh best-practices AT ALL TIMES —
-    interactive or unattended, whether or not the `mesh-on` poller is currently
-    running. The poller is only the automation that claims and dispatches queued
-    work; it is not the source of the conventions. So a node that holds the
-    `librarian` role behaves as the librarian in a live session too (rule 26:
-    file promptly, write `memory/` directly, keep the categories clean); a node
-    that holds `archiver` respects the sweep boundary; every node consults the
-    library (rule 27) and honors single-writer discipline. Do not treat "the
-    poller isn't on" as license to drop mesh discipline — being a node is a
-    standing property of the machine, not a mode you toggle.
+- **Consult the library before you act — not just when the poller tells you to.**
+  The mesh library (`memory/` — `lore/`, `runs/`, `notes/`, `refs/`) is written to
+  be read. Before a task, build, environment setup, or anything with a known
+  failure surface, grep it for what's already known: `lore/` for verified gotchas,
+  `runs/` for whether this was already done and how it turned out, `notes/` for
+  design context. Match on record front-matter — `contexts` (does it hold in your
+  environment class, e.g. `macos-laptop`) and `tags` (is it about your subject).
+  There is no index by design; discovery is a grep over the headers (PROTOCOL §7).
+  Writing lore and never reading it back wastes the library — recall is half of it.
+  Cite any lore id you relied on. This applies in every session, not only the
+  unattended poll loop.
+- **File librarian requests immediately when I'm present.** When I interactively
+  ask you to file something (hand off a report, ingest a reference, record a note),
+  start right away — spawn a subagent and begin now, rather than dropping a
+  `library.submit` for the poller to drain on some later cycle. The batch queue +
+  poller path is for unattended nodes. If this node holds the `librarian` role, the
+  subagent writes into `memory/<category>/` directly (no self-submission);
+  otherwise it posts the submission into `tasks/roles/librarian/` immediately.
+- **A configured mesh node obeys mesh conventions continuously.** If this machine
+  is set up as a mesh node (it has `~/.agent-identity.env` and the mesh skills), the
+  mesh best-practices govern its conduct at all times — interactive or unattended,
+  whether or not the `mesh-on` poller is running. The poller only claims and
+  dispatches queued work; it is not the source of the conventions. So a `librarian`
+  node behaves as librarian in a live session too (file promptly, write `memory/`
+  directly, keep the categories clean); an `archiver` respects the sweep boundary;
+  every node consults the library and honors single-writer discipline. "The poller
+  isn't on" is not license to drop mesh discipline — being a node is a standing
+  property of the machine, not a mode you toggle.
