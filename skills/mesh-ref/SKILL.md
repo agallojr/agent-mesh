@@ -107,9 +107,28 @@ minting a duplicate.
    - **Pointer-only** for `text/html` pages and anything not worth preserving as a
      file — including an arXiv abstract page treated as a web page, which is NOT
      what we want here: an arXiv paper is always the retrieve case above.
-2. **Summarize**: derive `title`, `slug` (short kebab-case), and `tags` (3–8 subject
-   keywords; `contexts` stays `[]`) from the **metadata URL** via `WebFetch` (for
-   arXiv, the `abs/` page — exact title, authors, version, abstract). For a research
+2. **Summarize**: derive `title`, `slug` (short kebab-case), and `tags` from the
+   **metadata URL** via `WebFetch` (for
+   arXiv, the `abs/` page — exact title, authors, version, abstract). `contexts`
+   stays `[]`. Tags are 3–8 **topical** keywords (what the ref is about) PLUS
+   `facet:value` tags for any pertinent orthogonal dimension — `org:` (institution
+   behind the source, e.g. `org:ornl`, `org:ibm`) and `geo:` (geographic context,
+   `place-CC`, e.g. `geo:oak-ridge-us`). Normalize every tag against
+   `memory/refs/TAGS.md` before writing: lowercase kebab-case, American `-ize`
+   spelling, prefer the canonical token over a listed alias, and resolve org/geo
+   values through that file's tables so `ORNL`/`Oak Ridge` land on one token. Add a
+   new org/geo/topic to `TAGS.md` when the source introduces one not yet listed
+   (it is data, not product — no pin bump). Omit a facet when it does not apply.
+   **`geo:` by org type** — attach `geo:` (the org's research-site location) per
+   the org's kind, not per the ref: tag geo for a **university, national-lab,
+   government research center, or institute** (its campus/site, e.g.
+   `org:ornl` → `geo:oak-ridge-us`, `org:rpi` → `geo:troy-us`). Do NOT tag geo for
+   a **company** UNLESS it is single-site (exists at exactly one location); a
+   multi-site company (IBM, Google, Microsoft, …) gets `org:` only, because "the
+   company's location" is undefined. One org → its own geo; a ref with three
+   universities carries three `geo:` tags. For a multi-campus university whose
+   specific site is unclear, use the primary/HQ campus and note the ambiguity. For
+   a web page, `geo:` may also come from the page's own stated location. For a research
    paper the exposition is TWO summaries at two altitudes (§4) — the abstract/intro
    alone is not enough for the deeper one, so read into the body (methods, results).
    Note: `WebFetch` on a `…/pdf/…` URL often returns raw PDF bytes, not text — so
@@ -163,7 +182,7 @@ title: <title>
 category: refs
 provenance: human
 contexts: []
-tags: [<keywords>]
+tags: [<topical keywords>, <org:… geo:… facets when pertinent>]  # normalize vs memory/refs/TAGS.md
 discovered_by: <AGENT_ID or operator id>
 discovered_on: <UTC date>
 artifact: <id>-<slug>.<ext>        # local pointer to the stored file

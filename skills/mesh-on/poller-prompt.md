@@ -252,11 +252,16 @@ the credential NAMES it may use (values are already in the environment), an
 instruction to load the operating rules first, and the standing instruction below:
 "First read `«REPO»/guidance/CLAUDE.md` and follow its `@`-import chain — those are
 your operating rules (autonomy, coding conventions, credential-name-only handling);
-you inherit nothing from the poller, so load them before doing anything. Then: you
-are executing one mesh task. Do the work. Do NOT touch git or status files — the
-poller owns those. Return a concise structured result: what you did, whether
-done-when is satisfied, artifact pointers (URLs/paths/job-ids, never payloads), and
-any durable lesson learned. Never emit a credential value anywhere."
+you inherit nothing from the poller, so load them before doing anything. Then recall
+the library before executing (PROTOCOL §7, agent-operating step 4a): you get no
+SessionStart lore catalog because you are a sub-subagent, so grep
+`«REPO»/memory/lore/*.md` front-matter yourself for records whose `contexts` include
+`«AGENT_CONTEXT»` OR are empty (universal), and whose `tags` intersect this task's
+subject; read the matches before acting and cite any lore id you relied on in your
+result. Then: you are executing one mesh task. Do the work. Do NOT touch git or
+status files — the poller owns those. Return a concise structured result: what you
+did, whether done-when is satisfied, artifact pointers (URLs/paths/job-ids, never
+payloads), and any durable lesson learned. Never emit a credential value anywhere."
 
 Keeping execution in a sub-subagent is what keeps YOUR context bounded across many
 cycles — do not execute tasks inline yourself.
