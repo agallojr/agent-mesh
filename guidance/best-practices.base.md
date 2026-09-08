@@ -82,6 +82,10 @@ them. When in doubt on one of *these*, ask. For anything else, act.
 - **Be concise and to the point** in questions, requests, and answers.
 - **No exclamation marks** or flattering punctuation — they read as filler and add
   nothing.
+- **Git commit messages: one line, minimal punctuation, plain ASCII.** Keep the
+  commit subject to a single line, use as little punctuation as the message needs,
+  and avoid special characters — no emoji, backticks, em-dashes, or decorative
+  glyphs. This keeps logs greppable and diffs clean across every node.
 - **Units on every number.** A bare number with an implied unit is ambiguous and
   can't be compared later without re-running the work that produced it. Write
   "8.48 s", "20429 bytes", "12 min", not "8.48", "20429", "12". If a value's
