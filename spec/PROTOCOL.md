@@ -825,6 +825,22 @@ throwaway view — never a committed, hand-maintained file. Records are expected
 move, merge, and be re-categorized over time; because each carries its own
 metadata, any index can be rebuilt from them at any moment.
 
+**Categories are metadata, not directories.** For the same reason, a record's
+categories live in its front-matter — `tags`, `project`, `related` — never in the
+path. Do **not** `mkdir` a folder per topic, venue, or project inside `memory/`:
+the five top-level directories are record *kinds*, and `lore/`, `notes/`, `refs/`
+are flat by design (naming invariant above). Only two directory shapes below them
+are legitimate: the `workflows/` nesting (project ⊃ workflow ⊃ artifacts), and
+payload directories under `memory/notes/assets/` — a `<slug>/` subtree, itself
+free to nest, holding the figures, data, and source files a note references.
+Metadata is what makes recategorization cheap: a record can sit in several
+categories at once, and moving it between them is a tag edit rather than a file
+move that breaks every pointer at the old path. So when proposing a taxonomy, say
+plainly that the groupings are tag sets, not folders; reuse an existing tag rather
+than coining a near-synonym (for `refs`, normalize against `memory/refs/TAGS.md`
+— see the `mesh-ref` skill); and when a genuinely new category is being
+established, state the convention inside the first record that uses it.
+
 **Email ingress (second submission source).** Besides nodes and the phone-facing
 ingress Worker, a single-holder **`email-monitor`** role may watch a Gmail mailbox
 and turn an authenticated message into a `library.submit` on the librarian queue.
