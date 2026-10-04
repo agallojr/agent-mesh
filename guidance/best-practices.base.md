@@ -8,12 +8,11 @@ is stated once; rely on it rather than looking for a reinforcing copy.
 
 ## Loading — read once per session
 
-Load these before doing any work; they are binding in every session. They may be
-imported more than once in a single session: an interactive session inside the
-workspace pulls them in through two chains at once (`~/.claude/CLAUDE.md` and the
-project `CLAUDE.md`). If you have already seen this content this session, treat
-the second copy as a duplicate — do not re-read, re-summarize, or re-derive it.
-One load is authoritative; the rules bind either way.
+Load these before doing any work; they are binding in every session. Interactive
+sessions get them once, through `~/.claude/CLAUDE.md`; don't add a workspace
+`CLAUDE.md` that re-imports them. If a copy does arrive twice (e.g. a session
+launched inside the bus also reads `guidance/CLAUDE.md`), treat the second as a
+duplicate — do not re-read, re-summarize, or re-derive it.
 
 ## Working style — act, don't ask
 
