@@ -37,6 +37,7 @@ server, no shared network — just files, single-writer paths, and git.
 | A **user** driving a running mesh (post work, read results — terminal first; phone also works) | [`docs/operator-manual.md`](docs/operator-manual.md) |
 | An **admin** installing a node on an existing mesh | [`INSTALL.md`](INSTALL.md) |
 | An **admin** standing up a brand-new mesh (scaffold a bus) | [`install/README.md`](install/README.md) |
+| Running biased reviewer agents (lenses) over a result | [`lenses/README.md`](lenses/README.md) |
 | Implementing or auditing behavior | [`spec/PROTOCOL.md`](spec/PROTOCOL.md) — the normative reference |
 | Wondering where this sits in the multi-agent landscape | [`docs/positioning.md`](docs/positioning.md) |
 | Migrating an old node after the product/data split | [`docs/reinstall-after-split.md`](docs/reinstall-after-split.md) |

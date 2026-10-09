@@ -226,6 +226,17 @@ for skill_dir in "${BUS_PATH}"/skills/*/; do
   ln -sfn "${skill_dir%/}" "${SKILLS_DST}/${skill_name}"
 done
 
+# --- 6b. symlink lens agents (product first, then bus overlay) -------------
+step "Step 6b: symlink lens agents into ~/.claude/agents as lens-<name>.md"
+AGENTS_DST="${HOME}/.claude/agents"
+mkdir -p "${AGENTS_DST}"
+for lens_dir in "${BUS_PATH}"/product/lenses/*/ "${BUS_PATH}"/lenses/*/; do
+  [ -f "${lens_dir}agent.md" ] || continue
+  lens_name=$(basename "${lens_dir}")
+  say "ln -sfn ${lens_dir}agent.md ${AGENTS_DST}/lens-${lens_name}.md"
+  ln -sfn "${lens_dir}agent.md" "${AGENTS_DST}/lens-${lens_name}.md"
+done
+
 # --- 7. next steps (network-mutating -> operator runs these) ----------------
 step "Step 7: next steps (you run these -- network-mutating git is not automated)"
 cat <<EOF
