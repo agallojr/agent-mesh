@@ -1,7 +1,7 @@
 ---
 name: mesh-ref
 description: Ingest one or more URLs into the mesh library as `refs` records, each with a companion summary. Research papers, slide decks, and images are RETRIEVED and stored in the bus (LFS) with a separate companion metadata/summary record; general web pages are kept as a pointer-only record with the summary in its body. If you hold the `librarian` role the records are written to `memory/refs/` directly; otherwise a `library.submit` is posted for the librarian to promote. Use when a human (operator or node) wants to file a web resource into durable memory with a summary. Each URL in a list is handled separately.
-allowed-tools: Read, Write, Bash, Glob, Grep, WebFetch
+allowed-tools: Read, Write, Bash, Glob, Grep, WebFetch, Agent
 ---
 
 # mesh-ref — ingest a URL into the library as a reference + summary
@@ -144,19 +144,25 @@ best-practices §24/§25:
 
 ```
 ## What it is
-One line: kind of resource, author/source, date if known.
+One line: kind of resource, author/source, date if known. No file trivia (ISBN,
+PDF creation date, byte count, local file name) — the header carries provenance.
 
 ## Semi-technical overview
 Written for a bright non-specialist (calculus + basic linear algebra, but not an
 expert in this subfield). Plain language: what problem it tackles, the core idea,
-and why it matters. Define jargon on first use. Terse — a few tight paragraphs,
-no hype. This is the wider-audience altitude; write it FIRST.
+and why it matters. Define jargon on first use in plain words, or leave the term
+out. Terse — three or four tight paragraphs, ~250-350 words, no hype. Lead with the
+problem, end with the takeaway. Select: at most two or three headline numbers,
+not a run of results. This is the wider-audience altitude; write it FIRST.
 
 ## Technical summary
 Written for a specialist / graduate reader already fluent in the field. Assume the
 vocabulary; go deeper than the overview: the actual method and its machinery, the
 key equations or algorithm, complexity/resource claims, the experimental setup and
-results, and where it sits relative to prior work. Precise, not padded.
+results, and where it sits relative to prior work. Precise, not padded — ~500-750
+words. Organize by idea, with a sentence of connecting explanation in each part;
+distill rather than transcribe (summarize a results table as its pattern, keep only
+the equations and numbers that carry the conclusions).
 
 ## Key points
 - Specifics worth remembering (findings, claims, APIs, numbers with units).
@@ -169,6 +175,18 @@ The paper itself is the standard; the **technical summary** is the specialist
 distillation and the **semi-technical overview** is the wider-audience one. A
 non-paper resource (page, slide, image) may collapse these into a single
 `## Summary` when a two-altitude split adds nothing.
+
+**Summary prose is written by Opus.** Summaries written by other models (e.g.
+Fable) have proven accurate but hard to read: overlong, lists of results instead of
+a story, jargon left undefined. So the `## What it is` through `## Relevance` prose
+must come from an Opus-family model. If your own model id (from your system prompt)
+is `claude-opus-*`, write it yourself. Otherwise delegate just the writing: once the
+artifact is stored (Step 5), spawn a subagent with the `Agent` tool and
+`model: opus`, giving it the stored file path, the metadata you gathered, and this
+Step 4 spec; it writes the sections into the companion `.md` and reports its exact
+model id, which goes in `authored_by`. Everything else (fetch, dedup, ids, tags,
+commit) can stay with you. If no Opus model is reachable, write the prose yourself
+to this spec and set `authored_by` truthfully so the record can be redone later.
 
 **Retrieve case** — two files, shared `id` and `slug`:
 - artifact `memory/refs/<id>-<slug>.<ext>` (the downloaded file)
@@ -184,6 +202,7 @@ provenance: human
 contexts: []
 tags: [<topical keywords>, <org:… geo:… facets when pertinent>]  # normalize vs memory/refs/TAGS.md
 discovered_by: <AGENT_ID or operator id>
+authored_by: <exact model id that wrote the summary, e.g. claude-opus-5-5>
 discovered_on: <UTC date>
 artifact: <id>-<slug>.<ext>        # local pointer to the stored file
 source_path: <origin URL>
@@ -195,6 +214,17 @@ retention: permanent-until-superseded
 
 **Pointer-only case** — one file `memory/refs/<id>-<slug>.md`, same header minus
 `artifact` and `source_sha256`, `source_path` = the URL.
+
+**`authored_by` — record which model wrote the prose.** `discovered_by` names the
+node; it does not say which model produced the summary, and summary quality varies
+by model. Set `authored_by` to the exact model id (as given in your system prompt,
+e.g. `claude-opus-5-5`, `claude-fable-5-1`; drop any provider prefix such as
+`us.anthropic.`) of the agent that actually wrote the summary sections — if you delegated the writing to a subagent, use the subagent's
+model, not yours. On the submit path carry it in the submission; the librarian
+keeps it on promotion and replaces it with its own id only if it rewrites the
+summary. A later substantive rewrite updates `authored_by` to the rewriter's model;
+metadata-only edits (tags, `related`, typo fixes) leave it alone. Never guess: if
+the authoring model is unknown (a legacy record), omit the field.
 
 ## Step 5 — write it (per path)
 

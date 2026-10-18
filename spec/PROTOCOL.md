@@ -591,6 +591,7 @@ contexts: [frontier-login]   # WHERE it holds — coarse environment class (scop
 tags: [build, hdf5]          # WHAT it is about — free subject keywords (scopes discovery)
 related: []                  # ids of related library records (record↔record cross-links)
 discovered_by: a7f3c2                # who learned it (agent id, human, session)
+authored_by: claude-opus-5-5         # model id that wrote the record prose, if known
 discovered_on: 2026-07-18
 discovered_in: 20260720T2132-0001    # origin unit of work — a mesh task id or external session id (may be archived/gone)
 source_path: /abs/or/url/of/origin   # where the librarian ingested it from, if any
