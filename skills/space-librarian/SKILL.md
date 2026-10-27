@@ -74,7 +74,10 @@ The three checks, as the script below runs them:
   - absolute per-user paths under the macOS and Linux home roots.
 
   Generic `~/` paths are allowed, and so is an id-shaped example that no bus
-  holds. Values shorter than three characters are skipped.
+  holds. Values shorter than three characters are skipped. Each value
+  matches as a whole word. A hostname or credential key name inside a longer
+  name joined by `-` or `_` passes. An agent id, agent name or task id joined
+  that way does not, as in the bus's own `<task id>-<slug>` file names.
 - **reference** (Markdown records). Every citation must resolve. A citation
   is a value of a front-matter reference field (`related`, `supersedes`,
   `superseded_by`, `discovered_in`), or a qualified cross-space id
@@ -136,12 +139,15 @@ if [ -z "${BUS:-}" ]; then
 fi
 [ -n "$BUS" ] && [ -d "$BUS/agents" ] || BUS=
 
-# profile: real values from the bus and the node, built at run time.
-: > "$W/words"; : > "$W/paths"
+# profile: real values from the bus and the node, built at run time, in three
+# lists by boundary: words (hostnames, credential key names), agents (agent
+# ids and names, inbox names) and tids (mesh task ids).
+: > "$W/words"; : > "$W/agents"; : > "$W/tids"; : > "$W/paths"
 if [ -n "$BUS" ]; then
   for y in "$BUS"/agents/*.yaml; do
     [ -f "$y" ] || continue
-    for k in agent_id agent_name hostname; do val "$k" "$y"; done >> "$W/words"
+    for k in agent_id agent_name; do val "$k" "$y"; done >> "$W/agents"
+    val hostname "$y" >> "$W/words"
     val hostname "$y" | cut -d. -f1 >> "$W/words"
     sed -n -E 's/^credentials_available:[[:space:]]*\[(.*)\].*/\1/p' "$y" |
       tr ',' '\n' >> "$W/words"
@@ -151,9 +157,9 @@ if [ -n "$BUS" ]; then
              >> "$W/paths" ;;
     esac
   done
-  ls "$BUS/tasks" 2>/dev/null | grep -vE '^(roles|\..*)$' >> "$W/words"
+  ls "$BUS/tasks" 2>/dev/null | grep -vE '^(roles|\..*)$' >> "$W/agents"
   find "$BUS/tasks" "$BUS/status" "$BUS/_archive" -type f 2>/dev/null |
-    sed 's#.*/##' | grep -oE '[0-9]{8}T[0-9]{4}-[0-9]{4}' >> "$W/words"
+    sed 's#.*/##' | grep -oE '[0-9]{8}T[0-9]{4}-[0-9]{4}' >> "$W/tids"
 fi
 for h in "$(hostname 2>/dev/null)" "$(uname -n 2>/dev/null)"; do
   printf '%s\n' "$h" "${h%%.*}"
@@ -163,9 +169,17 @@ if [ -f "$HOME/.agent-credentials.env" ]; then
     "$HOME/.agent-credentials.env" >> "$W/words"
 fi
 case "$HOME" in /?*) printf '%s\n' "$HOME" >> "$W/paths" ;; esac
-sed -E 's/^[[:space:]"]+//; s/[[:space:]"]+$//' "$W/words" |
-  grep -E '^.{3,}$' | grep -vE '^(null|~)$' | sort -u | esc |
-  sed 's#.*#(^|[^A-Za-z0-9_-])&([^A-Za-z0-9_-]|$)#' > "$W/profile"
+# A value matches as a whole word. In words, `-` and `_` are word characters,
+# so a label inside a longer name passes. Agent ids and task ids end at any
+# non-alphanumeric character, so `node-<agent id>` and the bus's own
+# `<task id>-<slug>` names match, and a task id also ends at a letter.
+pat() {  # list $1, left boundary class $2, right boundary class $3
+  sed -E 's/^[[:space:]"]+//; s/[[:space:]"]+$//' "$W/$1" |
+    grep -E '^.{3,}$' | grep -vE '^(null|~)$' | sort -u | esc |
+    sed "s#.*#(^|[^$2])&([^$3]|\$)#"
+}
+{ pat words A-Za-z0-9_- A-Za-z0-9_-; pat agents A-Za-z0-9 A-Za-z0-9
+  pat tids A-Za-z0-9 0-9; } > "$W/profile"
 sed -E 's#/+$##' "$W/paths" | grep -E '^/.{2,}' | sort -u | esc |
   sed 's#.*#&([^A-Za-z0-9_.-]|$)#' >> "$W/profile"
 printf '%s\n' '(^|[^A-Za-z0-9_.-])/(Users|home)/[A-Za-z0-9._-]+' >> "$W/profile"
