@@ -87,6 +87,15 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
                                are self-describing (§7)
 /memory/best-practices.user.md deployment-specific rules (guidance overlay);
                                writer: the operator (NOT the librarian — see §7)
+/spaces.yaml                   registry of the memory spaces this bus mounts
+                               (spec/memory-spaces.md §4.3); optional, and
+                               absent means none is mounted, so it needs no
+                               layout bump; writer: the operator
+/spaces/<path>/                one mounted memory space: a submodule that
+                               follows the space repo's main (memory-spaces
+                               §4.2). The mount (.gitmodules entry, gitlink) is
+                               the operator's; the contents are written only by
+                               the space's librarian, in the space's own repo
 /workflows/<workflow-id>.yaml  LIVE multi-step workflow plans, cursor-driven and
                                in-flight; writer: the node that originated it.
                                Distinct from memory/workflows/ (§7), the librarian-
@@ -123,6 +132,8 @@ PRODUCT SUBMODULE (agent-mesh @ recorded pin) — nodes ride the recorded pin
 | `status/<task-id>.json` | the agent that first accepted (claimed) that task |
 | `outbox/<X>/` | X (new files only) |
 | `memory/lore/**` | holder of the `librarian` role |
+| `spaces.yaml` | the operator |
+| `spaces/<path>/` | the mount (its `.gitmodules` entry and gitlink, bumped only as a checkpoint): the operator. The space's contents: the holder of the librarian role `spaces.yaml` names for it, committing and pushing in the space's own repo, never through the bus |
 | `_archive/**` | holder of the `archiver` role |
 | `workflows/<id>.yaml` | the node that originated that workflow |
 | `skills/<name>/` | the operator (instance skill overlay) |
@@ -367,6 +378,7 @@ priority: normal            # low | normal | high
 credentials: [GH_PAT_RESEARCH]   # to: may be role:<role> or a bare agent_id
 depends_on: []
 timeout_min: 120
+project: proj:fvm-vqls      # optional: a project memory space (below)
 ---
 
 ## Goal
@@ -400,6 +412,17 @@ direct send (a reply, or work deliberately pinned to one node). Senders resolve
 roles and holders from `agents/*.yaml` (the `roles` list) and never hardcode a
 machine name. An operator posts to a role with the `mesh-post` command
 (`operator-interface.md`); any node may post to a role queue the same way.
+
+**Project:** `project: proj:<name>` is optional; when present it must match
+`^proj:[a-z0-9][a-z0-9-]*$` and names a project memory space
+(`spec/memory-spaces.md`). It makes the claiming node load that space for the
+executor (memory-spaces §5): the node resolves the space's path from
+`spaces.yaml` (§3), initializes its submodule on first need and pulls its tip.
+If the space is not mounted on this bus, the task ends `blocked` (§6) and its
+status names the project. The executor reads the space and never commits to it;
+what it writes for the space goes back in its result, and the space's librarian
+files it (memory-spaces §6.3). `mesh-post --project <value>` writes the field
+as the line after `timeout_min:` and refuses a value that does not match.
 
 **Replies route to the sender's inbox.** A `reply` (and its `in_reply_to`) is
 written as a new file in `tasks/<original-sender-id>/`, not into the responder's
@@ -850,6 +873,19 @@ allowlist + shared secret), strips the secret before any bus write, and posts th
 same `library.submit` envelope above — it never writes `memory/` itself, so the
 single-writer rule is unchanged. The librarian drains it identically to any other
 submission. Full design in `spec/librarian-email-ingress.md`.
+
+**Memory spaces.** `memory/` is this mesh's own library, and the categories
+above govern it. A bus may also mount **memory spaces**: git repos of
+self-describing records, each declaring its owner, visibility, writer model,
+reference policy and its own categories in a `space.yaml`, mounted as
+submodules under `spaces/` and listed in `spaces.yaml` (§3). Every space has
+exactly one librarian per mesh, its only mesh writer, and one librarian may
+manage several spaces; it files each record in the space's own repo and
+refuses one that breaks the space's header profile, reference policy or id
+rules. Today the mounted spaces are project spaces (`proj:<name>`), loaded by a
+session on request or by a task's `project:` field (§5). `memory/` stays where
+it is until it is split into core and lore spaces (memory-spaces §9). The
+design, and which parts of it are implemented, is in `spec/memory-spaces.md`.
 
 ---
 

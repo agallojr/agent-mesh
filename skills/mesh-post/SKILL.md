@@ -25,7 +25,8 @@ You supply (judgment the script can't do):
 - **body** — a markdown file with Goal / Context / Done when / On failure (for a
   `query`, Goal + Context is enough). Inline every path, commit, branch, prior
   result, and lore id the reader needs. This is the intelligence; write it well.
-- **target(s), type, title** — and optionally priority, timeout, credentials.
+- **target(s), type, title** — and optionally priority, timeout, credentials,
+  and the project memory space the task works in (`--project`).
 
 The script does (every mechanical, error-prone part — do NOT do these by hand):
 - resolves `from` (AGENT_ID from `~/.agent-identity.env`, else `op-main`) and the
@@ -35,7 +36,9 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
   avoids every id already used this minute in any target queue, in `status/`, and
   earlier in the same run — so fanning one task out to N targets yields N distinct
   ids (status files are keyed by id in one global namespace, so shared ids collide);
-- emits the §5 frontmatter and places each file in the right queue;
+- emits the §5 frontmatter (with `project:` as the line after `timeout_min:`
+  when `--project` is given, and no `project:` line otherwise) and places each
+  file in the right queue;
 - **scope-commits only the files it wrote** (never `git add -A`), with a plain-text
   message, and pushes with up to 3 pull-rebase retries.
 
@@ -58,8 +61,9 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
    `task.request` | `query` | `reply` | `task.cancel` | `library.submit` | …;
    `--title` is a kebab-case slug; optional `--priority low|normal|high` (default
    normal), `--timeout-min N` (default 120), `--credentials K1,K2` (KEY NAMES only,
-   never values), `--depends-on id1,id2`, `--from <id>`, `--repo <path>`. Add
-   `--dry-run` to write + stage without commit/push when you want to inspect first.
+   never values), `--depends-on id1,id2`, `--project proj:<name>`, `--from <id>`,
+   `--repo <path>`. Add `--dry-run` to write + stage without commit/push when you
+   want to inspect first.
 
 3. Report to the user in one line per target: the target, the assigned id, and the
    file path — and that they will see the outcome (status/reply) on their next
@@ -69,6 +73,15 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
 
 ## Notes
 
+- **`--project` loads a project space for the executor.** Give it when the task
+  works in a project memory space: `--project proj:<name>`, matching
+  `^proj:[a-z0-9][a-z0-9-]*$`. The claiming node loads that space for its
+  executor (PROTOCOL §5, `spec/memory-spaces.md` §5). The script checks the
+  value while it reads its arguments, before it looks at the repo, so an
+  invalid value exits 1 with `mesh-post: invalid --project value: <value>` and
+  writes no message. The space must be mounted on the bus (`spaces.yaml`);
+  posting does not check that, and a claiming node that cannot find it blocks
+  the task.
 - **Type tells the consumer what it is.** `task.request`/`query`/`task.cancel` are
   claimable work (get a `status/<id>.json`); `library.submit` is drained by the
   librarian and gets no status; `reply` is information the recipient just surfaces.

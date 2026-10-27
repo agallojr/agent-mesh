@@ -11,11 +11,17 @@
 #                --to <target> [--to <target> ...] \
 #                [--priority low|normal|high] [--timeout-min N] \
 #                [--credentials K1,K2] [--depends-on id1,id2] \
+#                [--project proj:<name>] \
 #                [--from <id>] [--repo <path>] [--dry-run]
 #
 #   <target>  role:<role>  -> tasks/roles/<role>/   (any holder claims it)
 #             <agent_id>   -> tasks/<agent_id>/     (direct inbox: reply / pin)
 #   --type    task.request | task.cancel | query | reply | library.submit | ...
+#   --project optional project memory space, proj:<name> matching
+#             ^proj:[a-z0-9][a-z0-9-]*$; written as the line after timeout_min:
+#             and the claiming node loads that space for the executor
+#             (PROTOCOL section 5, spec/memory-spaces.md). Checked in the
+#             argument loop; an invalid value exits 1 and writes nothing.
 #   --dry-run write files + stage, but do NOT commit or push (prints what it did)
 #
 # Identity: --from wins; else AGENT_ID from ~/.agent-identity.env; else op-main.
@@ -36,8 +42,21 @@ set -uo pipefail
 
 die() { echo "mesh-post: $*" >&2; exit 1; }
 
+# True if $1 matches ^proj:[a-z0-9][a-z0-9-]*$. Explicit character lists, not
+# ranges, so the match does not depend on the locale's collation order.
+valid_project() {
+  case "$1" in
+    proj:[abcdefghijklmnopqrstuvwxyz0123456789]*) ;;
+    *) return 1 ;;
+  esac
+  case "${1#proj:}" in
+    *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) return 1 ;;
+  esac
+  return 0
+}
+
 TYPE=""; TITLE=""; BODY_FILE=""; PRIORITY="normal"; TIMEOUT_MIN="120"
-CREDS=""; DEPENDS=""; FROM=""; REPO=""; DRYRUN=0
+CREDS=""; DEPENDS=""; FROM=""; REPO=""; DRYRUN=0; PROJECT=""
 TARGETS=""   # newline-separated
 
 while [ $# -gt 0 ]; do
@@ -50,6 +69,8 @@ while [ $# -gt 0 ]; do
     --timeout-min) TIMEOUT_MIN="$2"; shift 2 ;;
     --credentials) CREDS="$2"; shift 2 ;;
     --depends-on)  DEPENDS="$2"; shift 2 ;;
+    --project)     valid_project "${2-}" || die "invalid --project value: ${2-}"
+                   PROJECT="$2"; shift 2 ;;
     --from)        FROM="$2"; shift 2 ;;
     --repo)        REPO="$2"; shift 2 ;;
     --dry-run)     DRYRUN=1; shift ;;
@@ -175,6 +196,9 @@ while IFS= read -r TARGET; do
     echo "credentials: $CRED_YAML"
     echo "depends_on: $DEP_YAML"
     echo "timeout_min: $TIMEOUT_MIN"
+    if [ -n "$PROJECT" ]; then
+      echo "project: $PROJECT"
+    fi
     echo "---"
     echo ""
     cat "$BODY_FILE"

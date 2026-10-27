@@ -1,0 +1,7 @@
+# Memory spaces this bus mounts (product/spec/memory-spaces.md section 4.3).
+# The operator writes this file; no agent edits it. An empty list, or no file
+# at all, means no spaces are mounted. To mount a space, add its submodule by
+# hand under spaces/ (memory-spaces section 8), then one entry per space:
+#   - {id: proj:<name>, path: spaces/proj-<name>, access: rw, librarian: librarian}
+# access is ro or rw; librarian is the role that files records into the space.
+spaces: []
