@@ -57,7 +57,7 @@ caller, not a result line.
 
 ## 1. Check each record
 
-The three checks, as the script below runs them:
+The three checks, as the check script `check.sh` runs them:
 
 - **profile.** No real hostname, agent id, mesh task id or credential key
   name, and no home path, anywhere in the file. Real values come from the bus
@@ -106,11 +106,12 @@ The three checks, as the script below runs them:
   file per event, so a record there whose path is already on `origin/main`
   with other content is refused as `id`.
 
-Copy the script into a file in a scratch directory outside the space, never
-inside it, and run it with `sh`:
+The script is `check.sh`, shipped beside this file in the skill's directory,
+`<skill dir>`. Run that file with `sh` as it ships; never copy it into the
+space or rebuild it by hand:
 
 ```
-SPACE=<space root> sh <script file> <space path> ...
+SPACE=<space root> sh <skill dir>/check.sh <space path> ...
 ```
 
 Set `BUS=<bus root>` to name the bus. It prints `REFUSED ...` for a record
@@ -120,195 +121,6 @@ output. The script is POSIX `sh`, and its patterns are `grep -E`, `sed -E`
 and POSIX `awk` (no `grep -P`, no GNU-only flag), so it runs unchanged with
 BSD and GNU tools. The value lists it builds stay in its own temporary
 directory, which it deletes on exit.
-
-```sh
-: "${SPACE:?set SPACE to the space root}"
-SPACE=${SPACE%/}
-W=$(mktemp -d) || exit 2
-trap 'rm -rf "$W"' EXIT
-esc() { sed -e 's#[[\.*^$+?(){}|]#\\&#g'; }
-val() { sed -n -E "s/^$1:[[:space:]]*\"?([^\"#[:space:]]+).*/\\1/p" "$2"; }
-
-# The bus: given, else the space's superproject, else the node's REPO_PATH.
-if [ -z "${BUS:-}" ]; then
-  BUS=$(git -C "$SPACE" rev-parse --show-superproject-working-tree 2>/dev/null)
-  [ -n "$BUS" ] && [ -d "$BUS/agents" ] || BUS=
-  if [ -z "$BUS" ] && [ -f "$HOME/.agent-identity.env" ]; then
-    BUS=$(sed -n -E 's/^REPO_PATH=["]?([^"#[:space:]]+).*/\1/p' \
-      "$HOME/.agent-identity.env" | head -n 1)
-  fi
-fi
-[ -n "$BUS" ] && [ -d "$BUS/agents" ] || BUS=
-
-# profile: real values from the bus and the node, built at run time, in three
-# lists by boundary: words (hostnames, credential key names), agents (agent
-# ids and names, inbox names) and tids (mesh task ids).
-: > "$W/words"; : > "$W/agents"; : > "$W/tids"; : > "$W/paths"
-if [ -n "$BUS" ]; then
-  for y in "$BUS"/agents/*.yaml; do
-    [ -f "$y" ] || continue
-    for k in agent_id agent_name; do val "$k" "$y"; done >> "$W/agents"
-    val hostname "$y" >> "$W/words"
-    val hostname "$y" | cut -d. -f1 >> "$W/words"
-    sed -n -E 's/^credentials_available:[[:space:]]*\[(.*)\].*/\1/p' "$y" |
-      tr ',' '\n' >> "$W/words"
-    c=$(val cwd "$y" | sed -E 's#/+$##')
-    case "$c" in
-      /?*) printf '%s\n' "$c" "$(printf '%s\n' "$c" | cut -d/ -f1-3)" \
-             >> "$W/paths" ;;
-    esac
-  done
-  ls "$BUS/tasks" 2>/dev/null | grep -vE '^(roles|\..*)$' >> "$W/agents"
-  find "$BUS/tasks" "$BUS/status" "$BUS/_archive" -type f 2>/dev/null |
-    sed 's#.*/##' | grep -oE '[0-9]{8}T[0-9]{4}-[0-9]{4}' >> "$W/tids"
-fi
-for h in "$(hostname 2>/dev/null)" "$(uname -n 2>/dev/null)"; do
-  printf '%s\n' "$h" "${h%%.*}"
-done >> "$W/words"
-if [ -f "$HOME/.agent-credentials.env" ]; then
-  sed -n -E 's/^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' \
-    "$HOME/.agent-credentials.env" >> "$W/words"
-fi
-case "$HOME" in /?*) printf '%s\n' "$HOME" >> "$W/paths" ;; esac
-# A value matches as a whole word. In words, `-` and `_` are word characters,
-# so a label inside a longer name passes. Agent ids and task ids end at any
-# non-alphanumeric character, so `node-<agent id>` and the bus's own
-# `<task id>-<slug>` names match, and a task id also ends at a letter.
-pat() {  # list $1, left boundary class $2, right boundary class $3
-  sed -E 's/^[[:space:]"]+//; s/[[:space:]"]+$//' "$W/$1" |
-    grep -E '^.{3,}$' | grep -vE '^(null|~)$' | sort -u | esc |
-    sed "s#.*#(^|[^$2])&([^$3]|\$)#"
-}
-{ pat words A-Za-z0-9_- A-Za-z0-9_-; pat agents A-Za-z0-9 A-Za-z0-9
-  pat tids A-Za-z0-9 0-9; } > "$W/profile"
-sed -E 's#/+$##' "$W/paths" | grep -E '^/.{2,}' | sort -u | esc |
-  sed 's#.*#&([^A-Za-z0-9_.-]|$)#' >> "$W/profile"
-printf '%s\n' '(^|[^A-Za-z0-9_.-])/(Users|home)/[A-Za-z0-9._-]+' >> "$W/profile"
-
-# reference: this space's id and its may_reference list.
-SID=$(val id "$SPACE/space.yaml" | head -n 1)
-awk '/^may_reference:/ {
-       s = $0; sub(/^may_reference:[ \t]*/, "", s); sub(/[ \t]*#.*$/, "", s)
-       if (s != "") { gsub(/\[|\]|[ \t"]/, "", s); n = split(s, a, ",")
-                      for (i = 1; i <= n; i++) if (a[i] != "") print a[i]; exit }
-       blk = 1; next }
-     blk && /^[ \t]*-/ { s = $0; sub(/^[ \t]*-[ \t]*/, "", s)
-                         sub(/[ \t]*#.*$/, "", s); gsub(/"/, "", s); print s; next }
-     blk { exit }' "$SPACE/space.yaml" > "$W/mayref"
-QID='(^|[^A-Za-z0-9_.:/-])(core|lore|lore:[a-z0-9][a-z0-9-]*|proj:[a-z0-9][a-z0-9-]*)'
-QID="$QID"'/([a-z][a-z0-9]*-)?[0-9]{8}[A-Za-z0-9-]*(@[0-9a-f]+)?'
-
-idof() {  # "<line> <id>" from a record's front-matter on stdin
-  awk 'NR == 1 { if ($0 != "---") exit; next }
-       $0 == "---" { exit }
-       /^id:/ { x = $0; sub(/^id:[ \t]*/, "", x); sub(/[ \t]+#.*$/, "", x)
-                gsub(/"/, "", x); print NR, x; exit }'
-}
-holders() {  # files in the space named by id $1, or with id: $1
-  find "$SPACE" -name .git -prune -o -type f -name "$1*" -print
-  find "$SPACE" -name .git -prune -o -type f -name '*.md' \
-    -exec grep -lE "^id:[[:space:]]*\"?$1\"?[[:space:]]*\$" {} +
-}
-chg() {  # the folder of change $1, live or archived
-  if [ -d "$SPACE/changes/$1" ]; then echo "$SPACE/changes/$1"; return; fi
-  for d in "$SPACE"/changes/archive/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-"$1"
-  do [ -d "$d" ] && echo "$d" && return; done
-}
-resolve() {  # true if citation $1 resolves
-  c=$1
-  case "$c" in *://*) return 0 ;; esac
-  c=${c%%@*}
-  case "$c" in
-    core/*|lore/*|lore:*/*|proj:*/*)
-      s=${c%%/*}; c=${c#*/}
-      if [ "$s" != "$SID" ]; then
-        grep -qE "^$(printf '%s\n' "$s" | esc)\$" "$W/mayref"; return
-      fi ;;
-  esac
-  if printf '%s\n' "$c" | grep -qE '^([a-z][a-z0-9]*-)?[0-9]{8}[A-Za-z0-9-]*$'
-  then [ -n "$(holders "$c")" ]; return; fi
-  if printf '%s\n' "$c" | grep -qE '^[a-z0-9][a-z0-9-]*/T[0-9]+$'; then
-    t=${c##*/}; d=$(chg "${c%/*}")
-    [ -n "$d" ] && grep -qE \
-      "^(#+[[:space:]]+$t([[:space:]:]|\$)|\|[[:space:]]*$t[[:space:]]*\|)" \
-      "$d/plan.md" 2>/dev/null
-    return
-  fi
-  printf '%s\n' "$c" | grep -qE '^[a-z0-9][a-z0-9-]*$' && [ -n "$(chg "$c")" ]
-}
-refs() {  # "<line> <citation>" for each citation in record $1
-  awk 'function emit(x) { gsub(/^[ \t"]+|[ \t"]+$/, "", x)
-                          if (x != "" && x != "null" && x != "~") print NR, x }
-       NR == 1 { if ($0 != "---") exit; next }
-       $0 == "---" { exit }
-       /^(related|supersedes|superseded_by|discovered_in):/ {
-         x = $0; sub(/^[a-z_]+:/, "", x); sub(/[ \t]+#.*$/, "", x)
-         blk = (x ~ /^[ \t]*$/); gsub(/\[|\]/, "", x)
-         n = split(x, a, ","); for (i = 1; i <= n; i++) emit(a[i]); next }
-       blk && /^[ \t]+-[ \t]/ { x = $0; sub(/^[ \t]+-[ \t]+/, "", x)
-                                sub(/[ \t]+#.*$/, "", x); emit(x); next }
-       { blk = 0 }' "$1"
-  awk 'NR == 1 && $0 == "---" { fm = 1; print ""; next }
-       fm { if ($0 == "---") fm = 0; print ""; next }
-       /^[ \t]*(```|~~~)/ { fence = !fence; print ""; next }
-       fence { print ""; next }
-       /^[ \t]*$/ { code = 0 }
-       { out = ""; s = $0
-         while ((i = index(s, "`")) > 0) {
-           if (!code) out = out substr(s, 1, i - 1)
-           code = !code; s = substr(s, i + 1) }
-         if (!code) out = out s
-         print out }' "$1" |
-    grep -noE "$QID" | sed -E 's/^([0-9]+):[^a-z]?/\1 /'
-}
-
-BASE=HEAD
-if git -C "$SPACE" rev-parse -q --verify origin/main >/dev/null 2>&1; then
-  BASE=origin/main
-fi
-for r in "$@"; do
-  r=${r#./}; f=$SPACE/$r
-  if [ ! -f "$f" ]; then echo "no such record: $r" >&2; continue; fi
-  # profile
-  n=$(grep -naE -f "$W/profile" "$f" | head -n 1 | cut -d: -f1)
-  if [ -n "$n" ]; then echo "REFUSED $r: profile line $n"; continue; fi
-  case "$r" in *.md) ;; *) echo "CHECKED $r"; continue ;; esac
-  # reference
-  n=$(refs "$f" | sort -n | while read -r ln c; do
-        resolve "$c" || { echo "$ln"; break; }
-      done)
-  if [ -n "$n" ]; then echo "REFUSED $r: reference line $n"; continue; fi
-  # id
-  x=$(idof < "$f"); n=${x%% *}; id=${x#* }
-  if [ -z "$x" ]; then
-    case "$r" in
-      decisions/*.md|handoffs/*.md) id=$(basename "$r" .md); n=1 ;;
-    esac
-  fi
-  if [ -n "$id" ]; then
-    form='[a-z][a-z0-9]*-[0-9]{8}T[0-9]{4}Z-[0-9a-f]{4}'; ev=0
-    case "$r" in
-      changes/*/evidence/*) ev=1
-        form="$form|ev-[0-9]{8}T[0-9]{4}Z(-T[0-9]+[a-z])?" ;;
-      decisions/*|handoffs/*) ev=1
-        form="$form|[0-9]{8}T[0-9]{4}Z-[a-z0-9][a-z0-9-]*" ;;
-    esac
-    if git -C "$SPACE" cat-file -e "$BASE:$r" 2>/dev/null; then
-      if [ "$ev" = 1 ]; then
-        git -C "$SPACE" diff --quiet "$BASE" -- "$r" ||
-          { echo "REFUSED $r: id line $n"; continue; }
-        echo "CHECKED $r"; continue
-      fi
-      o=$(git -C "$SPACE" show "$BASE:$r" | idof)
-      if [ "${o#* }" = "$id" ]; then echo "CHECKED $r"; continue; fi
-    fi
-    if ! printf '%s\n' "$id" | grep -qE "^($form)\$" ||
-       holders "$id" | grep -vxE "$(printf '%s\n' "$f" | esc)" | grep -q .
-    then echo "REFUSED $r: id line $n"; continue; fi
-  fi
-  echo "CHECKED $r"
-done
-```
 
 ## 2. Commit, push, confirm
 
