@@ -126,6 +126,32 @@ librarian's queue; the librarian validates it, assigns an id, and promotes it
 into `memory/<category>/`. Records are small text — heavy payloads stay outside
 the bus and are referenced by pointer.
 
+## Project spaces
+
+`memory/` is this mesh's own library. A bus may also mount **memory spaces**:
+separate git repos of records, each with its own owner, visibility, writer and
+reference rules. A **project space** (`proj:<name>`) holds everything a
+project's participants need to continue the work. The operator mounts one by
+hand, as a submodule under `spaces/` listed in `spaces.yaml`, and a node clones
+it only when something first needs it. A session loads it with
+`load <project>` (the `mesh-load` skill), and a task loads it for its executor
+through the task's `project:` field (`mesh-post --project`). Each space has one
+writer, its librarian: the `space-librarian` skill checks every record's
+profile, references and id, then commits it and pushes it to the space's
+`main`. Without a bus, a session runs the same skill as its own librarian. The
+files a task returns in its result (`files:`) reach the space through that
+librarian too. The design, and which parts this version implements, is in
+[`spec/memory-spaces.md`](spec/memory-spaces.md). The protocol side is in
+[`spec/PROTOCOL.md`](spec/PROTOCOL.md) §3 and §5, and how to mount a space is
+in [`docs/operator-manual.md`](docs/operator-manual.md) §8.
+
+The **SWE Pod**, a spec-driven process for software changes that keeps its
+records in a project space, adds six roles: `swe.spec`, `swe.plan`,
+`swe.lead`, `swe.build`, `swe.test` and `swe.review`. They are
+per-task-output roles (PROTOCOL §2), so any number of nodes may hold each. A
+node takes one by adding it to `AGENT_ROLES` in its identity file; the
+protocol, the guidance and the poller treat them like any other role.
+
 ## Customizing a deployment — the overlays
 
 The product is generic; a deployment personalizes it **in the bus**, never by
@@ -169,7 +195,7 @@ editing product files. Two overlay points:
 | Path | Role |
 |---|---|
 | `spec/` | The protocol definition (`PROTOCOL.md`) — the normative reference. |
-| `skills/` | The `mesh-on` / `mesh-off` / `mesh-post` / `mesh-check` / `mesh-ref` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
+| `skills/` | The `mesh-on` / `mesh-off` / `mesh-post` / `mesh-check` / `mesh-ref` / `mesh-load` / `space-librarian` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
 | `hooks/` | `git-gate.py` (path-scoped git gate + blob rejection), its settings snippet, and the allowlist template. |
 | `templates/` | `*.env.template` files copied to `$HOME` and filled in per node (never committed). |
 | `guidance/` | `best-practices.base.md` (universal, self-contained), `agent-operating.md`, `permissions.md`, `operator-interface.md`, and a product-side `CLAUDE.md`. |
