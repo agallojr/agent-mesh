@@ -71,6 +71,10 @@ unparseable. Keep commit messages to plain words and simple punctuation:
 - `memory/lore/**` is writable only if you hold the `librarian` role; `_archive/**`
   only if you hold `archiver`; a `workflows/<id>.yaml` record only for a workflow
   YOU originated. Hold none of those roles and you write none of those paths.
+- `spaces.yaml`, `.gitmodules` and the gitlinks under `spaces/` are the
+  operator's: never write them. Inside a space's checkout you write nothing
+  unless `spaces.yaml` names a librarian role you hold for that space
+  (`guidance/agent-operating.md`, librarian duty).
 
 ## The loop
 
@@ -93,11 +97,17 @@ until stop (see "Stopping" below):
    choose pin mode vs tip mode. If «MESH_PRODUCT_TRACK» is empty, just omit the
    prefix (plain invocation = pin mode). `«SKILL_DIR»` is the directory this
    prompt lives in (the bus's `product/skills/mesh-on/`); the spawning agent gives
-   you its literal path. The script pulls the repo (`pull --rebase` + `submodule
-   update --init --recursive`, both read-only and ungated — in **pin mode** it
-   realizes the product commit the bus records; in **tip mode**
+   you its literal path. The script pulls the repo: `pull --rebase`, then one
+   `submodule update` per submodule that `.gitmodules` lists, all read-only and
+   ungated. Each submodule not under `spaces/` gets `--init --recursive`: in
+   **pin mode** it realizes the commit the bus records; in **tip mode**
    (`MESH_PRODUCT_TRACK=tip`) it adds `--remote` to track
-   `submodule.product.branch`), scans every `«REPO»/tasks/roles/<role>/*.md` for
+   `submodule.<name>.branch`. Each memory space under `spaces/` that this node
+   has already cloned gets `--remote --merge`, so it follows the tip of its
+   branch. A space not yet cloned is left alone; you clone it only when a task
+   needs it (step 4b2). `MESH_SCAN_LIST=1 «SKILL_DIR»/mesh-scan-loop.sh «REPO»`
+   prints the paths a cycle updates, one per line, and exits 0 before any pull.
+   The script then scans every `«REPO»/tasks/roles/<role>/*.md` for
    your roles plus your inbox `«REPO»/tasks/«AGENT_ID»/*.md`, and **blocks —
    sleeping `POLL_SEC` and re-pulling — until there is something to do or the
    idle deadline hits.** While it blocks you are parked on this one tool call and
@@ -184,6 +194,35 @@ rejection, follow the conflict-handling rule below.
       present in the environment / `~/.agent-credentials.env`. If any is missing:
       write status `blocked` naming the missing KEY NAMES (never values), sync,
       and move to the next task.
+   b2. **Load the task's project space, if it names one** (PROTOCOL §5,
+      memory-spaces §5). If the task's front-matter has
+      `project: proj:<name>`, load that space for the executor before it runs:
+      - Resolve its path from `«REPO»/spaces.yaml`: the one-line entry whose
+        `id:` is `proj:<name>` gives `path:`, as step 2 of
+        `«SKILL_DIR»/../mesh-load/SKILL.md` does. The space is mounted only if
+        that entry exists and `«REPO»/.gitmodules` has a submodule at that
+        path. A value that does not match `^proj:[a-z0-9][a-z0-9-]*$` is never
+        mounted.
+      - **Not mounted** (no `spaces.yaml`, no entry, or no submodule at its
+        path): write status `blocked` with `error` set to
+        `NOT MOUNTED proj:<name>`, so the status names the project. Sync, and
+        move to the next task. Do not mount it yourself: mounting is the
+        operator's step, by hand, and loading never changes the bus.
+      - **Mounted:** clone it on first need, then pull its tip. Run the first
+        command only if `«REPO»/<path>/.git` does not exist:
+
+        ```
+        git -C «REPO» submodule update --init -- <path>
+        git -C «REPO» submodule update --remote --merge -- <path>
+        ```
+
+        Both are read-only on the bus: they change only the space's checkout
+        and `«REPO»/.git`, and no add, commit or push follows them. If either
+        fails (this node cannot read the space's repo, say), write status
+        `blocked` with `error` naming the project and saying the space could
+        not be cloned or pulled on this node. Sync, and move to the next task.
+      - Keep the space's literal absolute path, `«REPO»/<path>`, for the
+        executor's prompt (see "Dispatching an executor").
    c. Write status `running`, sync.
    d. **Dispatch an executor sub-subagent** (see below) and wait for it. There is
       NO periodic heartbeat write while it runs — the `accepted`/`running` writes
@@ -262,6 +301,15 @@ result. Then: you are executing one mesh task. Do the work. Do NOT touch git or
 status files — the poller owns those. Return a concise structured result: what you
 did, whether done-when is satisfied, artifact pointers (URLs/paths/job-ids, never
 payloads), and any durable lesson learned. Never emit a credential value anywhere."
+
+**A task with `project:`** also gets these lines in the executor's prompt, with
+the values from step 4b2 filled in: "The project space `proj:<name>` is loaded
+for this task at `«REPO»/<path>`. You may read and search it. Never write,
+stage, commit or push in it: the space's librarian is its only writer. Anything
+you produce for the space, return to me as files, each with its path relative
+to the space root and its full text; never write it into the space checkout. It
+goes back in the task result's `files:` list, and the space's librarian files
+it (memory-spaces §6.3)."
 
 Keeping execution in a sub-subagent is what keeps YOUR context bounded across many
 cycles — do not execute tasks inline yourself.

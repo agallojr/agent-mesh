@@ -13,6 +13,8 @@
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
 #        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 540 (9 min — safely
 #        under the 10-min Bash tool ceiling). 0 disables the IDLE deadline.
+#        MESH_SCAN_LIST=1 mesh-scan-loop.sh <REPO> prints the submodule paths a
+#        cycle would update, one per line, and exits 0 before any pull or write.
 # Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks, fresh replies, and/or
 #                                          undrained library.submits (librarian)
 #        2 + "STOP"                     -> ~/.mesh-stop present
@@ -20,8 +22,13 @@
 #        4 + "STALE_PRODUCT\n<bus> <prod>" -> BUS_LAYOUT > product LAYOUT_VERSION
 #        5 + "IDLE"                     -> no work within MAX_WAIT_SEC; re-park
 #
-# Pin mode (default): the submodule update realizes the recorded product pin.
-# Developer mode (MESH_PRODUCT_TRACK=tip): it adds --remote to track product tip.
+# Submodules are read from .gitmodules. Each one not under spaces/ is updated
+# as before. Pin mode (default): the update realizes the recorded pin.
+# Developer mode (MESH_PRODUCT_TRACK=tip): it adds --remote to track the tip.
+# A memory space (spaces/*, product/spec/memory-spaces.md §4.2) is updated only
+# once this node has initialized it (<path>/.git exists), always with
+# --remote --merge so it follows the space's branch tip. The scanner never
+# initializes a space: mesh-load or the poller clones it on first need.
 #
 # Portable across macOS and Linux: verified under bash 3.2 (macOS default) as
 # well as bash 4/5, and uses only POSIX-safe sed/grep/git/sleep (BSD and GNU
@@ -29,7 +36,25 @@
 # than 3.2.
 set -uo pipefail
 
-REPO="${1:?repo path}"; ROLES="${2:?roles csv}"; AGENT_ID="${3:?agent id}"
+REPO="${1:?repo path}"
+
+update_paths() {  # submodule paths a cycle updates, one per line, file order
+  git config -f "$REPO/.gitmodules" --get-regexp '^submodule\..*\.path$' \
+    2>/dev/null | while read -r _ p; do
+      case "$p" in
+        spaces/*) [ -e "$REPO/$p/.git" ] || continue ;;  # not yet cloned here
+      esac
+      printf '%s\n' "$p"
+    done
+}
+
+# List mode: report the update set and stop, before any pull or file write.
+if [ "${MESH_SCAN_LIST:-}" = 1 ]; then
+  update_paths
+  exit 0
+fi
+
+ROLES="${2:?roles csv}"; AGENT_ID="${3:?agent id}"
 POLL="${4:-240}"
 MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-540}}"
 # Wake-once ledger: one path per line for edge-triggered items that never get a
@@ -59,13 +84,26 @@ while :; do
 
   # read-only, ungated; failures are transient -> keep looping
   git -C "$REPO" pull --rebase --quiet 2>/dev/null || true
-  # pin mode by default; --remote only in developer mode (MESH_PRODUCT_TRACK=tip)
-  if [ "${MESH_PRODUCT_TRACK:-}" = tip ]; then
-    git -C "$REPO" submodule update --init --remote --recursive --quiet \
-      2>/dev/null || true
-  else
-    git -C "$REPO" submodule update --init --recursive --quiet 2>/dev/null || true
-  fi
+  # One submodule per call, so one bad path never blocks the rest. stdin is
+  # /dev/null so git cannot read the path list the loop is iterating.
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in
+      spaces/*)  # initialized space: follow its branch tip, keep local commits
+        git -C "$REPO" submodule update --remote --merge --quiet -- "$p" \
+          </dev/null 2>/dev/null || true ;;
+      *)  # pin mode by default; --remote only when MESH_PRODUCT_TRACK=tip
+        if [ "${MESH_PRODUCT_TRACK:-}" = tip ]; then
+          git -C "$REPO" submodule update --init --remote --recursive --quiet \
+            -- "$p" </dev/null 2>/dev/null || true
+        else
+          git -C "$REPO" submodule update --init --recursive --quiet -- "$p" \
+            </dev/null 2>/dev/null || true
+        fi ;;
+    esac
+  done <<EOF
+$(update_paths)
+EOF
 
   # layout check: bus stamp vs product's expected layout (unstamped -> 0)
   BUS=$(cat "$REPO/BUS_LAYOUT" 2>/dev/null || echo 0)

@@ -50,6 +50,7 @@ construction, not resolved after the fact.
 | new files under `tasks/roles/<role>/` and `tasks/<other-id>/` (to send work, including a `library.submit` into `tasks/roles/librarian/`) | files in your own inbox `tasks/<your-id>/` |
 | — | `memory/lore/**` unless you hold the `librarian` role |
 | `_archive/**` only if you hold the `archiver` role | the `product/` gitlink and `.gitmodules` (operator only — never touch the product pin) |
+| inside `spaces/<path>/` only as that space's librarian (below), in the space's own repo | `spaces.yaml` and the `spaces/` gitlinks (operator only); any space you are not the librarian of |
 
 You may post work to any role queue (`tasks/roles/<role>/`) or to another node's
 direct inbox — node-to-node addressing is supported; there is no hub to route
@@ -66,12 +67,17 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `skills/mesh-on/mesh-scan-loop.sh` (portable bash 3.2+, macOS and Linux) as ONE
    synchronous call and block on it — never as a background call, which is not
    guaranteed to survive the end of a turn and silently takes the node off the
-   mesh. It loops internally — `pull --rebase` +
-   `submodule update --init --recursive` (both read-only, ungated; **pin mode** is
-   the default — realize the product commit the bus records — and only
-   `MESH_PRODUCT_TRACK=tip` adds `--remote` to track product `main`, for the
-   maintainer's own mesh), scan `tasks/roles/<role>/` for each role in
-   `AGENT_ROLES` plus your inbox `tasks/<your-id>/`, sleep, repeat — and exits ONLY
+   mesh. It loops internally — `pull --rebase`, then one `submodule update` per
+   submodule in `.gitmodules` (all read-only, ungated): `--init --recursive` for
+   each one not under `spaces/` (**pin mode** is the default — realize the
+   commit the bus records — and only `MESH_PRODUCT_TRACK=tip` adds `--remote`
+   to track `main`, for the maintainer's own mesh), and `--remote --merge` for
+   each memory space under `spaces/` that this node has already cloned, so it
+   follows the space's tip. The scanner never clones a space; that happens on
+   first need (step 4). `MESH_SCAN_LIST=1` with the repo path prints the paths
+   a cycle updates and exits before any pull. Then it scans
+   `tasks/roles/<role>/` for each role in `AGENT_ROLES` plus your inbox
+   `tasks/<your-id>/`, sleeps, and repeats — and exits ONLY
    when it finds a claimable task / fresh reply (`WORK` + paths), `~/.mesh-stop`
    exists (`STOP`), the idle deadline hits (`IDLE`, ~9 min — re-park immediately),
    or the bus layout drifts from the product's expected layout
@@ -96,7 +102,16 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    separate heartbeat. (A direct-inbox task has one consumer and never contends.)
 4. Verify every credential **name** the task lists is present in your env. If
    any is missing, set status `blocked`, report the missing **names** (never a
-   value), move on.
+   value), move on. Then, if the task carries `project: proj:<name>`, load
+   that space for the executor (PROTOCOL §5; the poller's step 4b2). Resolve
+   its path from `spaces.yaml`. If it is not mounted (no entry, or no
+   submodule at the entry's path), set status `blocked` with the error
+   `NOT MOUNTED proj:<name>` and move on; never mount it yourself. Otherwise
+   clone it on first need (`submodule update --init -- <path>`) and pull its
+   tip (`submodule update --remote --merge -- <path>`), both read-only on the
+   bus. The executor gets the space's path, may read it, and never writes or
+   commits there; what it produces for the space comes back as files in its
+   result, for the space's librarian to file.
 4a. **Recall the library before executing.** Before you do the work, scan
    `memory/` — `lore/` above all (verified gotchas), plus `runs/` (has this been
    done?) and `notes/` when apt — for records whose `contexts` include your
@@ -187,6 +202,16 @@ them ONLY if that role is in your `AGENT_ROLES`:
   referenced by pointer; never copy a blob into memory. An unstaffed queue
   accumulating until a librarian runs is correct, not a fault. Shared-output role:
   run exactly one holder (unenforced — two holders can collide on the same file).
+  **Memory spaces.** The duty extends to every space that `spaces.yaml`
+  assigns to a librarian role you hold: each entry with `access: rw` whose
+  `librarian:` is that role (`librarian` by default, or a `librarian.<label>`
+  role when the operator manages some spaces from another node). You are that
+  space's only mesh writer. File every record into it through the
+  `space-librarian` skill, which checks the record's header profile,
+  references and id, makes one commit per record in the space's own repo and
+  pushes to the space's `main`, never through the bus. Never write an
+  `access: ro` space. Your node is the only one that holds push credentials
+  for the spaces you file (memory-spaces §6.3).
 - **`archiver`** — sole writer of `_archive/**`. Run the retention sweep
   (PROTOCOL.md §9): sweep each aged task **as a unit** — its message, its terminal
   `status/<id>.json`, and its `outbox/<id>/<id>-result.md` moved together in one

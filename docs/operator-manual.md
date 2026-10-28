@@ -5,7 +5,7 @@ a Claude Code session on a workstation with the bus cloned locally: the
 `mesh-post` / `mesh-check` / `mesh-ref` skills are wired in, the ledger is
 right there to `grep` and `less`, and maintenance (pin bumps, node repair) is
 in reach when you need it. The same model also works from a **phone** (a Claude
-chat interface or a lightweight terminal); section 8 covers what changes there.
+chat interface or a lightweight terminal); section 9 covers what changes there.
 
 Either way the interaction model is identical, and it is the whole manual: you
 act by *posting to a role* in plain language and by *reading the ledger*, never
@@ -52,6 +52,8 @@ ledger. Everything below is detail.
   `agent-mesh-bus-<mesh>`, named for the mesh).
   Every node does `git pull --rebase`, then
   `git submodule update --init --recursive`, does its work, and pushes.
+  Memory spaces mounted under `spaces/` are the exception: a node clones one
+  only when it first needs it (section 8).
 - **Single-writer discipline.** Each node writes only the paths it owns
   (`agents/<id>.yaml`, its own `outbox/<id>/`, and `status/<task-id>.json` for
   tasks it claimed). Conflicts are prevented by construction, not by locking.
@@ -207,7 +209,83 @@ do them in a workstation session with the bus cloned:
   wedged git state.
 - Do any direct git surgery on the bus.
 
-## 8. Driving from a phone
+## 8. Mounting a memory space
+
+A **memory space** (`spec/memory-spaces.md`), such as a SWE Pod Project Space,
+is a git repo of records with its own remote and access list. The bus mounts
+it as a submodule under `spaces/` and lists it in `spaces.yaml`; the bus
+stores only a pointer to it, never its contents. Mounting is yours, by hand,
+at a terminal with the bus cloned. No agent mounts a space, and loading one
+never changes the bus.
+
+**Mount.** Create the space's repo first, with its `space.yaml`. Then, in the
+bus:
+
+```sh
+git -C /abs/bus submodule add -b main <space repo url> spaces/proj-<name>
+git -C /abs/bus config -f .gitmodules submodule.spaces/proj-<name>.ignore all
+```
+
+Add the registry line under `spaces:` in `/abs/bus/spaces.yaml` (an empty
+`spaces: []` becomes `spaces:` followed by the line):
+
+```yaml
+  - {id: proj:<name>, path: spaces/proj-<name>, access: rw, librarian: librarian}
+```
+
+`access` is `rw` when this mesh writes the space, through its librarian, and
+`ro` when it only reads it. `librarian` names the role that files records into
+the space: the mesh's `librarian` by default, or a `librarian.<label>` role if
+another node should manage this space. Then commit and push the mount:
+
+```sh
+git -C /abs/bus add -- .gitmodules spaces/proj-<name> spaces.yaml
+git -C /abs/bus commit -m "mount space proj-<name>"
+git -C /abs/bus push origin HEAD
+```
+
+`branch = main` (from `-b main`) and `ignore = all` make nodes follow the
+space's tip without the gitlink showing as drift. Bump the gitlink only for a
+deliberate checkpoint, in its own bus commit (memory-spaces §4.2).
+
+**What nodes do with it.** Every node gets the mount on its next pull, but none
+clones the space until it first needs it: a session's "load proj:<name>" (the
+`mesh-load` skill), or a claimed task whose `project:` names it. From then on
+that node's scanner pulls the space's tip each cycle; it never clones a space
+itself. To see which submodule paths a node's scanner updates (it prints them
+and exits, before any pull):
+
+```sh
+MESH_SCAN_LIST=1 /abs/bus/product/skills/mesh-on/mesh-scan-loop.sh /abs/bus
+```
+
+A task that names a space this bus does not mount ends `blocked` with
+`NOT MOUNTED proj:<name>` in its status; mount the space, then post the task
+again.
+
+**Access.**
+
+- **Read:** every pod node needs read access to the space's repo, as does any
+  node whose sessions load it. A node without it cannot clone the space, and
+  its tasks for that project end `blocked`.
+- **Push:** only the node that holds the space's librarian role gets push
+  credentials for the space. It is the space's only mesh writer, filing
+  through the `space-librarian` skill. No other node pushes to the space.
+  Name the credential in that node's `~/.agent-credentials.env` and nowhere
+  else.
+
+**Retire.** Unmount a space without touching its repo, which can be mounted
+again later:
+
+```sh
+git -C /abs/bus submodule deinit -f spaces/proj-<name>
+git -C /abs/bus rm spaces/proj-<name>
+```
+
+Remove its line from `spaces.yaml`, then commit and push as for a mount.
+Records that cite the space keep their ids and stop resolving on this mesh.
+
+## 9. Driving from a phone
 
 The same post-to-a-role / read-the-ledger model works away from the
 workstation. "Phone" covers seats with different capabilities — what varies is
@@ -241,7 +319,7 @@ Conventions for any phone seat, chosen not forced:
 - **Orient a fresh phone session** in one step: "read
   `guidance/operator-interface.md` and follow it."
 
-## 9. Glossary
+## 10. Glossary
 
 - **Bus** — your private bus git repo (`agent-mesh-bus-<mesh>`, one per mesh,
   named for the mesh); the only channel nodes use to coordinate.
