@@ -46,7 +46,8 @@ queue; the accept-as-claim rule (§6, §8) ensures exactly one runs each task.
 Roles split by what they write:
 
 - **Per-task-output roles** (e.g. `build`, `install`, `slurm.submit`) write only
-  their own `outbox/<agent-id>/<task-id>-result.md`. Any number of nodes may hold
+  their own `outbox/<agent-id>/<task-id>-result.md`, with its `<task-id>-files/`
+  folder when the result returns files (§5.1). Any number of nodes may hold
   them; fan-out is unbounded and always conflict-free.
 - **Shared-output roles** (e.g. `librarian`, `archiver`) curate a shared namespace
   (`memory/lore/**`, `_archive/**`). These should be held by exactly one node so
@@ -80,7 +81,9 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /tasks/<agent-id>/             direct inbox (replies, targeted sends); writer:
                                anyone except that agent
 /status/<task-id>.json         live task state; writer: the agent that claimed it
-/outbox/<agent-id>/            results and replies; writer: that agent only
+/outbox/<agent-id>/            results, each with any result files in
+                               <task-id>-files/ (§5.1), and replies; writer:
+                               that agent only
 /memory/<category>/            the library — the categories defined in §7
                                (lore/, notes/, refs/, workflows/, runs/); writer:
                                `librarian` role only. No index file: the records
@@ -420,9 +423,10 @@ executor (memory-spaces §5): the node resolves the space's path from
 `spaces.yaml` (§3), initializes its submodule on first need and pulls its tip.
 If the space is not mounted on this bus, the task ends `blocked` (§6) and its
 status names the project. The executor reads the space and never commits to it;
-what it writes for the space goes back in its result, and the space's librarian
-files it (memory-spaces §6.3). `mesh-post --project <value>` writes the field
-as the line after `timeout_min:` and refuses a value that does not match.
+what it writes for the space goes back in its result as result files (§5.1),
+and the space's librarian files them (memory-spaces §6.3).
+`mesh-post --project <value>` writes the field as the line after
+`timeout_min:` and refuses a value that does not match.
 
 **Replies route to the sender's inbox.** A `reply` (and its `in_reply_to`) is
 written as a new file in `tasks/<original-sender-id>/`, not into the responder's
@@ -432,6 +436,43 @@ recipient of a reply treats it as information: it surfaces the reply and writes
 no status for it. (Outboxes remain the home for `task.request` *results* —
 `outbox/<agent-id>/<task-id>-result.md` — which the requester reads by path when
 it wants the artifact pointers, not as a liveness signal.)
+
+### 5.1 Result files
+
+A result, `outbox/<agent-id>/<task-id>-result.md`, is written by the claiming
+node at the terminal transition (§8). It points at what the task produced and
+carries no payload, with one exception: the files the task asks for. The result
+returns those under `files:`, a front-matter key with one entry per file, each
+on one line:
+
+```yaml
+---
+# the result's other front-matter keys
+files:
+  - {path: notes/<record>.md, sha256: <64 hex>}
+  - {path: decisions/<record>.md, sha256: <64 hex>}
+---
+```
+
+- **`path`** is the file's relative path: for a task with `project:` (§5) it is
+  relative to the space root, so the space's librarian can file it there;
+  otherwise it is the path the task gives. It uses `/`, has no empty, `.`,
+  `..` or `.git` segment, and appears once in the list.
+- **`sha256`** is the SHA-256 of the file's bytes, as 64 lowercase hex digits.
+- **The body** sits at `outbox/<agent-id>/<task-id>-files/<path>` and is
+  committed with the result. Like the rest of the outbox it is new files only,
+  written by that agent only (§3.1).
+- **Limits.** Files are text only (UTF-8 with no NUL byte), at most 1048576
+  bytes (1 MiB) each. A file that breaks a rule here is neither written nor
+  listed; the result's body names its path and the rule it broke.
+- **No files, no key.** A result that returns no files has no `files:` key and
+  no `-files/` folder.
+- **Retention.** The folder is swept with its task (§9).
+
+The requester checks each body against its `sha256` before using it. For a
+project task the bodies are filed into the space by the space's librarian
+(memory-spaces §6.3); the claiming node never writes them into the space. A
+status file's `artifacts` is unchanged by this: pointers, never payloads (§6).
 
 ---
 
@@ -957,6 +998,8 @@ loop (poller subagent):
   4. task.request: verify creds; status blocked if missing names, else
        status -> running; sync; dispatch executor sub-subagent and wait
        terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md;
+       write each file the task asked for under outbox/<AGENT_ID>/<task-id>-files/
+       and list it in the result's files: (§5.1);
        for a result-bearing task, ALSO submit a `runs` record (library.submit, §7)
        so the run's provenance outlives its swept scratch
        (no periodic heartbeat -- status is written only at transitions)
@@ -1039,7 +1082,7 @@ terminal.
 | Task messages | archive after 3 days |
 | Status files, terminal | archive after 7 days |
 | Status files, active | never archived |
-| Outbox results | archive after 7 days |
+| Outbox results, with their `-files/` folders | archive after 7 days |
 | Workflow records, terminal | archive after 7 days |
 | Workflow records, running | never archived |
 | Library records | per the record's `retention` header (default permanent) |
@@ -1052,13 +1095,16 @@ staffed `librarian` drains its queue every cycle, a submission is normally promo
 into `memory/` long before that window elapses, so archiving the swept message
 loses nothing (the durable copy lives in `memory/`).
 
-**Sweep a task as a unit.** A task's message, its terminal `status/<id>.json`, and
-its `outbox/<id>/<id>-result.md` are one closed record — move them together, in the
-same sweep commit, never one without the others. A terminal status left behind when
+**Sweep a task as a unit.** A task's message, its terminal `status/<id>.json`, its
+`outbox/<id>/<id>-result.md` and, when the result returns files (§5.1), its
+`outbox/<id>/<id>-files/` folder are one closed record — move them together, in the
+same sweep commit, never one without the others. The folder keeps its name and goes
+into the same `_archive/YYYY-MM/` as its result. A terminal status left behind when
 its message is archived is an **orphan**: it makes `status/` grow without bound and
 blurs the boundary between live and swept state. The sweep MUST also collect
 pre-existing orphans — any terminal `status/<id>.json` whose task message is already
-archived or gone is itself moved to `_archive/`. Only **terminal** status is ever
+archived or gone is itself moved to `_archive/`, and so is any `-files/` folder
+whose result is already archived or gone. Only **terminal** status is ever
 swept; a non-terminal (`accepted`/`running`) status stays live (§6) — it is either
 in flight or a dead-node orphan to be diagnosed (staleness query), never retired by
 the sweep. The durable provenance of a swept run is its `runs/` record (§7), not
@@ -1068,7 +1114,8 @@ the archived status; archiving therefore loses no audit, it only clears scratch.
 `archive sweep <YYYY-MM>`) is by construction the record of what was retired and
 when. Anyone can confirm the boundary is being held with a read-only check:
 `status/` should contain **no** terminal record whose task message already lives in
-`_archive/`. A non-empty result means the archiver is behind (or not running).
+`_archive/`, and `outbox/` no `-files/` folder whose result does. A non-empty result
+means the archiver is behind (or not running).
 
 Rationale for short task-message retention: promotion into `memory/` becomes a
 deliberate ritual rather than an afterthought, and the coordination repo stays

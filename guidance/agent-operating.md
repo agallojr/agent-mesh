@@ -124,9 +124,17 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    sub-subagent and wait). Do NOT rewrite status on a timer while it runs — write
    status only at real transitions. Idle churn is what the mesh avoids.
 6. On finish: for a `task.request`, status `done` or `failed`, and write
-   `outbox/<your-id>/<task-id>-result.md`; sync. For a `query` (ping), write a
-   `reply` into the SENDER'S inbox `tasks/<sender-id>/` (`type: reply`,
-   `in_reply_to:` the query id) and set status `done`; sync.
+   `outbox/<your-id>/<task-id>-result.md`. The result holds pointers, never
+   payloads, except the files the task asks for (PROTOCOL §5.1). The executor
+   stages those outside the bus. You check each one: a regular file, never a
+   symlink; text only, at most 1048576 bytes; a relative path with no empty,
+   `.`, `..` or `.git` segment, listed once. You write it to
+   `outbox/<your-id>/<task-id>-files/<path>` and list it in the result's
+   front-matter under `files:`, one `{path, sha256}` entry per file. A file
+   that fails a check is left out, and the result names it. Then sync: one
+   commit carries the status, the result and any files. For a `query`
+   (ping), write a `reply` into the SENDER'S inbox `tasks/<sender-id>/`
+   (`type: reply`, `in_reply_to:` the query id) and set status `done`; sync.
 6a. If the task was **result-bearing** (it produced a result or durable
    artifacts, not just a ping reply), also emit a `runs` record for it — a
    `library.submit` of `category: runs` (PROTOCOL §7) carrying `task_id`, the
@@ -214,13 +222,15 @@ them ONLY if that role is in your `AGENT_ROLES`:
   for the spaces you file (memory-spaces §6.3).
 - **`archiver`** — sole writer of `_archive/**`. Run the retention sweep
   (PROTOCOL.md §9): sweep each aged task **as a unit** — its message, its terminal
-  `status/<id>.json`, and its `outbox/<id>/<id>-result.md` moved together in one
-  commit, never a terminal status left behind. Also collect pre-existing orphans:
-  any terminal status whose task message is already archived or gone gets swept
-  too. Never sweep a non-terminal (`accepted`/`running`) status — it is in flight
-  or a dead-node orphan to report, not retire. A quick self-check that the boundary
-  is held: no terminal `status/` record should have its task message already in
-  `_archive/`. Also a single-holder shared-output role.
+  `status/<id>.json`, its `outbox/<id>/<id>-result.md` and its
+  `outbox/<id>/<id>-files/` folder, if the result returned files, moved together
+  in one commit, never a terminal status left behind. Also collect pre-existing
+  orphans: any terminal status whose task message is already archived or gone
+  gets swept too, and so does any `-files/` folder whose result is. Never sweep
+  a non-terminal (`accepted`/`running`) status — it is in flight or a dead-node
+  orphan to report, not retire. A quick self-check that the boundary is held: no
+  terminal `status/` record should have its task message already in `_archive/`,
+  and no `-files/` folder its result. Also a single-holder shared-output role.
 - **`email-monitor`** — watch the ingress Gmail mailbox and turn authenticated
   mail into `library.submit` messages for the librarian (full design:
   `product/spec/librarian-email-ingress.md`; guarded by `LIBRARIAN_EMAIL_ENABLED`).

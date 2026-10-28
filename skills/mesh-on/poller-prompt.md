@@ -232,8 +232,41 @@ rejection, follow the conflict-handling rule below.
    e. On executor completion: write terminal status `done` or `failed` with a
       short `progress`/`error` (scrub anything credential-shaped from `log_tail`,
       cap 20 lines), AND write `outbox/«AGENT_ID»/<id>-result.md` (self-contained
-      result: what was done, artifact pointers — URLs/paths/job-ids, NOT payloads).
-      Sync.
+      result: what was done, artifact pointers — URLs/paths/job-ids, NOT payloads,
+      except the result files below).
+
+      **Result files** (PROTOCOL §5.1). If the executor listed files under
+      `files:`, publish them before the sync. First run
+      `find «STAGING» -type l`: if it prints anything, publish no file from
+      this task, and name the links in the result's body. A link could
+      publish a file from elsewhere on this node, such as the credentials
+      file. Otherwise, for each `<rel>` the executor listed:
+      - Check the path: relative, `/`-separated, with no empty, `.`, `..` or
+        `.git` segment, and not listed twice. Check that `«STAGING»/<rel>` is
+        a regular file, then run these with `<file>` that file, quoted:
+
+        ```
+        wc -c < <file>
+        iconv -f UTF-8 -t UTF-8 <file> > /dev/null
+        LC_ALL=C tr -d '\000' < <file> | cmp -s - <file>
+        shasum -a 256 <file>
+        ```
+
+        The first must print at most 1048576, and the next two must exit 0
+        (valid UTF-8, no NUL byte).
+      - If every check passes, copy the file to
+        `«REPO»/outbox/«AGENT_ID»/<id>-files/<rel>`, making its parent
+        directories, and run the last command on the copy. Its first field is
+        the file's `sha256`, 64 lowercase hex digits (`sha256sum <file>` gives
+        the same where `shasum` is missing).
+      - If a check fails, write nothing for that file and leave it out of
+        `files:`. Name its path and the rule it broke in the result's body.
+
+      In the result's front-matter, add `files:` with one line per published
+      file, in the executor's order: `  - {path: <rel>, sha256: <hex>}`. With no
+      published file, write no `files:` key and no `-files/` folder. Delete
+      the staging directory whether or not it held files. Then sync: one
+      commit carries the status, the result and any files.
    e2. If the task was result-bearing (produced a result or durable artifacts, not
       just a ping reply), ALSO drop a `library.submit` of `category: runs` for it
       (PROTOCOL §7): `task_id`, executor `agent`, `contexts`, `started`/`ended` in
@@ -300,16 +333,26 @@ subject; read the matches before acting and cite any lore id you relied on in yo
 result. Then: you are executing one mesh task. Do the work. Do NOT touch git or
 status files — the poller owns those. Return a concise structured result: what you
 did, whether done-when is satisfied, artifact pointers (URLs/paths/job-ids, never
-payloads), and any durable lesson learned. Never emit a credential value anywhere."
+payloads except the files the task asks for), and any durable lesson learned.
+Return each file the task asks for under files:, text only, at most 1048576 bytes each.
+Write each one to `«STAGING»/<rel>`, where `<rel>` is the relative path the task
+gives it, and list each `<rel>` under `files:` in your result; return no other
+file that way. Never emit a credential value anywhere."
+
+**Staging directory.** Before you spawn the executor, make a fresh, empty
+directory outside «REPO» and outside every space checkout (`mktemp -d`), and
+put its literal absolute path in the prompt wherever «STAGING» appears. The
+executor writes the files the task asks for there, and you check and publish
+them in step 4e.
 
 **A task with `project:`** also gets these lines in the executor's prompt, with
 the values from step 4b2 filled in: "The project space `proj:<name>` is loaded
 for this task at `«REPO»/<path>`. You may read and search it. Never write,
-stage, commit or push in it: the space's librarian is its only writer. Anything
-you produce for the space, return to me as files, each with its path relative
-to the space root and its full text; never write it into the space checkout. It
-goes back in the task result's `files:` list, and the space's librarian files
-it (memory-spaces §6.3)."
+stage, commit or push in it: the space's librarian is its only writer. Each
+file the task asks you to produce for the space is a result file: its `<rel>`
+is relative to the space root, you write it under `«STAGING»` as above, and
+you never write it into the space checkout. It goes back in the task result's
+`files:` list, and the space's librarian files it (memory-spaces §6.3)."
 
 Keeping execution in a sub-subagent is what keeps YOUR context bounded across many
 cycles — do not execute tasks inline yourself.
@@ -333,11 +376,12 @@ writer of ALL of `memory/**`. Records are small text; heavy payloads
 stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is
 normal, not a fault. If you hold **`archiver`**: run the retention sweep per
 PROTOCOL.md §9 — sweep each aged task as a unit (message + terminal
-`status/<id>.json` + `outbox/<id>/<id>-result.md` together in one commit, never a
-terminal status orphaned), and collect any pre-existing orphan status whose task is
-already archived; never sweep a non-terminal status. These are single-holder
-shared-output roles — do not run a second holder. Hold none of these roles and you
-skip that duty entirely.
+`status/<id>.json` + `outbox/<id>/<id>-result.md` + its `outbox/<id>/<id>-files/`
+folder, if any, together in one commit, never a terminal status orphaned), and
+collect any pre-existing orphan status whose task is already archived, and any
+`-files/` folder whose result is; never sweep a non-terminal status. These are
+single-holder shared-output roles — do not run a second holder. Hold none of these
+roles and you skip that duty entirely.
 
 If you hold **`email-monitor`** (single-holder): watch the ingress mailbox and
 turn authenticated mail into `library.submit` messages for the librarian. You
