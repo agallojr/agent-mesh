@@ -40,6 +40,13 @@ ledger. Everything below is detail.
   You address work to a *role*, not a machine, and whichever node holds that role
   claims and runs it. Nodes talk to each other directly; nothing routes through a
   center.
+- **SWE Pod roles.** The six roles `swe.spec`, `swe.plan`, `swe.lead`,
+  `swe.build`, `swe.test` and `swe.review` are per-task-output roles
+  (PROTOCOL §2): each holder writes only its own
+  `outbox/<agent-id>/<task-id>-result.md`, so any number of nodes may hold
+  each one. Registering a node for one means adding it to `AGENT_ROLES` in
+  that node's `~/.agent-identity.env`. Nothing else changes: the protocol, the
+  guidance and the poller treat them like any other role.
 - **Git is the bus.** There is no message broker. Coordination happens entirely
   through append-only files in a private git repo (your bus,
   `agent-mesh-bus-<mesh>`, named for the mesh).
