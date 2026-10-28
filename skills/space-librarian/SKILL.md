@@ -98,12 +98,13 @@ The three checks, as the script below runs them:
   record with no id passes. An id already at this same path on `origin/main`
   (or `HEAD`, where there is no `origin/main`) is not new and passes. A new
   id must have the form
-  `<category>-<YYYYMMDDTHHMMZ>-<4 hex>`, or the UTC-named form: `ev-<UTC>`
-  under `changes/<id>/evidence/`, `<UTC>-<slug>` under `decisions/` and
-  `handoffs/`. It must not be already present: no other file in the space
-  holds it. Evidence, decisions and handoffs are one file per event, so a
-  record there whose path is already on `origin/main` with other content is
-  refused as `id`.
+  `<category>-<YYYYMMDDTHHMMZ>-<4 hex>`, or the UTC-named form: `ev-<UTC>`,
+  or `ev-<UTC>-<shard id>` for a shard (a task id and one lowercase letter),
+  such as `ev-<UTC>-T19a`, under `changes/<id>/evidence/`; `<UTC>-<slug>`
+  under `decisions/` and `handoffs/`. It must not be already present: no
+  other file in the space holds it. Evidence, decisions and handoffs are one
+  file per event, so a record there whose path is already on `origin/main`
+  with other content is refused as `id`.
 
 Copy the script into a file in a scratch directory outside the space, never
 inside it, and run it with `sh`:
@@ -287,7 +288,8 @@ for r in "$@"; do
   if [ -n "$id" ]; then
     form='[a-z][a-z0-9]*-[0-9]{8}T[0-9]{4}Z-[0-9a-f]{4}'; ev=0
     case "$r" in
-      changes/*/evidence/*) ev=1; form="$form|ev-[0-9]{8}T[0-9]{4}Z" ;;
+      changes/*/evidence/*) ev=1
+        form="$form|ev-[0-9]{8}T[0-9]{4}Z(-T[0-9]+[a-z])?" ;;
       decisions/*|handoffs/*) ev=1
         form="$form|[0-9]{8}T[0-9]{4}Z-[a-z0-9][a-z0-9-]*" ;;
     esac
