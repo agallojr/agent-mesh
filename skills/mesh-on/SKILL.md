@@ -99,17 +99,30 @@ Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
    tip of `submodule.product.branch` (`main`). The explicit update, not a
    clone-time `--recurse` flag, is what guarantees the product tree is present.
    Neither op is gated; the git gate only touches add/commit/push.
-2. Overwrite `agents/<AGENT_ID>.yaml` (this file is yours alone) following the
-   schema in PROTOCOL.md §4.3 — include `hostname`, `platform` (`uname -sr`),
-   `repo_commit` (`git -C /abs/repo rev-parse --short HEAD`), `roles` (from
-   `AGENT_ROLES`), `credentials_available` (KEY NAMES only, from
-   `~/.agent-credentials.env` — never values), and a fresh `registered_at`.
-3. Commit and push:
-   `git -C /abs/repo add -A` then
-   `git -C /abs/repo commit -m "register <AGENT_NAME> (<AGENT_ID>)"` then
-   `git -C /abs/repo push origin HEAD`
-   On push rejection: `git -C /abs/repo pull --rebase`, re-derive your file
-   against current state, retry (3x, then back off). Never resolve textually.
+2. Register by script, with the literal path of THIS skill directory, the
+   literal repo path, and the model id of THIS session (from your system
+   prompt) on the command line:
+
+   ```
+   MESH_SESSION_MODEL=<this session's model id> \
+     /abs/path/to/this/skill/mesh-register.sh /abs/repo
+   ```
+
+   It overwrites `agents/<AGENT_ID>.yaml` (this file is yours alone) per
+   PROTOCOL.md §4.3: `hostname`, `platform`, `repo_commit`, `roles` (from
+   `AGENT_ROLES`), `poll_interval_sec` (from `POLL_INTERVAL_SEC`),
+   `credentials_available` (KEY NAMES only, never values), `model`, and a fresh
+   `registered_at` and `last_poll`. It then commits that one file through
+   `mesh-commit.sh` (beside it) and pushes, retrying a rejected push itself.
+   Its last line says how it went:
+   - `PUSHED` or `NOTHING TO COMMIT`: registered; go on.
+   - `PUSH FAILED`: the commit is local, and the poller's first heartbeat
+     push carries it. Tell the user in one line and go on.
+   - `REFUSED <reason>`: STOP and tell the user the reason.
+
+   Never stage the whole bus checkout (a stage-all `git add`): in the bus that
+   records each submodule's checkout as its pin, and `ignore = all` hides it
+   (PROTOCOL §8, "The commit rule").
 
 ## Step 5 — spawn the background poller subagent
 
