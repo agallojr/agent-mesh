@@ -188,6 +188,10 @@ notice reads `Model "<value>" is restricted by your organization's settings.
 Using <id> instead.`, or a full id it could not run on). With no fallback there
 is no second line. Polling goes on either way.
 
+While an executor runs (in the background, in an interactive session), the
+poller parks the same way on `mesh-wait.sh`, which keeps the heartbeat going
+until the executor is done, and never ends its turn to wait.
+
 The poller does NOT burn inference polling. It parks on ONE **synchronous** Bash
 call to the shell scanner (`mesh-scan-loop.sh`) — never a background call: a
 background child is not guaranteed to survive the poller ending its turn, and an

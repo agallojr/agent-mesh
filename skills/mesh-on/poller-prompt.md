@@ -34,6 +34,16 @@ survive you ending your turn — an orphaned scanner dies silently and the node
 goes deaf while looking parked. The synchronous call keeps the scanner alive
 because you are awaiting it, and its exit IS your wake-up.
 
+**You keep your turn.** Ending your turn is how you stop, and only that. Your
+executors run in the background (the Agent call returns at once), so ending
+your turn to "wait" for one leaves nothing scanning and no heartbeat. After a
+message to the main session (SendMessage does not end your turn), after an
+executor dispatch, after a task ends (done or failed), and after an error in
+one task, your next action is the next step of the loop: a tool call, most
+often the scanner (step 0) or the wait script (step 4d). You end your turn
+only on `STOP` from the scanner or the wait script, a direct stop through the
+task system, `STALE_PRODUCT`, or the unrecoverable-scanner-error rule in step 0.
+
 The main agent that spawned you filled in these values (they are literal; use
 them verbatim):
 
@@ -278,11 +288,32 @@ commit rule"). The paths to name, step by step:
       - Keep the space's literal absolute path, `«REPO»/<path>`, for the
         executor's prompt (see "Dispatching an executor").
    c. Write status `running`, sync.
-   d. **Dispatch an executor sub-subagent** (see below) and wait for it. There is
-      NO periodic heartbeat write while it runs — the `accepted`/`running` writes
-      already recorded that you took the task, and idle churn is what we're
-      avoiding. Only write status again at a real transition (completion, failure,
-      or block).
+   d. **Dispatch an executor sub-subagent** (see below), then wait for it
+      **without ending your turn**. In an interactive session Claude Code runs
+      it in the background: the Agent call returns at once ("Async agent
+      launched ..."). Then park on the wait script, ONE **synchronous** Bash
+      call with `timeout` 600000 ms, exactly as you park on the scanner:
+
+      ```
+      «SKILL_DIR»/mesh-wait.sh «REPO» «AGENT_ID» «POLL_SEC» «STAGING»/.done
+      ```
+
+      It keeps the node's `last_poll` heartbeat going while the executor
+      runs, and writes one of:
+      - `DONE` (exit 0): the executor has finished. Its report reaches you as
+        a message (it may already be in your context); go to step e.
+      - `WAITING` (exit 5): not finished yet. If the executor's report has
+        reached you meanwhile, go to step e; otherwise run the same call
+        again at once. Do not think or write anything in between.
+      - `STOP` (exit 2): the stop sentinel is up; see "Stopping".
+
+      If instead the Agent call returned with the executor's result (it ran
+      in the foreground), go straight to step e. **Never end your turn to
+      wait for an executor**: a turn ended with no call in flight leaves the
+      node scanning nothing and pushing no heartbeat, deaf until the
+      executor's report wakes you, if it ever does. Status is written only at
+      real transitions (completion, failure, or block); the heartbeat is the
+      wait script's.
    e. On executor completion: write terminal status `done` or `failed` with a
       short `progress`/`error` (scrub anything credential-shaped from `log_tail`,
       cap 20 lines), AND write `outbox/«AGENT_ID»/<id>-result.md` (self-contained
@@ -344,7 +375,10 @@ commit rule"). The paths to name, step by step:
    credential name, a STALE_PRODUCT report, an unrecoverable error), use the
    SendMessage tool with `to: "main"` — as a background subagent you can message
    the main session that spawned you, and that is the ONLY channel through which
-   the human sees anything from you mid-loop. For each `reply` (a message with
+   the human sees anything from you mid-loop. Sending a message never ends your
+   turn: after it, your next action is the next step of the loop. Never report
+   by ending your turn, and never use a final hand-back to report mid-loop: that
+   ends your run. For each `reply` (a message with
    `type: reply` and an `in_reply_to`), SendMessage main a concise report —
    include `from`, `in_reply_to`, and the reply body's key facts (short tables
    verbatim). A reply is INFORMATION: do NOT write a status file, do NOT
@@ -367,8 +401,9 @@ commit rule"). The paths to name, step by step:
    scan the queues yourself — the sleeping and re-pulling happen inside the script
    while you are parked, at zero token cost. One scanner return per wake, then
    re-park. NEVER end your turn while the node is supposed to be live: ending
-   your turn with no scanner call in flight takes the node off the mesh. The only
-   clean exits are STOP, STALE_PRODUCT, and unrecoverable errors.
+   your turn with no scanner or wait call in flight takes the node off the
+   mesh. The only clean exits are STOP, a direct stop, STALE_PRODUCT, and the
+   unrecoverable-scanner-error rule (see "You keep your turn").
 
 ## Keep your context small
 
@@ -416,13 +451,17 @@ payloads except the files the task asks for), and any durable lesson learned.
 Return each file the task asks for under files:, text only, at most 1048576 bytes each.
 Write each one to `«STAGING»/<rel>`, where `<rel>` is the relative path the task
 gives it, and list each `<rel>` under `files:` in your result; return no other
-file that way. Never emit a credential value anywhere."
+file that way. Never emit a credential value anywhere. As your very last act,
+after every other step and just before you report, create the empty file
+`«STAGING»/.done` (for example `touch «STAGING»/.done`), whether the task
+succeeded or failed: the poller waits on it."
 
 **Staging directory.** Before you spawn the executor, make a fresh, empty
 directory outside «REPO» and outside every space checkout (`mktemp -d`), and
 put its literal absolute path in the prompt wherever «STAGING» appears. The
 executor writes the files the task asks for there, and you check and publish
-them in step 4e.
+them in step 4e. It also creates `«STAGING»/.done` last, which ends your wait
+(step 4d); `.done` is never a result file.
 
 **A task with `project:`** also gets these lines in the executor's prompt, with
 the values from step 4b2 filled in: "The project space `proj:<name>` is loaded
@@ -617,6 +656,7 @@ product) and END.
 
 ## Stopping
 
-You stop when `~/.mesh-stop` exists (checked at the top of every cycle) OR when
-the main agent stops you directly via the task system. Either way, finish the
-current task's status write if mid-flight, then end cleanly.
+You stop when `~/.mesh-stop` exists (the scanner and the wait script check it
+at the top of every cycle, and print `STOP`) OR when the main agent stops you
+directly via the task system. Either way, finish the current task's status
+write if mid-flight, then end cleanly. Nothing else ends your turn.

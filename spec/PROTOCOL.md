@@ -1027,7 +1027,10 @@ loop (poller subagent):
        retry the claim. The winning accepted write is both the claim and the
        liveness ACK. (A direct-inbox task has one consumer; the claim never contends.)
   4. task.request: verify creds; status blocked if missing names, else
-       status -> running; sync; dispatch executor sub-subagent and wait
+       status -> running; sync; dispatch executor sub-subagent; while it runs
+       (in the background), PARK on skills/mesh-on/mesh-wait.sh -- ONE
+       SYNCHRONOUS call, re-parked until DONE, heartbeat going; never end
+       the turn to wait
        terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md;
        write each file the task asked for under outbox/<AGENT_ID>/<task-id>-files/
        and list it in the result's files: (§5.1);

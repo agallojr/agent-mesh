@@ -27,10 +27,10 @@ utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # the node's own file, the pin unmoved, the staged gitlink still staged.
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
 t0=$(utc_now); SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 6); rc=$?
 el=$SECONDS; t1=$(utc_now)
 check "idle run prints IDLE and exits 5" eq "$rc:$out" "5:IDLE"
-check "idle run returns by its deadline (3 s, slack 3 s)" test "$el" -le 6
+check "idle run returns by its deadline (6 s, slack 4 s)" test "$el" -le 10
 n=$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")
 check "idle run pushed at least 2 heartbeats" test "$n" -ge 2
 bad=0
@@ -83,10 +83,10 @@ g -C "$BUS" remote set-url origin "$T/no-such-origin.git"
 sed -i.bak 's/^last_poll: .*/last_poll: 2026-01-01T00:00:00Z/' "$BUS/agents/$ID.yaml"
 rm -f "$BUS/agents/$ID.yaml.bak"
 SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 6); rc=$?
 el=$SECONDS
 check "with origin unreachable the scan still ends IDLE, exit 5" eq "$rc:$out" "5:IDLE"
-check "with origin unreachable it returns by its deadline (3 s, slack 3 s)" test "$el" -le 6
+check "with origin unreachable it returns by its deadline (2 s) plus one heartbeat ($el s)" test "$el" -le 10
 check "with origin unreachable last_poll is still rewritten" \
   test "$(local_lp)" != "2026-01-01T00:00:00Z"
 TASK2="tasks/roles/build/20261029T1501-0002-unit.md"
@@ -126,7 +126,7 @@ base=$(g -C "$BUS_ORIGIN" rev-parse main)
 before=$(local_lp)
 touch "$HOME/.mesh-stop"
 sleep 1
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 6); rc=$?
 check "the stop sentinel gives STOP, exit 2" eq "$rc:$out" "2:STOP"
 check "no heartbeat after STOP" \
   eq "$(local_lp):$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "$before:0"

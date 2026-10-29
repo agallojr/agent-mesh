@@ -141,8 +141,11 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    mistake instead of repeating it. Discovery is a grep over each record's
    front-matter — there is no index, by design (PROTOCOL §7). Cite any lore id
    you relied on in the result you return.
-5. Write status `running`, sync, then execute (dispatch to an executor
-   sub-subagent and wait). Do NOT rewrite status on a timer while it runs — write
+5. Write status `running`, sync, then execute: dispatch an executor
+   sub-subagent, and while it runs park on `skills/mesh-on/mesh-wait.sh` as ONE
+   synchronous call, re-parking until it prints `DONE` (it keeps the heartbeat
+   going). The executor runs in the background, so never end your turn to wait
+   for it: that leaves the node deaf. Do NOT rewrite status on a timer while it runs — write
    status only at real transitions. The node's timer-driven write is its
    `last_poll` heartbeat, never a status file.
 6. On finish: for a `task.request`, status `done` or `failed`, and write

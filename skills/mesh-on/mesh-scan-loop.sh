@@ -84,54 +84,10 @@ touch "$SEEN" 2>/dev/null || true
 # disables the deadline (old block-forever behavior, for non-harness callers).
 SECONDS=0
 
-# mesh-commit.sh's functions (sourcing runs nothing): the gitlink lift.
+# mesh-commit.sh's functions (sourcing runs nothing): the gitlink lift
+# and the heartbeat (mc_heartbeat, with REPO, AGENT_ID and POLL set).
 . "$SCAN_DIR/mesh-commit.sh"
-NODE_FILE=""
-case "$AGENT_ID" in
-  ""|.|..|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*) ;;
-  *) NODE_FILE="agents/$AGENT_ID.yaml" ;;
-esac
-
-epoch() {  # whole s since 1970-01-01T00:00:00Z of YYYY-MM-DDTHH:MM:SSZ, or -1
-  printf '%s\n' "$1" | awk -F'[-T:Z]' '
-    function days(y, m, d,   era, yoe, doy, doe) {
-      y -= (m <= 2)
-      era = int((y >= 0 ? y : y - 399) / 400)
-      yoe = y - era * 400
-      doy = int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1
-      doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
-      return era * 146097 + doe - 719468
-    }
-    NF >= 6 && $1 ~ /^[0-9][0-9][0-9][0-9]$/ {
-      printf "%d\n", days($1 + 0, $2 + 0, $3 + 0) * 86400 + $4 * 3600 + $5 * 60 + $6
-      next
-    }
-    { print -1 }'
-}
-
-heartbeat() {  # rewrite last_poll in this node's own record and push it
-  local f now last tmp
-  [ -n "$NODE_FILE" ] || return 0
-  f="$REPO/$NODE_FILE"
-  [ -f "$f" ] || return 0
-  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  last=$(sed -n 's/^last_poll:[[:space:]]*//p' "$f" | head -1)
-  last=$(epoch "$last")
-  if [ "$last" -ge 0 ] 2>/dev/null && \
-     [ $(( $(epoch "$now") - last )) -lt $(( POLL / 2 )) ] 2>/dev/null; then
-    return 0  # a heartbeat this recent already stands
-  fi
-  tmp=$(mktemp "${TMPDIR:-/tmp}/mesh-heartbeat.XXXXXX") || return 0
-  if grep -q '^last_poll:' "$f"; then
-    sed "s/^last_poll:.*/last_poll: $now/" "$f" > "$tmp"
-  else
-    cat "$f" > "$tmp"; printf 'last_poll: %s\n' "$now" >> "$tmp"
-  fi
-  cat "$tmp" > "$f"
-  rm -f "$tmp"
-  bash "$SCAN_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" "$NODE_FILE" \
-    >/dev/null 2>&1 </dev/null || true
-}
+MC_PARENT=$PPID  # a heartbeat is never written once this caller is orphaned
 
 fm() {  # fm <key> <file> -> first frontmatter value for key
   sed -n "s/^$1:[[:space:]]*//p" "$2" | head -1
@@ -213,7 +169,8 @@ EOF
   done
 
   # The scan is done: record it (the heartbeat), then act on what it found.
-  heartbeat
+  # An orphaned scanner (its caller gone) writes none and ends.
+  mc_heartbeat || { [ $? -eq 3 ] && { echo IDLE; exit 5; }; }
 
   if [ "${#hits[@]}" -gt 0 ]; then
     printf 'WORK\n'; printf '%s\n' "${hits[@]}"; exit 0

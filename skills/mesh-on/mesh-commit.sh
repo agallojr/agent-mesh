@@ -308,6 +308,65 @@ mc_outgoing_gitlink() {  # 0 if a commit not yet on origin changes a gitlink
     2>/dev/null | grep -qE '^:(160000 [0-7]+|[0-7]+ 160000) '
 }
 
+mc_epoch() {  # whole s since 1970-01-01T00:00:00Z of YYYY-MM-DDTHH:MM:SSZ, or -1
+  printf '%s\n' "$1" | awk -F'[-T:Z]' '
+    function days(y, m, d,   era, yoe, doy, doe) {
+      y -= (m <= 2)
+      era = int((y >= 0 ? y : y - 399) / 400)
+      yoe = y - era * 400
+      doy = int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1
+      doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+      return era * 146097 + doe - 719468
+    }
+    NF >= 6 && $1 ~ /^[0-9][0-9][0-9][0-9]$/ {
+      printf "%d\n", days($1 + 0, $2 + 0, $3 + 0) * 86400 + $4 * 3600 + $5 * 60 + $6
+      next
+    }
+    { print -1 }'
+}
+
+mc_orphaned() {  # 0 if MC_PARENT is set and this process has lost that parent
+  [ -n "${MC_PARENT:-}" ] || return 1
+  [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" != "$MC_PARENT" ]
+}
+
+# mc_heartbeat: rewrite last_poll (UTC, to the second) in the node's own
+# agents/<AGENT_ID>.yaml and push it through this script, in a commit that
+# holds only that file. Uses REPO, AGENT_ID and POLL (s). Writes nothing when
+# the node has no record, its id is not plain, or a heartbeat within half a
+# poll interval already stands. Returns 3, writing nothing, when the caller
+# set MC_PARENT and has been orphaned, so no process that outlives the poller
+# writes last_poll. A failed push is not an error here: returns 0.
+mc_heartbeat() {
+  local file f now last tmp
+  case "${AGENT_ID:-}" in
+    ""|.|..|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*)
+      return 0 ;;
+  esac
+  mc_orphaned && return 3
+  file="agents/$AGENT_ID.yaml"
+  f="$REPO/$file"
+  [ -f "$f" ] || return 0
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  last=$(sed -n 's/^last_poll:[[:space:]]*//p' "$f" | head -1)
+  last=$(mc_epoch "$last")
+  if [ "$last" -ge 0 ] 2>/dev/null && \
+     [ $(( $(mc_epoch "$now") - last )) -lt $(( ${POLL:-60} / 2 )) ] 2>/dev/null; then
+    return 0  # a heartbeat this recent already stands
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/mesh-heartbeat.XXXXXX") || return 0
+  if grep -q '^last_poll:' "$f"; then
+    sed "s/^last_poll:.*/last_poll: $now/" "$f" > "$tmp"
+  else
+    cat "$f" > "$tmp"; printf 'last_poll: %s\n' "$now" >> "$tmp"
+  fi
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+  bash "$MC_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" "$file" \
+    >/dev/null 2>&1 </dev/null || true
+  return 0
+}
+
 mc_main() {
   local raw p head_before branch attempt pushed files err sha
   if [ $# -lt 2 ]; then
