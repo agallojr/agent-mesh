@@ -231,9 +231,9 @@ commit rule"). The paths to name, step by step:
 | claim, `running`, `blocked`, terminal status | `status/<id>.json` |
 | query reply (4a) | the reply file `tasks/<sender-id>/<file>` and `status/<id>.json` |
 | result (4e) | `status/<id>.json`, `outbox/«AGENT_ID»/<id>-result.md`, and `outbox/«AGENT_ID»/<id>-files` when files were published |
-| runs record, library submission (4e2, 4f) | the new `tasks/roles/librarian/<file>`, or, as librarian, the new `spaces/core/<category>/<file>` or `spaces/lore/lore/<file>` |
+| runs record, library submission (4e2, 4f) | the new `tasks/roles/librarian/<file>`, or, as librarian, no bus path: the record is filed through `space-librarian` in that space's repo, with no bus commit |
 | workflow step (4¾) | the task file it originates and `workflows/<id>.yaml` |
-| librarian drain | each `spaces/core/<category>/<file>` or `spaces/lore/lore/<file>` written, with any stored artifact |
+| librarian drain | no bus path: each `spaces/core/<category>/<file>` or `spaces/lore/lore/<file>` is filed through `space-librarian` in that space's repo, with any stored artifact, and no bus commit |
 | archiver sweep | each path moved, at its old place and its new one under `_archive/` |
 | layout upgrade | each path the note's bus steps wrote or removed, and `BUS_LAYOUT` |
 
@@ -382,7 +382,7 @@ commit rule"). The paths to name, step by step:
       UTC, `outcome`, a one-line result (numbers with units), artifact pointers
       (with `sha256` for fixed blobs). Status and outbox are scratch and get swept;
       the `runs` record is the durable audit trail, so make it stand alone. If YOU
-      hold `librarian`, write it into `spaces/core/runs/` directly instead of submitting.
+      hold `librarian`, file it into `spaces/core/runs/` through `space-librarian` in core's repo (no bus commit) instead of submitting.
    f. If the executor surfaced a durable learning, drop a `library.submit` message
       into `tasks/roles/librarian/`, tagged with its `category` (`lore`, `notes`,
       `refs`, `workflows`, `runs`) and the common record header (the `librarian`

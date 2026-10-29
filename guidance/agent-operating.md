@@ -68,7 +68,7 @@ construction, not resolved after the fact.
 | new files under `tasks/roles/<role>/` and `tasks/<other-id>/` (to send work, including a `library.submit` into `tasks/roles/librarian/`) | files in your own inbox `tasks/<your-id>/` |
 | — | `spaces/core/**` and `spaces/lore/**` unless you hold the `librarian` role |
 | `_archive/**` only if you hold the `archiver` role | the `product/` gitlink and `.gitmodules` (operator only — never touch the product pin) |
-| inside `spaces/<path>/` only as that space's librarian (below), in the space's own repo | `spaces.yaml` and the `spaces/` gitlinks (operator only); any space you are not the librarian of |
+| inside `spaces/<path>/` only as that space's librarian (below), in the space's own repo; and in a `librarian: none` scratch space (`spaces/tmp`), as any agent of the mesh through `mesh-scratch`, never as an executor | `spaces.yaml` and the `spaces/` gitlinks (operator only); any space that has a librarian you are not |
 
 Who writes each space of the library and scratch:
 
