@@ -1,6 +1,6 @@
 ---
 name: space-librarian
-description: File records into a memory space (a Project Space or any other rw space) after the header-profile, reference and id checks, one commit per record, pushed to the space's main. Invoke when a librarian node files records into a space that spaces.yaml assigns to its role, when a session with no bus files a record into a space checkout, or when someone asks to file, check or desk-run records for a space.
+description: File records into a memory space (a Project Space or any other rw space) after the header-profile, reference and id checks, one commit per record, pushed to the space's main; in integrate mode, a change's renames and edits in one commit. Invoke when a librarian node files records into a space that spaces.yaml assigns to its role, when a session with no bus files a record into a space checkout, when a change's lead files its integrate update, or when someone asks to file, check or desk-run records for a space.
 allowed-tools: Read, Write, Bash, Grep, Glob
 ---
 
@@ -9,7 +9,9 @@ allowed-tools: Read, Write, Bash, Grep, Glob
 A memory space (the memory-spaces design) is a git repo of records with one
 writer per mesh, its librarian. This skill is that writer. It is given a space
 root and record files, checks each record, and files the ones that pass: one
-commit per record, pushed to the space's `main`. It needs no bus.
+commit per record, pushed to the space's `main`. A change's integrate is the
+one exception, filed in one commit in integrate mode (section 3). It needs no
+bus.
 
 ## Who runs it
 
@@ -39,6 +41,8 @@ hand it over, is the caller's job.
 - **Bus root** (optional). If not given, the bus is the space's superproject,
   else the `REPO_PATH` in `~/.agent-identity.env`. It counts only if it has
   `agents/`. With none, there is no bus.
+
+Integrate mode takes renames as well (section 3).
 
 ## Output
 
@@ -105,6 +109,10 @@ The three checks, as the check script `check.sh` runs them:
   other file in the space holds it. Evidence, decisions and handoffs are one
   file per event, so a record there whose path is already on `origin/main`
   with other content is refused as `id`.
+- **Test fixtures.** A file under `changes/*/tests/fixtures/` or
+  `tests/*/fixtures/` gets the profile check only, in every mode. Fixture
+  data may look like records, but it is a test's input, so its ids and
+  citations are not checked.
 
 The script is `check.sh`, shipped beside this file in the skill's directory,
 `<skill dir>`. Run that file with `sh` as it ships; never copy it into the
@@ -121,6 +129,9 @@ output. The script is POSIX `sh`, and its patterns are `grep -E`, `sed -E`
 and POSIX `awk` (no `grep -P`, no GNU-only flag), so it runs unchanged with
 BSD and GNU tools. The value lists it builds stay in its own temporary
 directory, which it deletes on exit.
+
+In integrate mode, `--move <from> <to>` pairs come before the records
+(section 3).
 
 ## 2. Commit, push, confirm
 
@@ -185,19 +196,131 @@ allowlist must hold the space root. Messages are plain text on one line.
    Only if it exits 0, print `FILED <space path> <sha7>`, where `<sha7>` is
    the first seven characters of `<commit>`.
 
+## 3. Integrate mode
+
+At a change's integrate, the change's lead files the update in one commit
+(swe-pod `PROCESS.md` §8): two renames, the change's tests into
+`tests/<id>/` and its folder into `changes/archive/<yyyy-mm-dd>-<id>/`, and
+the edited and new files. Only the lead uses this mode, and only there. It
+is the one exception to one record per commit.
+
+**Inputs.**
+
+- The space root, as in section 2, and the change id, for the message.
+- **Renames**: an ordered list of `<from> <to>` pairs of space paths, each a
+  file or a folder. They are made in the order given, so a folder inside
+  another renamed folder comes first: `changes/<id>/tests` to `tests/<id>`,
+  then `changes/<id>` to `changes/archive/<yyyy-mm-dd>-<id>`. Each `<from>`
+  holds tracked files, and no `<to>` exists yet.
+- **Records**: the edited and new files, each named by its path after the
+  moves. Write them all first, where they are before the moves; a record
+  inside a renamed folder moves with it.
+
+**Paths.** The update's paths are the tracked files under each rename, named
+by their paths after the moves, and the records: each once, in sorted order.
+An untracked file inside a renamed folder moves with it, but is filed only if
+it is a record.
+
+**Output.** If the update is filed, `FILED <space path> <sha7>` for every
+path, each with the one commit's `<sha7>`. If any path is refused,
+`REFUSED <space path>: <profile|reference|id> line <n>` for each refused
+path, and nothing else: a refused path refuses the whole commit, and no path
+is filed.
+
+1. Start from the tip:
+
+   ```
+   git -C <space root> fetch origin
+   git -C <space root> rebase --autostash origin/main
+   ```
+
+2. Check every path, before any rename is made:
+
+   ```
+   SPACE=<space root> sh <skill dir>/check.sh --move <from> <to> ... <record> ...
+   ```
+
+   Give one `--move <from> <to>` per rename, in order, then the records. The
+   script reads each path where it is now and runs the three checks of
+   section 1 on it under its path after the moves. A moved record whose id
+   is the one at its old path on `origin/main` passes the id check: an id
+   that moves with its record is neither new nor a duplicate. A moved
+   evidence, decision or handoff record must also be unchanged from its old
+   path. If the script prints any `REFUSED` line, print those lines and
+   stop. Nothing has changed. A `bad rename` or `no such record` line from
+   the script is an error for the caller: report it and stop.
+
+3. Make the renames, in order, then commit once. For each rename:
+
+   ```
+   mkdir -p <space root>/<folder that holds to>
+   git -C <space root> mv -- <from> <to>
+   ```
+
+   Skip a rename whose `<from>` is gone and whose `<to>` is present: an
+   earlier run made it. If a `git mv` fails, undo the renames already made
+   (step 6) and stop. Then:
+
+   ```
+   git -C <space root> add -- <record> ...
+   git -C <space root> commit -m "Integrate <change id>" -- <from> <to> ... <record> ...
+   ```
+
+   The commit names every `<from>`, every `<to>` and every record, so it
+   holds the renames and the edits, each file as the check read it, and no
+   other change. If git reports nothing to commit, or that a `<from>` matches
+   no file, an earlier run made the commit; go on to step 4.
+
+4. Bring the commit onto the tip, and find it:
+
+   ```
+   git -C <space root> fetch origin
+   git -C <space root> rebase --autostash origin/main
+   git -C <space root> log -1 --format=%H -- <first to>
+   ```
+
+   `<first to>` is the first rename's `<to>`, and the last command prints
+   `<commit>`. Run step 2's check again, with the same arguments, since the
+   rebase may have brought in a record that now holds an id. If it prints
+   any `REFUSED` line, undo the commit with
+   `git -C <space root> reset -q --soft HEAD~1`, undo the renames (step 6),
+   print those lines, and stop.
+
+5. Push and confirm as section 2 does in its steps 4 and 5:
+   `git -C <space root> push origin HEAD:main`, repeating step 4 after a
+   rejected push, three pushes at most. After a rebase conflict, run
+   `git -C <space root> rebase --abort`. After a conflict or a third
+   rejected push, print nothing and tell the caller that filing stopped.
+   Otherwise fetch, and only if
+   `git -C <space root> merge-base --is-ancestor <commit> origin/main` exits
+   0, print `FILED <space path> <sha7>` for each path the check printed as
+   `CHECKED`, in its order.
+
+6. To undo the renames, move each one made back, the last first:
+
+   ```
+   mkdir -p <space root>/<folder that holds from>
+   git -C <space root> mv -- <to> <from>
+   ```
+
+   The records keep their content.
+
 ## Desk run
 
 When the caller asks for a desk run, run the check script (section 1) as
 written, since it only reads. Then print each command of section 2 for each
 `CHECKED` record, in order, with the space root, path and message filled in
 and `<commit>` left as it is, and run none of them. A desk run prints no
-`FILED` line.
+`FILED` line. In integrate mode, run step 2's check, then print the commands
+of steps 1 and 3 to 5, filled in the same way.
 
 ## Never
 
 - Print a matched line, a pattern list or a value from one, or write any of
   them inside the space.
-- Commit more than one record in a commit, or commit a file it was not given.
+- Commit more than one record in a commit, outside integrate mode (section
+  3), its only exception; or commit a file it was not given. In integrate
+  mode, the tracked files under a rename count as given.
 - Force-push, push anything other than `HEAD:main`, or create a branch in the
   space.
 - Write a space listed `access: ro`. This skill commits only in the space's
