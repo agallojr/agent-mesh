@@ -809,7 +809,9 @@ cmd_mount() {
   if [ -s "$SCR/unsplit" ]; then cat "$SCR/unsplit"; exit 4; fi
 
   # Network first: the submodules. Nothing under the library or scratch
-  # changes until all three are in.
+  # changes until all three are in. With -b main each checkout is left on
+  # its main branch, attached: the sync tool checks scratch in on a branch
+  # and stops at a detached HEAD with changes.
   gd=$(git -C "$BUS" rev-parse --git-common-dir) ||
     fail "find the bus's git dir"
   case $gd in /*) ;; *) gd=$BUS/$gd ;; esac
