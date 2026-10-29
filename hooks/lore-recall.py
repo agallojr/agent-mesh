@@ -5,13 +5,14 @@ Every Claude session on a mesh node — interactive OR the /mesh-on poll loop �
 should begin already aware of the operational lore that holds on THIS machine.
 The failure this fixes: an agent cannot grep for lore it does not know exists.
 The guidance says "consult the library before acting" (PROTOCOL §7, agent-
-operating step 4a), but the CLAUDE.md @-import chain never loads memory/lore/,
+operating step 4a), but the CLAUDE.md @-import chain never loads the lore folder,
 so a fresh session has no signal that any relevant gotcha is on file. Agents
 were repeatedly re-discovering things already recorded (e.g. where the q8020
 GitHub issue tracker lives).
 
 What it does: resolve this node's AGENT_CONTEXT from ~/.agent-identity.env, grep
-memory/lore/*.md front-matter for records whose `contexts` include that context
+spaces/lore/lore/*.md (memory/lore/ if absent) front-matter for records whose
+`contexts` include that context
 (the coarse environment class, PROTOCOL §4/§7) OR are empty (universal — true
 everywhere), and inject a compact CATALOG (id · title, plus tags) into the
 session's initial context. It injects the catalog, not the full bodies: the
@@ -121,7 +122,11 @@ def main() -> int:
     if not repo:
         return 0  # no bus location — nothing to scan; fail open
 
-    lore_dir = os.path.join(repo, "memory", "lore")
+    # New home first; memory/lore is the compatibility link path, read only
+    # when the space folder is absent.
+    lore_dir = os.path.join(repo, "spaces", "lore", "lore")
+    if not os.path.isdir(lore_dir):
+        lore_dir = os.path.join(repo, "memory", "lore")
     if not os.path.isdir(lore_dir):
         return 0
 

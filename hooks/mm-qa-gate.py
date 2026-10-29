@@ -75,11 +75,11 @@ def _guidance_paths() -> str:
     if repo:
         return (
             f"{repo}/product/guidance/best-practices.base.md and "
-            f"{repo}/memory/best-practices.user.md (skip if absent)"
+            f"{repo}/spaces/core/best-practices.user.md (skip if absent)"
         )
     return (
         "the bus's product/guidance/best-practices.base.md and "
-        "memory/best-practices.user.md (resolve the bus root from "
+        "spaces/core/best-practices.user.md (resolve the bus root from "
         "~/.agent-identity.env REPO_PATH or the working bus clone; "
         "skip the overlay if absent)"
     )
