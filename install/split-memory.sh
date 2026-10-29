@@ -38,7 +38,6 @@ export LC_ALL=C
 
 NL='
 '
-TAB=$(printf '\t')
 Q="'"
 AT=agent-tmp            # the bus's scratch folder; a link once mounted
 TMPM=spaces/tmp         # where the bus mounts scratch
@@ -298,29 +297,26 @@ EOF
   if [ -z "$THIS" ]; then
     echo "REFUSED readiness this node: no AGENT_CONTEXT"; exit 3
   fi
-  : > "$SCR/last"
-  if [ -n "$READINESS" ] && [ -d "$READINESS" ]; then
-    for f in "$READINESS"/*; do
-      [ -f "$f" ] || continue
-      l=$(tr -d '\r' < "$f" | awk 'NF { x = $0 } END { print x }' |
-        sed -E 's/[[:space:]]+$//')
-      printf '%s\t%s\n' "$f" "$l" >> "$SCR/last"
-    done
-  fi
+  # A class's report is <readiness>/<class>.txt. No such file is missing; a
+  # file whose last line that is not blank, a trailing carriage return
+  # dropped, is not READY <class> is not ready. This node's report must
+  # also hold its OK <class> filter-repo line.
   printf '%s\n%s\n' "$REG" "$THIS" | grep -v '^$' | sort -u > "$SCR/need"
   while IFS= read -r c; do
     inlist "$c" "$ASIDE" && continue
-    st=missing
-    while IFS=$TAB read -r f l; do
-      case $l in
-        "READY $c")
-          if [ "$c" != "$THIS" ] || has_filter_repo "$f" "$c"; then
-            st=ok; break
-          fi
-          st="not ready" ;;
-        "NOT READY $c"|"NOT READY $c:"*) st="not ready" ;;
-      esac
-    done < "$SCR/last"
+    f=$READINESS/$c.txt
+    if [ -z "$READINESS" ] || [ ! -f "$f" ]; then
+      st=missing
+    else
+      l=$(awk '{ sub(/\r$/, "") } NF { x = $0 } END { print x }' "$f")
+      if [ "$l" != "READY $c" ]; then
+        st="not ready"
+      elif [ "$c" = "$THIS" ] && ! has_filter_repo "$f" "$c"; then
+        st="not ready"
+      else
+        st=ok
+      fi
+    fi
     if [ "$st" != ok ]; then echo "REFUSED readiness $c: $st"; bad=1; fi
   done < "$SCR/need"
   [ "$bad" = 0 ] || exit 3
