@@ -408,8 +408,11 @@ they last, and the later change that removes them bumps it (PROTOCOL §3.3).
 | a project space | `<project>-space` |
 
 The bus and scratch belong to this mesh. Core, lore and project spaces carry no
-mesh name, so they travel without it: you may give one's URL to a collaborator,
-who uses it with their own agents, with or without a mesh. The split tool
+mesh name, so they travel without it. A project space may go to a
+collaborator, who uses it with their own agents, with or without a mesh. Core
+and lore stay yours: their records use the mesh profile, with agent ids,
+hostnames and home paths, so they go to no collaborator, but they move with
+you to any other mesh of yours. The split tool
 prints the four names of your mesh and you:
 
 ```sh
@@ -511,9 +514,10 @@ fixes it, such as "grant this node's git credential read access to `<repo>`;
 a token limited to named repos needs `<repo>` added". Apply it and run the
 check again, until the node prints `READY <class>`.
 
-Save each node's whole output as one file per class in a readiness folder on
-the node that runs the split, outside every repo and outside the work folder
-of step 7, for example `/abs/split-readiness/<class>.txt`. Start no later step
+Save each node's whole output as `<class>.txt`, one file per class, in a
+readiness folder on the node that runs the split, outside every repo and
+outside the work folder of step 7, such as `/abs/split-readiness/`: the split
+reads each class's report from that file name only. Start no later step
 until every node's report ends in `READY <class>`.
 
 **4. Leaving a node out.** The split needs a `READY` report for every
@@ -538,7 +542,8 @@ unpushed: the split refuses otherwise.
 scratch only the files tracked under `agent-tmp/` at the bus's `origin/main`
 before the split. Decide, for each top-level folder there that holds
 untracked, non-ignored files: keep it as a spike (`--keep <folder>`), leave it
-out (`--leave <folder>`, then move it out of the bus before step 10), or delete
+out (`--leave <folder>`, then move its untracked files out of the bus before
+step 10; its tracked files go to scratch with the split), or delete
 it. For the ignored files inside spikes, decide whether mount carries them into
 scratch (`--carry-ignored` at step 10) or you delete them.
 
@@ -559,7 +564,7 @@ in order, and at the first that fails prints its lines, makes nothing under
 
 | Check | Refusals | Exit |
 |---|---|---|
-| readiness | `REFUSED set-aside <class>: not registered` or `: this node`; `REFUSED readiness this node: no AGENT_CONTEXT`; `REFUSED readiness <class>: missing` or `: not ready`, per class with no report whose last line is `READY <class>`, and for this node's class when its report has no `OK <class> filter-repo` line | 3 |
+| readiness | `REFUSED set-aside <class>: not registered` or `: this node`; `REFUSED readiness this node: no AGENT_CONTEXT`; `REFUSED readiness <class>: missing`, when the readiness folder holds no `<class>.txt`; `: not ready`, when that file exists but its last line that is not blank is not `READY <class>`, or, for this node's class, when it has no `OK <class> filter-repo` line; `: not a class name`, for a class that is not letters, digits, `.`, `_` and `-` starting with a letter or digit | 3 |
 | library clean | `REFUSED fetch: no origin/main`; `REFUSED unclean memory/: <n> uncommitted, <m> unpushed`, for a staged, unstaged or untracked path under `memory/`, or a commit touching `memory/` or `agent-tmp/` that `origin/main` lacks, before the split | 4 |
 | mapped | `UNMAPPED <path>`, for a file under `memory/` before the split outside the five categories and `memory/best-practices.user.md`, or a `.gitattributes`, `.gitignore` or `space.yaml` at the top of `agent-tmp/`, which scratch's own root files would replace | 4 |
 | decided | `UNDECIDED agent-tmp/<folder>` for a folder of step 6 that no `--keep` or `--leave` names, before the split; `REFUSED keep agent-tmp/<folder>:` with `not a spike name`, `also left`, `no untracked file` or `holds a git repo` | 4 |
@@ -651,7 +656,9 @@ git -C /abs/bus clean -f -- agent-tmp/<folder>
 carries or you delete. `clean -n` lists the files that `clean -f` removes: the
 untracked, non-ignored files, the same the keep commit copied. Remove nothing
 tracked by hand: mount removes the tracked files itself, and refuses a tracked
-file you changed or deleted. Move each `--leave` folder out of the bus.
+file you changed or deleted. Move each `--leave` folder's untracked files out
+of the bus, and leave its tracked files: the split carried them into scratch,
+and mount removes them from the bus.
 
 **10. Mount**, in the bus clone. It commits nothing.
 

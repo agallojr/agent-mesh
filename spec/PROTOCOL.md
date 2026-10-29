@@ -1133,8 +1133,10 @@ loop (poller subagent):
   0. PARK on the scanner -- ONE SYNCHRONOUS call (zero tokens while it blocks;
      never a background call, which can be orphaned by end-of-turn):
        skills/mesh-on/mesh-scan-loop.sh /abs/repo <AGENT_ROLES> <AGENT_ID> <POLL>
-     the script loops internally -- pull --rebase + submodule update --init
-     --remote --recursive (a product bump on the bus takes effect here), scan
+     the script loops internally -- pull --rebase, then the boot block's
+     per-path submodule updates (a code submodule --init --recursive, with
+     --remote only in developer mode; a cloned space --remote --merge; a
+     product bump on the bus takes effect here), scan
      tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/,
      rewrite and push last_poll in agents/<AGENT_ID>.yaml (the heartbeat), and
      sleep POLL between scans -- exiting on:

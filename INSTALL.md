@@ -209,9 +209,24 @@ values are secrets. The management model is **names travel, values never do**:
   site's supported credential mechanism where one exists.
 
 ## 5. Check the node
-Run the product's readiness check against the bus clone. It is read-only, and
-it reads this node's environment class from `AGENT_CONTEXT` in the identity
-file:
+Steps 1 to 4 leave two of this check's items undone, so a node set up from
+this file alone prints `NOT READY` here until you also:
+
+- register the product's lore hook as a SessionStart hook in
+  `~/.claude/settings.json`, under `hooks` beside the git gate of step 2c,
+  with `<REPO>` the literal path of the bus clone:
+
+      "SessionStart": [{"hooks": [{"type": "command",
+        "command": "/usr/bin/python3 <REPO>/product/hooks/lore-recall.py"}]}]
+
+- link the SWE Pod's six role definitions, `swe-spec.md`, `swe-plan.md`,
+  `swe-lead.md`, `swe-build.md`, `swe-test.md` and `swe-review.md`, into
+  `~/.claude/agents/`, and its `swe-pod` skill folder into `~/.claude/skills/`,
+  from a checkout of the SWE Pod.
+
+Then run the product's readiness check against the bus clone. It is read-only,
+and it reads this node's environment class from `AGENT_CONTEXT` in the
+identity file:
 
     sh "$REPO/product/install/check-ready.sh" after --bus "$REPO"
 

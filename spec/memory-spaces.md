@@ -70,8 +70,10 @@ number of shared lore and project spaces. Any shared space may instead be
 public. Every space but scratch has exactly one librarian per mesh, the mesh's
 only writer to it; one librarian may manage several spaces. Scratch has none:
 any agent of its one mesh writes it (§6.4). Core, lore and project spaces are
-portable: a space's URL may be handed to someone who uses it with or without a
-mesh. Scratch belongs to one mesh and is never handed on. A **Project Space** is
+portable: a project space's URL may be handed to someone who uses it with or
+without a mesh, while core and lore, whose records use the mesh profile, stay
+their owner's and move with the owner to any other mesh of theirs. Scratch
+belongs to one mesh and is never handed on. A **Project Space** is
 a concept, a kind of memory space, not a product; tools such as the SWE Pod
 define what goes in one.
 

@@ -94,7 +94,10 @@ commit, so all nodes on the same bus commit run byte-identical code. Nodes ride
 the **recorded pin** (adopter mode, the default): a sync realizes the commit the
 bus records, not product `main` tip. Shipping a mesh-wide update = bump the
 submodule pin in one bus commit; nodes pick it up on their next `git pull` +
-`git submodule update --init --recursive`. (Tracking `main` tip is developer mode,
+`git submodule update --init --recursive -- product`, while each cloned space
+follows its own tip (`git submodule update --remote --merge -- spaces/core
+spaces/lore spaces/tmp`, as `INSTALL.md`'s Notes give).
+(Tracking `main` tip is developer mode,
 opt-in per node via `MESH_PRODUCT_TRACK=tip` — for the maintainer's own mesh; see
 [`INSTALL.md`](INSTALL.md).) The installer (`install/install.sh`) scaffolds a fresh
 bus from `bus-skeleton/`, adds this product as the `product/` submodule at a chosen
