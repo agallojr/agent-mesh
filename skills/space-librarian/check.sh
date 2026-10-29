@@ -5,6 +5,35 @@ trap 'rm -rf "$W"' EXIT
 esc() { sed -e 's#[[\.*^$+?(){}|]#\\&#g'; }
 val() { sed -n -E "s/^$1:[[:space:]]*\"?([^\"#[:space:]]+).*/\\1/p" "$2"; }
 
+# Integrate mode: `--move <from> <to>` pairs come first, in the order the
+# renames are made. Each path is then named as it will be after the moves,
+# and the tracked files under each rename are checked too, under those names.
+# A path is read where it is now: before the moves, at its old path.
+TAB=$(printf '\t')
+: > "$W/moves"
+while [ "${1:-}" = --move ]; do
+  if [ $# -lt 3 ]; then echo "--move needs <from> <to>" >&2; exit 2; fi
+  a=${2#./}; a=${a%/}; b=${3#./}; b=${b%/}
+  x=0; y=0; [ -e "$SPACE/$a" ] && x=1; [ -e "$SPACE/$b" ] && y=1
+  if [ "$x" = "$y" ]; then echo "bad rename: $a $b" >&2; exit 2; fi
+  printf '%s\t%s\n' "$a" "$b" >> "$W/moves"; shift 3
+done
+sed -n '1!G;h;$p' "$W/moves" > "$W/moves.rev"
+fwd() {  # path $1 after the moves
+  p=$1
+  while IFS=$TAB read -r a b; do
+    case "$p" in "$a") p=$b ;; "$a"/*) p=$b/${p#"$a"/} ;; esac
+  done < "$W/moves"
+  printf '%s\n' "$p"
+}
+old() {  # path $1 before the moves
+  p=$1
+  while IFS=$TAB read -r a b; do
+    case "$p" in "$b") p=$a ;; "$b"/*) p=$a/${p#"$b"/} ;; esac
+  done < "$W/moves.rev"
+  printf '%s\n' "$p"
+}
+
 # The bus: given, else the space's superproject, else the node's REPO_PATH.
 if [ -z "${BUS:-}" ]; then
   BUS=$(git -C "$SPACE" rev-parse --show-superproject-working-tree 2>/dev/null)
@@ -142,13 +171,31 @@ BASE=HEAD
 if git -C "$SPACE" rev-parse -q --verify origin/main >/dev/null 2>&1; then
   BASE=origin/main
 fi
-for r in "$@"; do
+# The paths: in integrate mode, the tracked files under each rename and the
+# records, each once, in sorted order; otherwise the records as given.
+: > "$W/todo"
+if [ -s "$W/moves" ]; then
+  while IFS=$TAB read -r a b; do
+    git -c core.quotepath=off -C "$SPACE" ls-files -- "$a" "$b"
+  done < "$W/moves" | while IFS= read -r p; do fwd "$p"; done > "$W/list"
+  for r in "$@"; do printf '%s\n' "${r#./}"; done >> "$W/list"
+  LC_ALL=C sort -u "$W/list" > "$W/todo"
+else
+  for r in "$@"; do printf '%s\n' "$r"; done > "$W/todo"
+fi
+while IFS= read -r r <&3; do
   r=${r#./}; f=$SPACE/$r
+  [ -f "$f" ] || f=$SPACE/$(old "$r")
   if [ ! -f "$f" ]; then echo "no such record: $r" >&2; continue; fi
   # profile
   n=$(grep -naE -f "$W/profile" "$f" | head -n 1 | cut -d: -f1)
   if [ -n "$n" ]; then echo "REFUSED $r: profile line $n"; continue; fi
-  case "$r" in *.md) ;; *) echo "CHECKED $r"; continue ;; esac
+  # Test fixtures are data, not records: the profile check only.
+  case "$r" in
+    changes/*/tests/fixtures/*|tests/*/fixtures/*) echo "CHECKED $r"; continue ;;
+    *.md) ;;
+    *) echo "CHECKED $r"; continue ;;
+  esac
   # reference
   n=$(refs "$f" | sort -n | while read -r ln c; do
         resolve "$c" || { echo "$ln"; break; }
@@ -169,13 +216,19 @@ for r in "$@"; do
       decisions/*|handoffs/*) ev=1
         form="$form|[0-9]{8}T[0-9]{4}Z-[a-z0-9][a-z0-9-]*" ;;
     esac
-    if git -C "$SPACE" cat-file -e "$BASE:$r" 2>/dev/null; then
+    # A moved record is compared with its old path: an id that moves with
+    # it is neither new nor a duplicate.
+    q=$(old "$r")
+    git -C "$SPACE" cat-file -e "$BASE:$q" 2>/dev/null || q=$r
+    if git -C "$SPACE" cat-file -e "$BASE:$q" 2>/dev/null; then
       if [ "$ev" = 1 ]; then
-        git -C "$SPACE" diff --quiet "$BASE" -- "$r" ||
+        if [ "$q" = "$r" ] && [ "$f" = "$SPACE/$r" ]; then
+          git -C "$SPACE" diff --quiet "$BASE" -- "$r"
+        else git -C "$SPACE" show "$BASE:$q" | cmp -s - "$f"; fi ||
           { echo "REFUSED $r: id line $n"; continue; }
         echo "CHECKED $r"; continue
       fi
-      o=$(git -C "$SPACE" show "$BASE:$r" | idof)
+      o=$(git -C "$SPACE" show "$BASE:$q" | idof)
       if [ "${o#* }" = "$id" ]; then echo "CHECKED $r"; continue; fi
     fi
     if ! printf '%s\n' "$id" | grep -qE "^($form)\$" ||
@@ -183,4 +236,4 @@ for r in "$@"; do
     then echo "REFUSED $r: id line $n"; continue; fi
   fi
   echo "CHECKED $r"
-done
+done 3< "$W/todo"
