@@ -276,8 +276,18 @@ def compose_submit(cfg: Config, p: Parsed, msg_id: str) -> str:
     return "\n".join(fm) + "\n\n" + p.body + "\n"
 
 
-def git_sync(repo: str, message: str) -> None:
-    for args in (["add", "-A"], ["commit", "-m", message],
+def git_sync(repo: str, message: str, paths: list[str]) -> None:
+    """Stage and commit only `paths` (relative to repo), then push.
+
+    Naming the paths on both the add and the commit keeps anything else
+    staged or modified in the bus, a stale submodule checkout among them,
+    out of the commit: a stage-all there records a submodule's checkout as
+    its pin (PROTOCOL section 8, the commit rule).
+    """
+    if not paths:
+        raise ValueError("git_sync needs at least one path")
+    for args in (["add", "--", *paths],
+                 ["commit", "-m", message, "--", *paths],
                  ["push", "origin", "HEAD"]):
         subprocess.run(["git", "-C", repo, *args], check=True,
                        capture_output=True, text=True)
@@ -337,7 +347,12 @@ def run_once(cfg: Config, token: str, dry: bool) -> None:
                 continue
             _write(cfg, rel, submit)
             _append_index(cfg, p.message_id)
-            git_sync(cfg.repo, f"post library.submit from email {msg_id}")
+            paths = [rel]
+            if os.path.exists(ingested_index_path(cfg)):
+                paths.append(os.path.relpath(ingested_index_path(cfg),
+                                             cfg.repo))
+            git_sync(cfg.repo, f"post library.submit from email {msg_id}",
+                     paths)
             _mark(token, lmap, ref["id"], "mesh-processed", dry)
             print(f"  posted {rel} and marked processed")
         else:
@@ -353,7 +368,8 @@ def run_once(cfg: Config, token: str, dry: bool) -> None:
                 print(f"  WOULD write reject audit {rel}: {json.dumps(audit)}")
                 continue
             _write(cfg, rel, json.dumps(audit, indent=2) + "\n")
-            git_sync(cfg.repo, f"reject email ingress {reason} {ref['id']}")
+            git_sync(cfg.repo, f"reject email ingress {reason} {ref['id']}",
+                     [rel])
             _mark(token, lmap, ref["id"], "mesh-rejected", dry)
             print(f"  wrote reject audit {rel} and marked rejected")
 

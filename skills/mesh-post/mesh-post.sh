@@ -4,7 +4,11 @@
 # mechanical part so the caller only supplies intent + body: resolves identity,
 # pulls, assigns a GLOBALLY-UNIQUE id per message, emits schema-correct
 # frontmatter, places the file in the right queue, then scope-commits (only the
-# files it wrote — never `git add -A`) and pushes with pull-rebase retry.
+# files it wrote, by pathspec, never a stage-all) and pushes with pull-rebase
+# retry. It never records a submodule pin: it uses mesh-commit.sh's checks
+# (skills/mesh-on/, sourced) to lift a staged gitlink out of the index around
+# the rebase, to check that its commit holds only its files, and to refuse to
+# push while a commit not yet on origin changes a gitlink.
 #
 # Usage:
 #   mesh-post.sh --type <type> --title <slug> --body-file <path> \
@@ -34,7 +38,8 @@
 # in this same run. Posting one task to N roles therefore yields N distinct ids.
 #
 # Git gate: gated ops use the literal `-C <repo>` form and plain-text commit
-# messages (no ; & | $() backticks), and stage only the exact new files.
+# messages (no ; & | $() backticks), and stage and commit only the exact new
+# files (git add -- <files>; git commit -- <files>).
 #
 # Portable: bash 3.2 (macOS default) and bash 4/5; BSD and GNU userland. UTC via
 # `date -u`. No associative arrays, no `timeout`, no GNU-only flags.
@@ -100,6 +105,12 @@ if [ -z "$REPO" ]; then
 fi
 [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "not a git repo: $REPO"
 
+# mesh-commit.sh's functions (sourcing runs nothing): gitlink lift and checks.
+MP_DIR=$(cd "$(dirname "$0")" && pwd)
+MP_MC="$MP_DIR/../mesh-on/mesh-commit.sh"
+[ -f "$MP_MC" ] || die "mesh-commit.sh not found at $MP_MC"
+. "$MP_MC"
+
 # normalize slug: lowercase, non-alnum -> '-', collapse, trim
 slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' \
@@ -108,9 +119,12 @@ slugify() {
 SLUG=$(slugify "$TITLE")
 [ -n "$SLUG" ] || die "--title produced an empty slug"
 
-# --- pull first (ungated) so seq/id scan sees the latest queues ---
+# --- pull first (ungated) so seq/id scan sees the latest queues; a staged
+# gitlink is lifted out around it so a rebase cannot record it ---
+mc_lift_gitlinks
 git -C "$REPO" pull --rebase --quiet 2>/dev/null || \
   echo "mesh-post: warning: pull --rebase failed; continuing on local view" >&2
+mc_restore_gitlinks
 
 STAMP=$(date -u +%Y%m%dT%H%M)
 CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -169,7 +183,7 @@ CRED_YAML=$(yaml_list "$CREDS")
 DEP_YAML=$(yaml_list "$DEPENDS")
 
 WRITTEN=""      # newline: "<target>\t<id>\t<path>"
-STAGE=""        # space-separated paths for one scoped git add
+NAMED=""        # newline: each written file, relative to REPO
 
 while IFS= read -r TARGET; do
   [ -n "$TARGET" ] || continue
@@ -206,7 +220,8 @@ while IFS= read -r TARGET; do
 
   WRITTEN="$WRITTEN$TARGET	$ID	$FILE
 "
-  STAGE="$STAGE $FILE"
+  NAMED="$NAMED${FILE#"$REPO"/}
+"
 done <<EOF
 $TARGETS
 EOF
@@ -217,28 +232,43 @@ printf '%s' "$WRITTEN" | while IFS=$'\t' read -r t id p; do
   echo "  $t  id=$id  $p"
 done
 
+set --
+while IFS= read -r p; do [ -n "$p" ] && set -- "$@" "$p"; done <<EOF
+$NAMED
+EOF
+
 if [ "$DRYRUN" -eq 1 ]; then
-  git -C "$REPO" add $STAGE
+  git -C "$REPO" add -- "$@"
   echo "mesh-post: --dry-run: staged but did not commit/push."
   exit 0
 fi
 
-# --- gated: scoped add, plain-text commit, push with pull-rebase retry ---
-git -C "$REPO" add $STAGE || die "git add failed"
+# --- gated: scoped add and commit, plain-text message, push with retry ---
+git -C "$REPO" add -- "$@" || die "git add failed"
 
 IDS=$(printf '%s' "$WRITTEN" | awk -F'\t' 'NF{printf "%s%s",sep,$2; sep=","}')
 TOS=$(printf '%s' "$WRITTEN" | awk -F'\t' 'NF{printf "%s%s",sep,$1; sep=","}')
 MSG="post $TYPE to $TOS ids $IDS"
-git -C "$REPO" commit -m "$MSG" || die "git commit failed"
+git -C "$REPO" commit -q -m "$MSG" -- "$@" || die "git commit failed"
+mc_commit_ok HEAD || die "the commit holds a path it did not write or a gitlink; not pushed"
 
+BRANCH=$(git -C "$REPO" symbolic-ref -q --short HEAD 2>/dev/null || true)
 PUSHED=0
 i=1
 while [ "$i" -le 3 ]; do
-  if git -C "$REPO" push origin HEAD 2>/dev/null; then
+  if mc_outgoing_gitlink "$BRANCH"; then
+    die "a commit not yet on origin changes a submodule pin; not pushing (commit is local at $REPO)"
+  fi
+  if git -C "$REPO" push -q origin HEAD 2>/dev/null; then
     PUSHED=1; break
   fi
   echo "mesh-post: push rejected (attempt $i); pull --rebase and retry" >&2
-  git -C "$REPO" pull --rebase --quiet 2>/dev/null || true
+  mc_lift_gitlinks
+  git -C "$REPO" pull --rebase --autostash --quiet 2>/dev/null || \
+    git -C "$REPO" rebase --abort 2>/dev/null
+  mc_restore_gitlinks
+  mc_commit_ok HEAD || \
+    die "the rebased commit holds a path it did not write or a gitlink; not pushed"
   i=$((i+1))
 done
 [ "$PUSHED" -eq 1 ] || die "push failed after 3 attempts; commit is local at $REPO"
