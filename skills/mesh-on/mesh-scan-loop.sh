@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# mesh-scan-loop.sh — read-only mesh poll loop. The Claude poller parks on this
+# mesh-scan-loop.sh — mesh poll loop, read-only but for its last_poll heartbeat
+# (below). The Claude poller parks on this
 # script as ONE SYNCHRONOUS Bash call and acts on its exit. It exits when there
 # is real work (or a stop/layout signal), or with IDLE at MAX_WAIT_SEC — the
 # poller re-launches immediately on IDLE (a token-trivial re-park).

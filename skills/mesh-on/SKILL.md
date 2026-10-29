@@ -156,8 +156,11 @@ pulls and scans the queues and blocks until there is real work, a stop, or its
 idle deadline (~4 min), where it returns `IDLE` and the poller immediately
 re-parks. The deadline sits under the 5-min prompt-cache TTL, so each re-park
 reads the poller's context from cache instead of re-writing it. An idle node
-therefore costs zero commits and near-zero tokens (one cache-read re-park per
-~4 min). The scanner runs on macOS and Linux (bash 3.2+, no external `timeout`).
+therefore costs near-zero tokens (one cache-read re-park per ~4 min) and one
+heartbeat commit per poll interval: each scan rewrites `last_poll` in this
+node's `agents/<AGENT_ID>.yaml` and pushes it through `mesh-commit.sh`, so
+`mesh-check` can name a node that has stopped polling. The scanner runs on
+macOS and Linux (bash 3.2+, no external `timeout`).
 
 Pass `MESH_PRODUCT_TRACK` through to the poller so it reaches the scanner. You
 sourced `~/.agent-identity.env`, so the value (if any) is in your environment;
