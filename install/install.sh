@@ -245,16 +245,20 @@ cat <<EOF
        lore     <owner>-lore            from ${BUS_PATH}/product/templates/spaces/lore
        scratch  agent-mesh-<mesh>-tmp   from ${BUS_PATH}/product/templates/spaces/tmp
      For each: create the empty remote, copy the template's files to the repo
-     root, fill in <owner> and <mesh> in space.yaml, commit and push main.
+     root, and the bus skeleton's ${BUS_PATH}/.gitattributes and .gitignore
+     with them (the LFS rules), fill in <owner> and <mesh> in space.yaml,
+     commit and push main.
      Then mount them in the bus (NETWORK-MUTATING -- run these yourself):
        git -C ${BUS_PATH} submodule add -b main <core url> spaces/core
        git -C ${BUS_PATH} submodule add -b main <lore url> spaces/lore
        git -C ${BUS_PATH} submodule add -b main <tmp url> spaces/tmp
      Set "ignore = all" for each in ${BUS_PATH}/.gitmodules, check out main in
-     each space, and add the three entries to ${BUS_PATH}/spaces.yaml:
-       - {id: core, path: spaces/core, access: rw, librarian: librarian}
-       - {id: lore, path: spaces/lore, access: rw, librarian: librarian}
-       - {id: tmp, path: spaces/tmp, access: rw, librarian: none}
+     each space, and in ${BUS_PATH}/spaces.yaml replace "spaces: []" with the
+     block list of the three entries:
+       spaces:
+         - {id: core, path: spaces/core, access: rw, librarian: librarian}
+         - {id: lore, path: spaces/lore, access: rw, librarian: librarian}
+         - {id: tmp, path: spaces/tmp, access: rw, librarian: none}
 
   3. Commit and push the fresh bus (NETWORK-MUTATING -- run these yourself):
        git -C ${BUS_PATH} add -A

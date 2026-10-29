@@ -66,10 +66,14 @@ spaces, each its own private repo, which you create from the product's
 | scratch | `agent-mesh-<mesh>-tmp` | `templates/spaces/tmp` | `spaces/tmp` |
 
 For each: create the empty remote, copy the template's files to the repo root,
-fill in `<owner>` and `<mesh>` in `space.yaml`, commit and push `main`. Then
-`git submodule add -b main <url> spaces/<x>` in the bus, set `ignore = all` in
-`.gitmodules`, check out `main` in each space, and add the three entries to
-`spaces.yaml` (the installer prints them). `BUS_LAYOUT` stays `1`.
+and the bus skeleton's `.gitattributes` and `.gitignore` with them (the
+templates ship neither, and without the LFS rules a stored PDF goes in as a
+plain blob), fill in `<owner>` and `<mesh>` in `space.yaml`, commit and push
+`main`. Then `git submodule add -b main <url> spaces/<x>` in the bus, set
+`ignore = all` in `.gitmodules`, check out `main` in each space, and in
+`spaces.yaml` replace the skeleton's `spaces: []` with a block list of the
+three entries (the installer prints them); entries added under `[]` are not
+valid YAML. `BUS_LAYOUT` stays `1`.
 
 ## Inputs
 
