@@ -47,8 +47,14 @@ resolves. This is the same property that lets several writers share `main`.
    balks -- an interface has nothing local to lose).
 2. `git -C <repo> log --stat <since>..HEAD`, where `<since>` is a SHA you paste
    or a time window (`--since=2.hours`).
-3. Read the changed files under `status/ outbox/ tasks/ agents/` and the new records in `spaces/lore/lore/`
-   and summarize what happened: task outcomes, replies, new nodes, lore, sweeps.
+3. Read the changed files under `status/ outbox/ tasks/ agents/`, and the new
+   records in `spaces/lore/lore/` from lore's own log, since lore is its own
+   repo and the bus log never shows them: where it is cloned,
+   `git -C <repo>/spaces/lore pull --ff-only -q`, then
+   `git -C <repo>/spaces/lore log --name-status --since=<time>`, with `<time>`
+   your window or the commit time of the bus SHA you pasted (a bus SHA is not
+   in lore's history). Summarize what happened: task outcomes, replies, new
+   nodes, lore, sweeps.
 
 The ledger is the source of truth. You reconstruct status from git history, not
 from anyone messaging you -- so an interface being offline loses nothing.

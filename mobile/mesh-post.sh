@@ -43,7 +43,7 @@ done
 
 [ -n "${GH_PAT_RESEARCH:-}" ] || { echo "GH_PAT_RESEARCH not set in env" >&2; exit 1; }
 [ -n "$OWNER" ] || { echo "GH_BUS_OWNER not set in env (the bus repo owner)" >&2; exit 1; }
-[ -n "$REPO" ] || { echo "GH_BUS_REPO not set in env (the bus repo name, e.g. agent-mesh-bus-mymesh)" >&2; exit 1; }
+[ -n "$REPO" ] || { echo "GH_BUS_REPO not set in env (the bus repo name, e.g. agent-mesh-<mesh>)" >&2; exit 1; }
 [ -n "$TO" ] || usage
 
 # resolve target directory + to-field

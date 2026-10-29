@@ -10,11 +10,14 @@ the bus's own `guidance/CLAUDE.md` (at the bus root, generated at install time)
 `@`-includes the product base plus the deployment's user overlay, in order:
 
 ```
-@product/guidance/best-practices.base.md
-@../spaces/core/best-practices.user.md   <- the bus's private overlay, in core (may be absent)
-@product/guidance/agent-operating.md
-@product/guidance/permissions.md
+@../product/guidance/best-practices.base.md
+@../spaces/core/best-practices.user.md
+@../product/guidance/agent-operating.md
+@../product/guidance/permissions.md
 ```
+
+Each path resolves from the bus's `guidance/` folder. The second line is the
+bus's private overlay, in core; it may be absent.
 
 The `mesh-on` skill is the operational entry point: a human starts Claude on a
 node and invokes `/mesh-on`, which reads the bus chain above and enters the worker

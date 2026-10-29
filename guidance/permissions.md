@@ -62,8 +62,13 @@ convention.
 ## Node checklist to launch (including an extra test agent)
 
 1. Clone the **bus** (`agent-mesh-<mesh>`); note its absolute path as `REPO_PATH`.
-   Then `git -C "$REPO_PATH" submodule update --init --recursive` to check out
-   the pinned `product/` code.
+   Then realize the pinned code and clone the three spaces by path, as
+   `INSTALL.md` step 1 gives: `git -C "$REPO_PATH" submodule update --init
+   --recursive -- product` (and each other code submodule), then
+   `git -C "$REPO_PATH" submodule update --init -- spaces/core spaces/lore
+   spaces/tmp` and `checkout main` in each of the three spaces. Never a bare
+   `submodule update --init --recursive`: it clones every project space and
+   leaves the spaces detached at their recorded gitlinks.
 2. Install the git gate on this node: copy `product/hooks/git-gate.py` to
    `~/.claude/hooks/`, register the `PreToolUse` Bash hook in
    `~/.claude/settings.json`, remove any blanket git deny, and add `REPO_PATH` to

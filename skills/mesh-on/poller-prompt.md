@@ -387,8 +387,9 @@ commit rule"). The paths to name, step by step:
       into `tasks/roles/librarian/`, tagged with its `category` (`lore`, `notes`,
       `refs`, `workflows`, `runs`) and the common record header (the `librarian`
       holder drains and promotes it into `spaces/core/<category>/`, or `spaces/lore/lore/` for lore). It is a submission,
-      not a task: write no status file for it. If YOU hold `librarian`, write it
-      into core or lore directly instead of self-submitting.
+      not a task: write no status file for it. If YOU hold `librarian`, file it
+      into core or lore through `space-librarian` in that space's repo (no bus
+      commit) instead of self-submitting.
 
 4½. **Surface any `reply` messages in your inbox — via SendMessage, not your
    transcript.** Under the synchronous-park model you never end your turn, so
@@ -519,7 +520,7 @@ filing each record through `space-librarian` in that space's repo, under one of 
 §7 categories (`lore`, `notes`, `refs`, `workflows`, `runs`). The library keeps NO index
 file — do not create one; the records are self-describing. Write NO status file for a submission (it is
 drained, never claimed); the core or lore record is its only outcome. You are the sole
-writer of ALL of `spaces/core/**` and `spaces/lore/**`. Records are small text; heavy payloads
+writer of the records in core and lore. Records are small text; heavy payloads
 stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is
 normal, not a fault. If you hold **`archiver`**: run the retention sweep per
 PROTOCOL.md §9 — sweep each aged task as a unit (message + terminal

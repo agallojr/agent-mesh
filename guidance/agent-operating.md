@@ -182,8 +182,9 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `category` (lore, notes, refs, workflows, runs) and the common record header.
    It is a submission, not a task — write no status file for it; the `librarian`
    holder drains and promotes it into `spaces/core/<category>/`, or `spaces/lore/lore/`
-   for lore. If YOU hold the `librarian` role, write it into core or lore directly
-   instead — no self-submission.
+   for lore. If YOU hold the `librarian` role, file it into core or lore through
+   `space-librarian` in that space's repo (no bus commit) instead — no
+   self-submission.
 8. Surface any `reply` in your own inbox (a message with `in_reply_to`) to the
    human: it answers a query YOU sent. Deliver it out-of-band, not into your own
    transcript — a synchronously-parked poller never ends its turn, so plain
@@ -231,7 +232,7 @@ re-derive your write, not to merge text.
 Most roles just claim and run tasks. A few carry extra duties, and you perform
 them ONLY if that role is in your `AGENT_ROLES`:
 
-- **`librarian`** — sole writer of ALL of `spaces/core/**` and `spaces/lore/**`
+- **`librarian`** — sole writer of the records in core and lore
   (every category, not just lore), each record filed through `space-librarian` in
   that space's own repo, never through the bus. The categories are fixed by PROTOCOL §7 (`lore`, `notes`, `refs`,
   `workflows`, `runs`) — file every record under one of those and never invent a
