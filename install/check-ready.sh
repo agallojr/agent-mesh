@@ -217,10 +217,12 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 cd "$TMPD" || exit 2
 
-# Prompts off, and no lock or index refresh in the bus or its submodules.
+# Prompts off, and no lock or index refresh in the bus or its submodules. No
+# Python run here, the hooks' included, writes an interpreter cache.
 GIT_TERMINAL_PROMPT=0
 GIT_OPTIONAL_LOCKS=0
-export GIT_TERMINAL_PROMPT GIT_OPTIONAL_LOCKS
+PYTHONDONTWRITEBYTECODE=1
+export GIT_TERMINAL_PROMPT GIT_OPTIONAL_LOCKS PYTHONDONTWRITEBYTECODE
 if [ -z "${GIT_SSH_COMMAND:-}" ] && [ -z "${GIT_SSH:-}" ] &&
     [ -z "$(git config --get core.sshCommand 2>/dev/null)" ]; then
     GIT_SSH_COMMAND="ssh -o BatchMode=yes"
@@ -1178,13 +1180,10 @@ the bus repo's URL"
 
 # ------------------------------------------------------------ after items
 
-item_bus() {
+item_bus() {  # HEAD against the fetched origin/main, not the remote's live one
     _head=$(git -C "$BUS" rev-parse -q --verify HEAD 2>/dev/null)
-    _tip=
-    if run_capped "$CAP_S" git -C "$BUS" ls-remote origin refs/heads/main \
-        >"$TMPD/tip.out" 2>/dev/null; then
-        _tip=$(sed -n 1p "$TMPD/tip.out" | cut -f1)
-    fi
+    _tip=$(git -C "$BUS" rev-parse -q --verify \
+        'refs/remotes/origin/main^{commit}' 2>/dev/null)
     _lacks=
     for _x in $SPACES; do
         grep -Eq "(^|[{[:space:],])id:[[:space:]]*$_x[[:space:]]*([,}]|\$)" \
@@ -1192,7 +1191,7 @@ item_bus() {
     done
     _bad=
     if [ -z "$_tip" ]; then
-        _bad="origin main not read"
+        _bad="no fetched origin/main"
     elif [ "$_head" != "$_tip" ]; then
         _bad="at $(short "$_head"), origin/main at $(short "$_tip")"
     fi
