@@ -45,10 +45,22 @@ them verbatim):
 - `POLL_SEC`      = «POLL_INTERVAL_SEC»
 - `MESH_PRODUCT_TRACK` = «MESH_PRODUCT_TRACK» (from identity env; empty/unset =
   pin mode, the adopter default; `tip` = developer mode, track product `main`)
-- `EXECUTOR_MODEL` = «EXECUTOR_MODEL» (the Agent-tool model alias every
-  executor you dispatch runs on; see "Dispatching an executor")
+- `EXECUTOR_SPAWN` = «EXECUTOR_SPAWN» (the Agent-call parameter that puts
+  every executor you dispatch on its model: `model: <alias>`, or
+  `subagent_type: <name>` for a full model id; see "Dispatching an executor")
+- `POLLER_MODEL_REQUESTED` = «POLLER_MODEL_REQUESTED» (the model this node
+  asked you to run on)
 
-## First — load your operating rules (once, at startup)
+## First — report your model (once, at startup)
+
+Your first act, before anything else: send the main session one message with
+SendMessage (`to: "main"`), exactly `poller model: <your exact model id>`, the
+id your system prompt states. The main session turns it into the node's start
+report, with a `model fallback:` line if you are not on
+«POLLER_MODEL_REQUESTED». Sending it does not end your turn: your next action
+is the next step below.
+
+## Then — load your operating rules (once, at startup)
 
 Before your first loop iteration, read `«REPO»/guidance/CLAUDE.md` and follow its
 `@`-import chain in order: the best-practices base, this deployment's user overlay,
@@ -373,9 +385,13 @@ costs per day. Take in only what the next step needs:
 ## Dispatching an executor sub-subagent
 
 For each task, spawn ONE sub-subagent with the Agent tool and wait for its
-result before writing the terminal status. Always pass `model: «EXECUTOR_MODEL»`
-on that Agent call. If you leave it out, the executor inherits YOUR model, and
-you run on a cheaper model picked for this mechanical loop, not for task work.
+result before writing the terminal status. Always pass «EXECUTOR_SPAWN» on that
+Agent call (for `subagent_type: <name>`, pass no `model`). If you leave it out,
+the executor inherits YOUR model, and you run on a cheaper model picked for
+this mechanical loop, not for task work. If the Agent tool rejects
+`subagent_type: <name>`, pass `model:` set to the family alias in the id
+(`opus`, `sonnet`, `haiku` or `fable`) instead, and tell the main session once
+(step 4½) which model id was asked for and which alias you used.
 Its prompt must be SELF-CONTAINED — it
 has no access to this conversation. Include: the full task body (goal, context,
 done-when, on-failure) read verbatim from the task file, the literal `REPO` path,

@@ -57,6 +57,22 @@ grep -qxF "$(sed -n 's/^REPO_PATH=//p' ~/.agent-identity.env)" \
 If NOT-ALLOWED, STOP: git sync will be denied. Tell the user to add the repo path
 (one absolute path per line) to `~/.claude/mesh-git-allowlist.txt`.
 
+Check the two model settings with the script beside this skill (literal path of
+THIS skill directory). Each takes an alias (`opus`, `sonnet`, `haiku`, `fable`)
+or a full model id (`claude-` then lowercase letters, digits and `-`, such as
+`claude-sonnet-5-5`):
+
+```bash
+/abs/path/to/this/skill/mesh-model.sh spawn poller "<MESH_POLLER_MODEL, or empty>"
+/abs/path/to/this/skill/mesh-model.sh spawn executor "<MESH_EXECUTOR_MODEL, or the alias of THIS session's model>"
+```
+
+Each prints how to spawn that agent (Step 5): `model <alias>`, or
+`agent <name>` for a full id (it writes the agent definition
+`<config dir>/agents/<name>.md` whose `model:` is that id, since the Agent
+tool's `model` parameter takes an alias only). Keep both lines. If either
+prints `REFUSED <reason>`, STOP and tell the user the reason.
+
 ## Step 2 — clear any stale stop sentinel
 
 `/mesh-off` works by writing `~/.mesh-stop`. Starting fresh, remove it so the new
@@ -138,15 +154,39 @@ loaded in Step 3 — it is a fresh context), so the operating rules govern it an
 every executor it dispatches. Spawn with `run_in_background: true` so your main
 session returns immediately and stays interactive.
 
-**Models.** Spawn the poller with `model:` set to `MESH_POLLER_MODEL` from
-identity, or `sonnet` if it is unset. Its loop is mechanical, so it needs no
-more. Most of what an idle re-park costs is the cache read of the poller's
-context, so the deadline below and a small context cut idle cost more than the
-choice of model does.
-Fill `«EXECUTOR_MODEL»` with `MESH_EXECUTOR_MODEL` from identity, or, if that is
-unset, the alias of the model running THIS session (`opus`, `sonnet`, `haiku` or
-`fable`), which executors used to inherit through the poller. The poller passes
-it on every executor spawn, so task work never runs on the poller's model.
+**Models.** Spawn the poller the way Step 1's poller line says: for
+`model <alias>`, pass `model: <alias>` on the Agent call; for `agent <name>`,
+pass `subagent_type: <name>` and no `model`. Unset, the poller runs on `sonnet`:
+its loop is mechanical, so it needs no more. Most of what an idle re-park costs
+is the cache read of the poller's context, so the deadline below and a small
+context cut idle cost more than the choice of model does. If the Agent tool
+rejects `subagent_type: <name>` (Claude Code has not loaded a definition just
+written), spawn it with `model:` set to the family alias in the id (`opus`,
+`sonnet`, `haiku` or `fable`; `sonnet` if none) instead; the start report then
+shows the fallback.
+Fill `«EXECUTOR_SPAWN»` from Step 1's executor line, written as the Agent-call
+parameter it stands for: `model: <alias>`, or `subagent_type: <name>` (with no
+`model`). When `MESH_EXECUTOR_MODEL` is unset, that line came from the alias of
+the model running THIS session, which executors used to inherit through the
+poller. Fill `«POLLER_MODEL_REQUESTED»` with `MESH_POLLER_MODEL`, or `sonnet`.
+The poller passes «EXECUTOR_SPAWN» on every executor spawn, so task work never
+runs on the poller's model.
+
+**Start report.** The poller's first act is to send this session one message,
+`poller model: <its exact model id>`. When it arrives, run
+
+```bash
+/abs/path/to/this/skill/mesh-model.sh report "<MESH_POLLER_MODEL, or sonnet>" \
+  "<the id it sent>" "<any notice Claude Code showed you when you spawned it>"
+```
+
+and show the user its output, verbatim and nothing else: one line
+`poller model: <model id>`, and exactly one more line
+`model fallback: requested <value>, running <model id>` when the poller is not
+on the model asked for (an alias the organization's settings restrict, whose
+notice reads `Model "<value>" is restricted by your organization's settings.
+Using <id> instead.`, or a full id it could not run on). With no fallback there
+is no second line. Polling goes on either way.
 
 The poller does NOT burn inference polling. It parks on ONE **synchronous** Bash
 call to the shell scanner (`mesh-scan-loop.sh`) — never a background call: a
