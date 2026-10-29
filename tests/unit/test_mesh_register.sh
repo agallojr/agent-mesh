@@ -51,6 +51,8 @@ check "platform is set" test -n "$(field platform)"
 check "cwd is the repo" eq "$(field cwd)" "$BUS"
 check "repo_commit is the bus commit it registered at" eq "$(field repo_commit)" "$bus_commit"
 check "poll_interval_sec" eq "$(field poll_interval_sec)" 60
+check "heartbeat_sec is 900 when MESH_HEARTBEAT_SEC is unset" \
+  eq "$(field heartbeat_sec)" 900
 check "credentials_available lists key names" \
   eq "$(field credentials_available)" "[GH_PAT_RESEARCH, OLCF_PROJECT_ID, EMPTY_ONE]"
 utc='^[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$'
@@ -87,6 +89,18 @@ check "legacy AGENT_ROLE" eq "$(field roles)" "[install]"
 check "no credentials file" eq "$(field credentials_available)" "[]"
 check "the second commit holds only the record" \
   eq "$(changed_paths "$BUS" HEAD)" "agents/a1b2c3.yaml"
+
+# heartbeat_sec follows MESH_HEARTBEAT_SEC: the set value, 900 for a
+# non-number, empty or zero.
+echo "MESH_HEARTBEAT_SEC=120   # s" >> "$HOME/.agent-identity.env"
+bash "$MR" "$BUS" >/dev/null
+check "heartbeat_sec is the set value" eq "$(field heartbeat_sec)" 120
+for bad in abc "" 0 -5 1.5; do
+  sed -i.bak -e "s/^MESH_HEARTBEAT_SEC=.*/MESH_HEARTBEAT_SEC=$bad/" "$HOME/.agent-identity.env"
+  rm -f "$HOME/.agent-identity.env.bak"
+  bash "$MR" "$BUS" >/dev/null
+  check "heartbeat_sec is 900 for the value '$bad'" eq "$(field heartbeat_sec)" 900
+done
 
 # Refusals write nothing.
 head=$(g -C "$BUS" rev-parse HEAD)

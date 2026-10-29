@@ -24,7 +24,8 @@
 # It does not end on ~/.mesh-stop: a running executor finishes, the poller
 # writes its terminal status, and the scanner stops the poller at the top of
 # its next cycle. While it waits it rewrites last_poll in the node's own
-# agents/<AGENT_ID>.yaml and pushes it once per poll interval through
+# agents/<AGENT_ID>.yaml and pushes it once per heartbeat interval
+# (MESH_HEARTBEAT_SEC, 900 s by default, checked every poll interval) through
 # mesh-commit.sh (the shared mc_heartbeat), so a node busy on a long task still
 # shows as polling. A failed push neither stops nor delays it. It starts only
 # short-lived children (sleep, mesh-commit.sh), returns by its deadline, and

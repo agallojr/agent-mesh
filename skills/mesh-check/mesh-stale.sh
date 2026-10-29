@@ -6,8 +6,8 @@
 # Usage: mesh-stale.sh <REPO> [--now <YYYY-MM-DDTHH:MM:SSZ>]
 #   --now defaults to the current UTC time.
 #
-# For each <REPO>/agents/*.yaml, with interval its poll_interval_sec (60 s
-# when absent) and age the whole s from its last_poll to now:
+# For each <REPO>/agents/*.yaml, with interval its heartbeat_sec (900 s
+# when absent or not a whole number) and age the whole s from its last_poll to now:
 #   age > 3 * interval:
 #     NOT POLLING <agent_id> <agent_name>: last poll <age> s ago at
 #       <last_poll>, interval <interval> s; holds <held>      (one line)
@@ -17,8 +17,9 @@
 # <held> is "<task id> <state>" for each <REPO>/status/*.json whose agent_id
 # is the node's and whose state is accepted or running, joined by ", ", in
 # task id order; or "nothing". A node's poller rewrites last_poll once per
-# poll interval while it is live, an executor's run included, so an old
-# last_poll means the poller stopped (PROTOCOL 4.3).
+# heartbeat interval while it is live, an executor's run included, so a
+# last_poll older than 3 intervals (2700 s by default) means the poller
+# stopped (PROTOCOL 4.3).
 # Exit status: 0, or 2 for a usage error.
 # Portable: bash 3.2+, POSIX sed and awk; no GNU or BSD date flags.
 set -u
@@ -102,8 +103,8 @@ for f in "$REPO"/agents/*.yaml; do
   id=$(yv agent_id "$f")
   [ -n "$id" ] || id=$(basename "$f" .yaml)
   name=$(yv agent_name "$f")
-  interval=$(yv poll_interval_sec "$f")
-  case "$interval" in ""|0|*[!0123456789]*) interval=60 ;; esac
+  interval=$(yv heartbeat_sec "$f")
+  case "$interval" in ""|0|*[!0123456789]*) interval=900 ;; esac
   last=$(yv last_poll "$f")
   if ! is_utc "$last"; then
     echo "NO LAST POLL $id $name; holds $(held_by "$id")"

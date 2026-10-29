@@ -3,7 +3,8 @@
 # Ruling 2026-10-29T16:34Z): the poller parks on it, synchronously, while a
 # background executor runs. It returns DONE when the executor's done file
 # appears, WAITING at its deadline, STOP when the stop sentinel is up; it
-# keeps the last_poll heartbeat going through mesh-commit.sh while it waits;
+# keeps the last_poll heartbeat going through mesh-commit.sh while it waits,
+# once per heartbeat interval (MESH_HEARTBEAT_SEC, heartbeat-every-15-min R1);
 # a failed push does not stop it; and it leaves no process behind. Runs about
 # 30 s.
 set -u
@@ -21,6 +22,9 @@ bash "$SKILLS/mesh-on/mesh-commit.sh" "$BUS" "register n1" "agents/$ID.yaml" >/d
 stale_product
 origin_lp() { g -C "$BUS_ORIGIN" show "main:agents/$ID.yaml" | sed -n 's/^last_poll: //p'; }
 STAGE="$T/staging"
+epoch() { python3 -I -c 'import sys,calendar,time;print(calendar.timegm(time.strptime(sys.argv[1],"%Y-%m-%dT%H:%M:%SZ")))' "$1"; }
+# The sections that are not about the cadence heartbeat on every poll.
+export MESH_HEARTBEAT_SEC=1
 mkdir -p "$STAGE"
 
 # --- the executor finishes while the poller waits: DONE soon after, with
@@ -96,8 +100,10 @@ check "a far deadline still gives WAITING at the call's own deadline" eq "$rc:$o
 bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 30 soon >/dev/null 2>&1; rc=$?
 check "a task deadline that is not a number is a usage error" eq "$rc" 2
 
-# --- fix round 2: another node pushes during the wait. The wait's heartbeat
-# pulls and retries a rejected push, so last_poll on origin keeps advancing.
+# --- another node pushes during the wait, with a heartbeat interval of 4 s
+# and a wait of about 13 s. The wait's heartbeat pulls and retries a rejected
+# push, so last_poll on origin keeps advancing: at least 2 heartbeats reach
+# origin, each at least 4 s after the one before.
 OTHER="$T/other"
 g clone -q "$BUS_ORIGIN" "$OTHER" 2>/dev/null
 echo o1 > "$OTHER/o1.txt"
@@ -106,21 +112,30 @@ g -C "$OTHER" commit -q -m "other one"
 g -C "$OTHER" push -q origin main 2>/dev/null
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
 lp0=$(origin_lp)
-( for k in 2 3 4 5; do
+( for k in 2 3 4 5 6 7; do
     sleep 2
     g -C "$OTHER" pull -q --rebase 2>/dev/null
     echo "o$k" > "$OTHER/o$k.txt"
     g -C "$OTHER" add "o$k.txt"
     g -C "$OTHER" commit -q -m "other $k"
     g -C "$OTHER" push -q origin main 2>/dev/null
-  done
-  : > "$STAGE/.done" ) &
-out=$(bash "$MW" "$BUS" "$ID" 2 "$STAGE/.done" 40); rc=$?
+  done ) &
+out=$(MESH_HEARTBEAT_SEC=4 bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 13); rc=$?
 wait
-check "with another node pushing, the wait still ends DONE" eq "$rc:$out" "0:DONE"
+check "with another node pushing, the wait ends WAITING at its deadline" eq "$rc:$out" "5:WAITING"
 check "last_poll on origin advanced while another node pushed" test "$(origin_lp)" != "$lp0"
 hb=$(g -C "$BUS_ORIGIN" log --format=%s "$base..main" | grep -c '^heartbeat n1$')
 check "at least two heartbeats reached origin during that wait ($hb)" test "$hb" -ge 2
+prev=""; gaps=""; bad=0
+for c in $(g -C "$BUS_ORIGIN" log --reverse --format='%H %s' "$base..main" | awk '$2=="heartbeat"{print $1}'); do
+  e=$(epoch "$(g -C "$BUS_ORIGIN" show "$c:agents/$ID.yaml" | sed -n 's/^last_poll: //p')")
+  if [ -n "$prev" ]; then
+    d=$((e - prev)); gaps="$gaps $d"
+    [ "$d" -ge 4 ] || bad=$((bad + 1))
+  fi
+  prev=$e
+done
+check "heartbeats are at least 4 s apart (gaps:$gaps s)" eq "$bad" 0
 check "origin still pins the product at the pin after those rebases" \
   eq "$(g -C "$BUS_ORIGIN" rev-parse main:product)" "$PIN"
 rm -f "$STAGE/.done"

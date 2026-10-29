@@ -15,9 +15,10 @@ idle deadline**, exiting when it finds a claimable task / a fresh reply, when
 `timeout` of 600000 ms on the call anyway). While it blocks you are parked on
 that one tool call and spend ZERO tokens. On `IDLE` you immediately launch it
 again — a one-tool-call re-park every ~4 min. This is what makes an idle node
-cost almost nothing — you wake to act (or to re-park), never to think. Each
-scan also rewrites `last_poll` in this node's own `agents/«AGENT_ID».yaml` and
-pushes it (one small heartbeat commit per poll interval), so a node whose
+cost almost nothing — you wake to act (or to re-park), never to think. Once
+per heartbeat interval (`MESH_HEARTBEAT_SEC`, 900 s by default) a scan also
+rewrites `last_poll` in this node's own `agents/«AGENT_ID».yaml` and pushes it
+(one small heartbeat commit, not one per scan), so a node whose
 poller has stopped is seen on the bus; you write nothing for it.
 
 **Why the deadline is ~4 min:** each re-park re-sends your whole context, and it
@@ -53,6 +54,7 @@ them verbatim):
 - `AGENT_ROLES`   = «AGENT_ROLES» (comma-separated; each is a queue you claim from)
 - `REPO`          = «REPO_PATH»            ← LITERAL absolute repo path
 - `POLL_SEC`      = «POLL_INTERVAL_SEC»
+- `HEARTBEAT_SEC` = «MESH_HEARTBEAT_SEC» (identity env; 900 when unset)
 - `MESH_PRODUCT_TRACK` = «MESH_PRODUCT_TRACK» (from identity env; empty/unset =
   pin mode, the adopter default; `tip` = developer mode, track product `main`)
 - `EXECUTOR_SPAWN` = «EXECUTOR_SPAWN» (the Agent-call parameter that puts
@@ -125,10 +127,12 @@ until stop (see "Stopping" below):
    ~4-min default is what keeps your re-park a cache read:
 
    ```
-   MESH_PRODUCT_TRACK=«MESH_PRODUCT_TRACK» \
+   MESH_HEARTBEAT_SEC=«MESH_HEARTBEAT_SEC» MESH_PRODUCT_TRACK=«MESH_PRODUCT_TRACK» \
      «SKILL_DIR»/mesh-scan-loop.sh «REPO» «AGENT_ROLES» «AGENT_ID» «POLL_SEC»
    ```
 
+   Pass `MESH_HEARTBEAT_SEC` on the command line as shown (the scanner and the
+   wait read the heartbeat interval from it; omit it or give 900 when unset).
    Pass `MESH_PRODUCT_TRACK` on the command line as shown; the scanner reads it to
    choose pin mode vs tip mode. If «MESH_PRODUCT_TRACK» is empty, just omit the
    prefix (plain invocation = pin mode). `«SKILL_DIR»` is the directory this
@@ -148,8 +152,8 @@ until stop (see "Stopping" below):
    sleeping `POLL_SEC` and re-pulling — until there is something to do or the
    idle deadline hits.** While it blocks you are parked on this one tool call and
    spend NO tokens. An idle mesh therefore costs near-zero inference (one
-   cache-read re-park per ~4 min) and one heartbeat commit per node per poll
-   interval; claims, statuses and results stay proportional to real work. It
+   cache-read re-park per ~4 min) and one heartbeat commit per node per heartbeat
+   interval (900 s by default); claims, statuses and results stay proportional to real work. It
    runs on macOS and Linux alike (bash 3.2+, no `timeout` dependency).
 
    The script writes one of:
@@ -311,7 +315,8 @@ commit rule"). The paths to name, step by step:
       on the scanner:
 
       ```
-      «SKILL_DIR»/mesh-wait.sh «REPO» «AGENT_ID» «POLL_SEC» «STAGING»/.done 240 <deadline>
+      MESH_HEARTBEAT_SEC=«MESH_HEARTBEAT_SEC» \
+        «SKILL_DIR»/mesh-wait.sh «REPO» «AGENT_ID» «POLL_SEC» «STAGING»/.done 240 <deadline>
       ```
 
       It keeps the node's `last_poll` heartbeat going while the executor
