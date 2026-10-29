@@ -20,10 +20,14 @@
 # Refusals beside the main ones: REFUSED fetch (split: no origin/main),
 # REFUSED keep <folder>: <why> (split: not a spike name, also left, no
 # untracked file, holds a git repo), REFUSED readiness this node (no
-# AGENT_CONTEXT), UNMAPPED agent-tmp/<file> (split: a scratch file that the
-# root files of tmp would replace), LEFTOVER for a tracked file changed under
-# memory/ or agent-tmp/ (mount), and UNSPLIT <path> (mount: a bus file that
-# its space's main lacks, as when the library moved on after the split).
+# AGENT_CONTEXT), REFUSED readiness <class>: not a class name (split: a class
+# that would name a report outside --readiness), UNMAPPED agent-tmp/<file>
+# (split: a scratch file that the root files of tmp would replace), LEFTOVER
+# for a tracked file changed under memory/ or agent-tmp/ (mount), REFUSED
+# mount: spaces.yaml ... (mount: a spaces: line holding a value other than an
+# empty list, so that no entry can be appended under it), and UNSPLIT <path>
+# (mount: a bus file that its space's main lacks, as when the library moved
+# on after the split).
 #
 # Bash 3.2 or later, git and Git LFS; split also needs git-filter-repo. Run it
 # from an agent-mesh checkout: split reads templates/spaces/ from it. It never
@@ -106,7 +110,9 @@ sha256() {
 }
 
 # Reads `git cat-file --batch` output. m=lfs prints the oid of each blob that
-# is an LFS pointer; m=id prints the front-matter id: of each blob.
+# is an LFS pointer; m=id prints the front-matter id: of each blob. Its input
+# has each NUL byte mapped to \001 first: an awk that ends a string at a NUL
+# would count a line short, and the parse would lose its place.
 BLOBS='
 need == 0 {
   if ($2 == "missing") next
@@ -136,7 +142,8 @@ lfs_oids() {  # repo rev: the LFS oids that the history of rev references
     git -C "$1" cat-file \
       --batch-check='%(objectname) %(objecttype) %(objectsize)' |
     awk '$2 == "blob" && $3 < 1024 { print $1 }' |
-    git -C "$1" cat-file --batch | awk -v m=lfs "$BLOBS" | sort -u
+    git -C "$1" cat-file --batch | tr '\000' '\001' |
+    awk -v m=lfs "$BLOBS" | sort -u
 }
 
 ids_at() {  # repo rev [path]...: the front-matter ids of the *.md files
@@ -144,7 +151,8 @@ ids_at() {  # repo rev [path]...: the front-matter ids of the *.md files
   git -C "$r" ls-tree -r -z "$v" -- "$@" | tr '\0' '\n' |
     awk -F '\t' '$2 ~ /\.md$/ { split($1, a, " ")
       if (a[2] == "blob") print a[3] }' |
-    git -C "$r" cat-file --batch | awk -v m=id "$BLOBS" | sort -u
+    git -C "$r" cat-file --batch | tr '\000' '\001' |
+    awk -v m=id "$BLOBS" | sort -u
 }
 
 media() {  # repo: its local LFS store
@@ -305,7 +313,9 @@ EOF
   while IFS= read -r c; do
     inlist "$c" "$ASIDE" && continue
     f=$READINESS/$c.txt
-    if [ -z "$READINESS" ] || [ ! -f "$f" ]; then
+    if ! name_ok "$c"; then
+      st="not a class name"
+    elif [ -z "$READINESS" ] || [ ! -f "$f" ]; then
       st=missing
     else
       l=$(awk '{ sub(/\r$/, "") } NF { x = $0 } END { print x }' "$f")
@@ -717,6 +727,19 @@ unsplit() {  # each tracked bus file that its space's main lacks
     "$SCR/have" "$SCR/want"
 }
 
+registry_ok() {  # true if add_entries can append under spaces.yaml's spaces:
+  local y=$BUS/spaces.yaml v
+  [ -f "$y" ] || return 0
+  listed core && listed lore && listed tmp && return 0
+  # The spaces: line may hold nothing (a block list follows) or [], and no
+  # other value: not an inline list, nor a scalar such as ~.
+  v=$(awk '/^spaces:/ { s = $0; sub(/\r$/, "", s); sub(/^spaces:/, "", s)
+             sub(/[ \t]#.*$/, "", s); gsub(/[ \t]/, "", s); print s; exit }' \
+        "$y") || return 1
+  case $v in ''|'[]') return 0 ;; esac
+  return 1
+}
+
 add_entries() {  # append the missing registry entries under spaces:
   local y=$BUS/spaces.yaml e x
   [ -f "$y" ] || printf 'spaces: []\n' > "$y"
@@ -725,9 +748,8 @@ add_entries() {  # append the missing registry entries under spaces:
   listed lore || e="$e- {id: lore, path: spaces/lore, $x librarian}$NL"
   listed tmp || e="$e- {id: tmp, path: spaces/tmp, $x none}$NL"
   [ -n "$e" ] || return 0
-  if grep -Eq '^spaces:[[:space:]]*\[[[:space:]]*[^][:space:]]' "$y"; then
-    fail "spaces.yaml lists its spaces inline; make it a block list first"
-  fi
+  registry_ok ||
+    fail "spaces.yaml's spaces: is not a block list; make it one first"
   ENTS=$e awk '
     { line[NR] = $0 }
     END {
@@ -739,7 +761,7 @@ add_entries() {  # append the missing registry entries under spaces:
         for (j = 1; j <= n; j++) if (E[j] != "") print "  " E[j]
         exit
       }
-      if (line[k] ~ /^spaces:[ \t]*\[[ \t]*\][ \t]*(#.*)?$/) {
+      if (line[k] ~ /^spaces:[ \t]*\[[ \t]*\][ \t\r]*(#.*)?$/) {
         for (i = 1; i < k; i++) print line[i]
         print "spaces:"
         for (j = 1; j <= n; j++) if (E[j] != "") print "  " E[j]
@@ -792,6 +814,11 @@ cmd_mount() {
 
   leftovers > "$SCR/left"
   if [ -s "$SCR/left" ]; then cat "$SCR/left"; exit 4; fi
+  if ! registry_ok; then
+    echo "REFUSED mount: spaces.yaml's spaces: holds a value other than [];" \
+      "make it a block list first"
+    exit 4
+  fi
   for s in core lore tmp; do
     u=$(url_of "$s")
     h=$(git -C "$BUS" ls-remote "$u" refs/heads/main 2>>"$LOG" </dev/null |
