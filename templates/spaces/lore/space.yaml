@@ -1,0 +1,11 @@
+space: 1
+id: lore
+kind: lore
+title: Personal lore of <owner>
+visibility: private
+owners: [<owner>]
+writer_model: single-writer
+categories: [lore]
+header_profile: mesh
+may_reference: []
+retention: permanent

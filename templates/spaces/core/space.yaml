@@ -1,0 +1,11 @@
+space: 1
+id: core
+kind: core
+title: Core knowledge of <owner>
+visibility: private
+owners: [<owner>]
+writer_model: single-writer
+categories: [notes, refs, runs, workflows]
+header_profile: mesh
+may_reference: []
+retention: permanent

@@ -1,0 +1,12 @@
+space: 1
+id: tmp
+kind: scratch
+title: Agent scratch of mesh <mesh>
+visibility: private
+owners: [<owner>]
+writer_model: multi-actor
+categories: [spikes]
+header_profile: mesh
+may_reference: []
+retention: until-ended
+mesh: <mesh>
