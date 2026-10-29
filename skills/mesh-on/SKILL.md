@@ -39,7 +39,8 @@ cat ~/.agent-identity.env
 
 Extract `AGENT_ID`, `AGENT_NAME`, `AGENT_CONTEXT`, `POLL_INTERVAL_SEC`,
 `AGENT_ROLES` (comma-separated; becomes the registration `roles` list and the set
-of `tasks/roles/<role>/` queues this node monitors), and `REPO_PATH`. A lone legacy
+of `tasks/roles/<role>/` queues this node monitors), `REPO_PATH`, and the optional
+`MESH_PRODUCT_TRACK`, `MESH_POLLER_MODEL` and `MESH_EXECUTOR_MODEL`. A lone legacy
 `AGENT_ROLE` is read as a one-role list. If `~/.agent-identity.env`
 is missing, STOP and tell the user to create it from
 `product/templates/agent-identity.env.template` in the bus. `REPO_PATH` must be a
@@ -124,15 +125,26 @@ loaded in Step 3 — it is a fresh context), so the operating rules govern it an
 every executor it dispatches. Spawn with `run_in_background: true` so your main
 session returns immediately and stays interactive.
 
+**Models.** Spawn the poller with `model:` set to `MESH_POLLER_MODEL` from
+identity, or `sonnet` if it is unset. Its loop is mechanical, so it needs no
+more. Sonnet 5.5 halves the output and cache-write prices of Opus 5.5, but a
+cache read costs the same $0.20/MTok on both, and reads are most of what an idle
+re-park costs. What cuts idle cost is the deadline below and a small context.
+Fill `«EXECUTOR_MODEL»` with `MESH_EXECUTOR_MODEL` from identity, or, if that is
+unset, the alias of the model running THIS session (`opus`, `sonnet`, `haiku` or
+`fable`), which executors used to inherit through the poller. The poller passes
+it on every executor spawn, so task work never runs on the poller's model.
+
 The poller does NOT burn inference polling. It parks on ONE **synchronous** Bash
 call to the shell scanner (`mesh-scan-loop.sh`) — never a background call: a
 background child is not guaranteed to survive the poller ending its turn, and an
 orphaned scanner takes the node off the mesh while it looks parked. The scanner
 pulls and scans the queues and blocks until there is real work, a stop, or its
-idle deadline (~9 min, just under the Bash tool's 10-min ceiling), where it
-returns `IDLE` and the poller immediately re-parks. An idle node therefore costs
-zero commits and near-zero tokens (one trivial re-park per ~9 min). The scanner
-runs on macOS and Linux (bash 3.2+, no external `timeout`).
+idle deadline (~4 min), where it returns `IDLE` and the poller immediately
+re-parks. The deadline sits under the 5-min prompt-cache TTL, so each re-park
+reads the poller's context from cache instead of re-writing it. An idle node
+therefore costs zero commits and near-zero tokens (one cache-read re-park per
+~4 min). The scanner runs on macOS and Linux (bash 3.2+, no external `timeout`).
 
 Pass `MESH_PRODUCT_TRACK` through to the poller so it reaches the scanner. You
 sourced `~/.agent-identity.env`, so the value (if any) is in your environment;

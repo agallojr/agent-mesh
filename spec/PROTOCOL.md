@@ -948,11 +948,13 @@ to survive the poller ending its turn, and an orphaned scanner silently takes
 the node off the mesh while it appears parked. The script exits when it finds a
 claimable task or a fresh reply (prints `WORK` + the file paths), when
 `~/.mesh-stop` exists (prints `STOP`), or at its idle deadline (prints `IDLE`,
-default ~9 min — self-limiting under the harness's hard tool timeout), on which
-the poller immediately re-parks with no other action. While it blocks, the
-poller is parked on that one tool call and spends zero inference tokens. An
-idle node therefore costs zero commits and near-zero tokens (one trivial
-re-park per deadline window) — both repo traffic and token spend are
+default 240 s), on which the poller immediately re-parks with no other action.
+While it blocks, the poller is parked on that one tool call and spends zero
+inference tokens. Each re-park re-sends the poller's context, so the deadline
+sits under the 5-min prompt-cache TTL: the re-park is then a cache read, where a
+longer park would re-write the whole context at the cache-write price. An idle
+node therefore costs zero commits and near-zero tokens (one cache-read re-park
+per deadline window) — both repo traffic and token spend are
 proportional to real work, not to node-count × poll-frequency × uptime. The
 read-only `pull`/`submodule update` inside the script are ungated, so the git
 gate (which guards only add/commit/push, and only inside the Claude agent) is
@@ -981,7 +983,7 @@ loop (poller subagent):
      sleep POLL between scans -- exiting on:
        STOP (exit 2): ~/.mesh-stop exists -> end cleanly
        WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
-       IDLE (exit 5): idle deadline (~9 min, under the tool timeout) -> re-park
+       IDLE (exit 5): idle deadline (240 s, under the cache TTL) -> re-park
          immediately, no other action
      an idle node cycles park -> IDLE -> re-park until work arrives.
   1-2. classify each returned path by message type:

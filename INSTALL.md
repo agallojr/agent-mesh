@@ -147,7 +147,9 @@ git stays machine-neutral. Normative detail: `spec/PROTOCOL.md` §4.1–4.2.
 immutable once set; changing it orphans the node's queues), `AGENT_NAME`
 (display only, freely mutable), `AGENT_CONTEXT` (coarse environment class that
 scopes lore relevance), `AGENT_ROLES`, `POLL_INTERVAL_SEC`, `REPO_PATH`. Mode
-644 because nothing in it is sensitive.
+644 because nothing in it is sensitive. Optional: `MESH_POLLER_MODEL` (the
+poller's model alias, default `sonnet`) and `MESH_EXECUTOR_MODEL` (the
+executors', default the model of the session that ran `/mesh-on`).
 
 **`~/.agent-credentials.env` (mode 600) — what this node may touch.** One
 `NAME=value` line per credential (tokens, project ids). Mode 600 because the

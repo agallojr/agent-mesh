@@ -11,12 +11,20 @@ prompt) that you run as ONE **synchronous** Bash call — a normal foreground ca
 you wait on, NEVER `run_in_background: true`. That script pulls the repo, scans
 your queues, and **blocks (sleeps and re-pulls) until there is real work or its
 idle deadline**, exiting when it finds a claimable task / a fresh reply, when
-`~/.mesh-stop` appears, or with `IDLE` just before the Bash tool's hard timeout
-(the script self-limits to ~9 min; pass a `timeout` of 600000 ms on the call).
-While it blocks you are parked on that one tool call and spend ZERO tokens. On
-`IDLE` you immediately launch it again — a one-tool-call re-park costing a
-trivial number of tokens every ~9 min and no commits. This is what makes an
-idle node cost almost nothing — you wake to act (or to re-park), never to think.
+`~/.mesh-stop` appears, or with `IDLE` at its idle deadline (~4 min; pass a
+`timeout` of 600000 ms on the call anyway). While it blocks you are parked on
+that one tool call and spend ZERO tokens. On `IDLE` you immediately launch it
+again — a one-tool-call re-park every ~4 min and no commits. This is what makes
+an idle node cost almost nothing — you wake to act (or to re-park), never to
+think.
+
+**Why the deadline is ~4 min:** each re-park re-sends your whole context, and it
+is cheap only while the prompt cache still holds it. The cache expires 5 min
+after its last use. A re-park inside that window is a cache read; one after it
+re-writes your whole context at the cache-write price, which is more than 10x a
+read. On genode a 9-min park cost about $1 per idle wake. Two things follow:
+never lengthen the deadline past ~4 min, and keep your context small, since
+every re-park pays for all of it (see "Keep your context small").
 
 **Why synchronous is load-bearing:** a background child is not guaranteed to
 survive you ending your turn — an orphaned scanner dies silently and the node
@@ -34,6 +42,8 @@ them verbatim):
 - `POLL_SEC`      = «POLL_INTERVAL_SEC»
 - `MESH_PRODUCT_TRACK` = «MESH_PRODUCT_TRACK» (from identity env; empty/unset =
   pin mode, the adopter default; `tip` = developer mode, track product `main`)
+- `EXECUTOR_MODEL` = «EXECUTOR_MODEL» (the Agent-tool model alias every
+  executor you dispatch runs on; see "Dispatching an executor")
 
 ## First — load your operating rules (once, at startup)
 
@@ -85,8 +95,9 @@ until stop (see "Stopping" below):
    ONE normal **synchronous** Bash call (NEVER `run_in_background: true` — an
    orphaned background scanner dies when you end your turn and the node goes
    deaf). Set the call's `timeout` to 600000 ms (the tool maximum); the script
-   self-limits to ~9 min and returns `IDLE` before that ceiling, so the call
-   always comes back:
+   self-limits to ~4 min and returns `IDLE` well before that ceiling, so the
+   call always comes back. Do not pass a 5th argument or `MESH_MAX_WAIT_SEC`: the
+   ~4-min default is what keeps your re-park a cache read:
 
    ```
    MESH_PRODUCT_TRACK=«MESH_PRODUCT_TRACK» \
@@ -112,7 +123,7 @@ until stop (see "Stopping" below):
    sleeping `POLL_SEC` and re-pulling — until there is something to do or the
    idle deadline hits.** While it blocks you are parked on this one tool call and
    spend NO tokens. An idle mesh therefore costs zero commits and near-zero
-   inference (one thought per ~9 min re-park) — repo and token traffic are both
+   inference (one cache-read re-park per ~4 min) — repo and token traffic are both
    proportional to real work, not to node-count × poll frequency. It runs on
    macOS and Linux alike (bash 3.2+, no `timeout` dependency).
 
@@ -314,10 +325,25 @@ rejection, follow the conflict-handling rule below.
    your turn with no scanner call in flight takes the node off the mesh. The only
    clean exits are STOP, STALE_PRODUCT, and unrecoverable errors.
 
+## Keep your context small
+
+Every re-park re-sends your whole context, so its size sets what an idle node
+costs per day. Take in only what the next step needs:
+
+- Read a message's front-matter with `sed -n` or `head`, not the whole file,
+  unless you need its body (an executor prompt, a reply to surface).
+- Never print logs, diffs, `git log` output or whole result files into your
+  context. Copy result files with `cp`; do not `cat` them.
+- Keep each status write and sync to the commands themselves, with no
+  commentary.
+
 ## Dispatching an executor sub-subagent
 
 For each task, spawn ONE sub-subagent with the Agent tool and wait for its
-result before writing the terminal status. Its prompt must be SELF-CONTAINED — it
+result before writing the terminal status. Always pass `model: «EXECUTOR_MODEL»`
+on that Agent call. If you leave it out, the executor inherits YOUR model, and
+you run on a cheaper model picked for this mechanical loop, not for task work.
+Its prompt must be SELF-CONTAINED — it
 has no access to this conversation. Include: the full task body (goal, context,
 done-when, on-failure) read verbatim from the task file, the literal `REPO` path,
 the credential NAMES it may use (values are already in the environment), an
@@ -331,7 +357,11 @@ SessionStart lore catalog because you are a sub-subagent, so grep
 `«AGENT_CONTEXT»` OR are empty (universal), and whose `tags` intersect this task's
 subject; read the matches before acting and cite any lore id you relied on in your
 result. Then: you are executing one mesh task. Do the work. Do NOT touch git or
-status files — the poller owns those. Return a concise structured result: what you
+status files — the poller owns those. When you wait on a long-running command or
+job, wait in synchronous calls of at most 4 min each (a loop that checks the
+job and gives up after 240 s), never one long blocking call: after 5 min with no
+turn the prompt cache expires, and your next turn re-writes your whole context
+at the cache-write price. Return a concise structured result: what you
 did, whether done-when is satisfied, artifact pointers (URLs/paths/job-ids, never
 payloads except the files the task asks for), and any durable lesson learned.
 Return each file the task asks for under files:, text only, at most 1048576 bytes each.
