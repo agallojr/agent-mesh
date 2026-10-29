@@ -205,6 +205,26 @@ check "the commit stays local and holds only its path" \
   eq "$(changed_paths "$BUS" HEAD)" "agents/v.yaml"
 g -C "$BUS" remote set-url origin "$BUS_ORIGIN"
 
+# --- an unpushed commit that moves a pin, whoever made it, is never pushed
+g -C "$BUS" push -q origin HEAD 2>/dev/null
+head=$(g -C "$BUS" rev-parse HEAD)
+g -C "$BUS" commit -q -m "operator pin commit, not pushed" -- product
+printf 'agent_id: r\n' > "$BUS/agents/r.yaml"
+out=$(bash "$MC" "$BUS" "t" agents/r.yaml 2>"$T/err"); rc=$?
+check "an unpushed pin commit blocks the push, exit 3" eq "$rc" 3
+check "it prints COMMITTED then PUSH FAILED" \
+  eq "$(printf '%s\n' "$out" | sed 's/^COMMITTED [0-9a-f]\{7\}$/COMMITTED sha/')" \
+  "$(printf 'COMMITTED sha\nPUSH FAILED')"
+check "it says why on stderr" grep -q 'submodule pin' "$T/err"
+check "origin is untouched" eq "$(g -C "$BUS_ORIGIN" rev-parse main)" "$head"
+check "origin still pins the product at the pin" \
+  eq "$(g -C "$BUS_ORIGIN" rev-parse main:product)" "$PIN"
+# Put the checkout back: drop both local commits, keep the stale gitlink staged.
+g -C "$BUS" reset -q --soft "$head"
+g -C "$BUS" reset -q -- agents/r.yaml
+g -C "$BUS" update-index --cacheinfo "160000,$PROD_OLD,product"
+rm -f "$BUS/agents/r.yaml"
+
 # --- white-box: the post-commit check undoes a commit that holds a path it
 # was not given, or a gitlink, and leaves the index as it was. The pre-checks
 # keep the public surface from reaching this branch, so drive it directly.

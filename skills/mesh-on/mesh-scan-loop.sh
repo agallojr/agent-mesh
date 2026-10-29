@@ -2,15 +2,26 @@
 # mesh-scan-loop.sh — read-only mesh poll loop. The Claude poller parks on this
 # script as ONE SYNCHRONOUS Bash call and acts on its exit. It exits when there
 # is real work (or a stop/layout signal), or with IDLE at MAX_WAIT_SEC — the
-# poller re-launches immediately on IDLE (a token-trivial re-park, no commits).
+# poller re-launches immediately on IDLE (a token-trivial re-park).
 # The deadline sits under the 5-min prompt-cache TTL, so each re-park reads the
 # poller's context from cache; a longer park lets the cache expire and the
 # re-park re-writes the whole context at the cache-write price. Never
 # launch it as a background call: a background child is not guaranteed to
-# survive the poller ending its turn, which orphans the node. Does NO gated
-# git — add/commit/push stay inside Claude; the read-only pull/submodule-update
-# here were never gated, so a variable REPO path is fine (the literal-path rule
-# only guards the gate).
+# survive the poller ending its turn, which orphans the node.
+#
+# Heartbeat (PROTOCOL 4.3): each scan iteration rewrites last_poll (UTC, to
+# the second) in the node's own agents/<AGENT_ID>.yaml and pushes it through
+# mesh-commit.sh, in a commit that holds only that file, so a node whose
+# poller has stopped shows an old last_poll (mesh-check's mesh-stale.sh). A
+# scan within half a poll interval of the last heartbeat writes none, so a
+# re-park does not double it. A failed push neither stops nor delays the
+# scan: the next nap is cut by the time the heartbeat took. Nothing here runs
+# after the scanner exits, so nothing writes last_poll once the poller stops.
+# A node with no agents/<AGENT_ID>.yaml gets no heartbeat. These heartbeats
+# are the scanner's only git writes; mesh-commit.sh applies the git gate's
+# rules to them itself. The pull and submodule updates stay read-only and
+# ungated; a gitlink staged in the index is lifted out around the pull, so
+# the rebase of an unpushed heartbeat cannot record it as a pin.
 #
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
 #        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 240 (4 min). A call
@@ -41,6 +52,7 @@
 set -uo pipefail
 
 REPO="${1:?repo path}"
+SCAN_DIR=$(cd "$(dirname "$0")" && pwd)
 
 update_paths() {  # submodule paths a cycle updates, one per line, file order
   git config -f "$REPO/.gitmodules" --get-regexp '^submodule\..*\.path$' \
@@ -71,6 +83,55 @@ touch "$SEEN" 2>/dev/null || true
 # disables the deadline (old block-forever behavior, for non-harness callers).
 SECONDS=0
 
+# mesh-commit.sh's functions (sourcing runs nothing): the gitlink lift.
+. "$SCAN_DIR/mesh-commit.sh"
+NODE_FILE=""
+case "$AGENT_ID" in
+  ""|.|..|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*) ;;
+  *) NODE_FILE="agents/$AGENT_ID.yaml" ;;
+esac
+
+epoch() {  # whole s since 1970-01-01T00:00:00Z of YYYY-MM-DDTHH:MM:SSZ, or -1
+  printf '%s\n' "$1" | awk -F'[-T:Z]' '
+    function days(y, m, d,   era, yoe, doy, doe) {
+      y -= (m <= 2)
+      era = int((y >= 0 ? y : y - 399) / 400)
+      yoe = y - era * 400
+      doy = int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1
+      doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+      return era * 146097 + doe - 719468
+    }
+    NF >= 6 && $1 ~ /^[0-9][0-9][0-9][0-9]$/ {
+      printf "%d\n", days($1 + 0, $2 + 0, $3 + 0) * 86400 + $4 * 3600 + $5 * 60 + $6
+      next
+    }
+    { print -1 }'
+}
+
+heartbeat() {  # rewrite last_poll in this node's own record and push it
+  local f now last tmp
+  [ -n "$NODE_FILE" ] || return 0
+  f="$REPO/$NODE_FILE"
+  [ -f "$f" ] || return 0
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  last=$(sed -n 's/^last_poll:[[:space:]]*//p' "$f" | head -1)
+  last=$(epoch "$last")
+  if [ "$last" -ge 0 ] 2>/dev/null && \
+     [ $(( $(epoch "$now") - last )) -lt $(( POLL / 2 )) ] 2>/dev/null; then
+    return 0  # a heartbeat this recent already stands
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/mesh-heartbeat.XXXXXX") || return 0
+  if grep -q '^last_poll:' "$f"; then
+    sed "s/^last_poll:.*/last_poll: $now/" "$f" > "$tmp"
+  else
+    cat "$f" > "$tmp"; printf 'last_poll: %s\n' "$now" >> "$tmp"
+  fi
+  cat "$tmp" > "$f"
+  rm -f "$tmp"
+  bash "$SCAN_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" "$NODE_FILE" \
+    >/dev/null 2>&1 </dev/null || true
+}
+
 fm() {  # fm <key> <file> -> first frontmatter value for key
   sed -n "s/^$1:[[:space:]]*//p" "$2" | head -1
 }
@@ -85,9 +146,13 @@ claimable() {  # exit 0 iff task file is claimable now (actionable + no status)
 
 while :; do
   [ -f "$HOME/.mesh-stop" ] && { echo STOP; exit 2; }
+  iter_start=$SECONDS
 
-  # read-only, ungated; failures are transient -> keep looping
+  # read-only, ungated; failures are transient -> keep looping. A staged
+  # gitlink is lifted out around the pull and put back (mesh-commit.sh).
+  mc_lift_gitlinks
   git -C "$REPO" pull --rebase --quiet 2>/dev/null || true
+  mc_restore_gitlinks
   # One submodule per call, so one bad path never blocks the rest. stdin is
   # /dev/null so git cannot read the path list the loop is iterating.
   while IFS= read -r p; do
@@ -146,6 +211,9 @@ EOF
     fi
   done
 
+  # The scan is done: record it (the heartbeat), then act on what it found.
+  heartbeat
+
   if [ "${#hits[@]}" -gt 0 ]; then
     printf 'WORK\n'; printf '%s\n' "${hits[@]}"; exit 0
   fi
@@ -153,12 +221,14 @@ EOF
   # IDLE deadline: return before the cache TTL so the poller re-parks on a
   # cache read. The last sleep is cut to the time left, then one final scan
   # runs, so a POLL at or above MAX_WAIT still sleeps before IDLE instead of
-  # returning at once and making the poller re-park every few seconds.
-  nap="$POLL"
+  # returning at once and making the poller re-park every few seconds. The
+  # nap is also cut by the time this iteration took, so a slow heartbeat
+  # push does not delay the next scan.
+  nap=$(( POLL - (SECONDS - iter_start) ))
   if [ "$MAX_WAIT" -gt 0 ] 2>/dev/null; then
     left=$(( MAX_WAIT - SECONDS ))
     [ "$left" -gt 0 ] || { echo IDLE; exit 5; }
     [ "$left" -lt "$nap" ] && nap="$left"
   fi
-  sleep "$nap"
+  [ "$nap" -gt 0 ] 2>/dev/null && sleep "$nap"
 done

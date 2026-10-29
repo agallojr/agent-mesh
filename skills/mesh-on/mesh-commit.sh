@@ -42,7 +42,9 @@
 # `pull --rebase --autostash` and pushes again, 3 pushes at most. A gitlink
 # staged in the index is lifted out of the index for the rebase and put back
 # after it: under ignore = all, git does not see it as a local change, and the
-# rebase would write it into the rebased commit.
+# rebase would write it into the rebased commit. It never pushes while a
+# commit not yet on origin changes a gitlink, whoever made it: it prints
+# PUSH FAILED, says why on stderr, and the operator settles that commit.
 #
 # Sourcing this file defines its functions without running it (unit tests).
 # Portable: bash 3.2+, POSIX sed/awk, git, python3 (stdlib) for the gate.
@@ -297,6 +299,15 @@ $MC_LIFTED
 EOF
 }
 
+mc_outgoing_gitlink() {  # 0 if a commit not yet on origin changes a gitlink
+  local up
+  [ -n "$1" ] || return 1
+  up="refs/remotes/origin/$1"
+  mc_git rev-parse -q --verify "$up" >/dev/null 2>&1 || return 1
+  mc_git log --raw --no-renames --ignore-submodules=none --format= "$up..HEAD" \
+    2>/dev/null | grep -qE '^:(160000 [0-7]+|[0-7]+ 160000) '
+}
+
 mc_main() {
   local raw p head_before branch attempt pushed files err sha
   if [ $# -lt 2 ]; then
@@ -372,6 +383,11 @@ EOF
   branch=$(mc_git symbolic-ref -q --short HEAD 2>/dev/null || true)
   attempt=1; pushed=0
   while :; do
+    if mc_outgoing_gitlink "$branch"; then
+      echo "mesh-commit: a commit not yet on origin changes a submodule pin;" \
+        "not pushing" >&2
+      break
+    fi
     if mc_git push -q origin HEAD >/dev/null 2>&1; then pushed=1; break; fi
     [ "$attempt" -ge 3 ] && break
     mc_lift_gitlinks

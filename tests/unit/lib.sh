@@ -42,7 +42,9 @@ mk_product() {
   g clone -q "$PROD_ORIGIN" "$w" 2>/dev/null
   g -C "$w" symbolic-ref HEAD refs/heads/main
   echo "readme" > "$w/README.md"
-  g -C "$w" add README.md
+  mkdir -p "$w/spec"
+  echo 1 > "$w/spec/LAYOUT_VERSION"
+  g -C "$w" add README.md spec/LAYOUT_VERSION
   g -C "$w" commit -q -m "product one"
   PROD_OLD=$(g -C "$w" rev-parse HEAD)
   echo "v2" > "$w/VERSION"
