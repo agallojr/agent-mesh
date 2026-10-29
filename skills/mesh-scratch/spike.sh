@@ -78,8 +78,13 @@ n=0
 [ -n "$abandoned" ] && n=$((n + 1))
 [ "$n" -eq 1 ] || usage
 
-untracked=$(git -C "$root" ls-files --others --exclude-standard -- "$spike")
-[ -z "$untracked" ] || refuse "untracked files in the folder, save first"
+dirty=$(git -C "$root" status --porcelain -- "$spike") ||
+  refuse "scratch root is not a git work tree"
+[ -z "$dirty" ] ||
+  refuse "untracked, modified or staged files in the folder, save first"
+tracked=$(git -C "$root" ls-files -- "$spike") ||
+  refuse "scratch root is not a git work tree"
+[ -n "$tracked" ] || refuse "no tracked file in the folder, save first"
 
 if [ -n "$filed" ]; then
   outcome=filed
