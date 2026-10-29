@@ -104,7 +104,9 @@ for f in "$REPO"/agents/*.yaml; do
   [ -n "$id" ] || id=$(basename "$f" .yaml)
   name=$(yv agent_name "$f")
   interval=$(yv heartbeat_sec "$f")
-  case "$interval" in ""|0|*[!0123456789]*) interval=900 ;; esac
+  case "$interval" in ""|*[!0123456789]*|??????????*) interval=900 ;; esac
+  interval=$((10#$interval))  # leading zeros are decimal
+  [ "$interval" -ge 1 ] || interval=900
   last=$(yv last_poll "$f")
   if ! is_utc "$last"; then
     echo "NO LAST POLL $id $name; holds $(held_by "$id")"

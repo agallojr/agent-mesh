@@ -297,10 +297,11 @@ Three fields carry the node's liveness:
 - `heartbeat_sec` is the node's heartbeat interval in s, from
   `MESH_HEARTBEAT_SEC` in its identity file (a whole number of at least 1;
   900 when unset, empty or not a number).
-- `last_poll` is the UTC time, to the second, of the node's latest scan of its
-  queues. Registration writes it with the time it registers. While the node's
-  poller is live, the node rewrites it and pushes it once its recorded `last_poll` is
-  `heartbeat_sec` old, an executor's run included, in a commit that holds only
+- `last_poll` is the UTC time, to the second, of the node's latest heartbeat,
+  at most one heartbeat interval behind its latest scan of its queues.
+  Registration writes it with the time it registers. While the node's poller
+  is live, the node rewrites it and pushes it once its recorded `last_poll`
+  is `heartbeat_sec` old, an executor's run included, in a commit that holds only
   this file (the scanner, `skills/mesh-on/mesh-scan-loop.sh`, does it on a
   scan; a scan before that writes and pushes nothing). Consecutive heartbeats
   are one heartbeat interval to one heartbeat interval plus one poll interval
@@ -592,10 +593,11 @@ real work, not to node count.
 **Orphan detection.** A task left in `accepted`/`running` with no terminal status
 past a generous bound (its `timeout_min`, or a multiple of the owner's
 `poll_interval_sec`) is presumed dead, and so is one whose owner's `last_poll` is
-older than 3 of its poll intervals. Discerning this is a read-only ledger query
-any node or operator can run — scan `status/**` for non-terminal states whose
-`updated` is stale, or whose owner is not polling (`mesh-stale.sh`), and report
-the owning `agent_id`. The mesh does not reap:
+older than 3 of its heartbeat intervals (`heartbeat_sec`, 2700 s by default).
+Discerning this is a read-only ledger query any node or operator can run — scan
+`status/**` for non-terminal states whose `updated` is stale, or whose owner is
+not polling (`mesh-stale.sh`), and report the owning `agent_id`. The mesh does
+not reap:
 recovery is manual (restart the named node). Only the owning agent or the human may
 transition a task to `failed` — a dead agent cannot report its own death, so
 staleness is inferred, never asserted by a third party.
@@ -1027,8 +1029,9 @@ loop (poller subagent):
      the script loops internally -- pull --rebase + submodule update --init
      --remote --recursive (a product bump on the bus takes effect here), scan
      tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/,
-     rewrite and push last_poll in agents/<AGENT_ID>.yaml (the heartbeat), and
-     sleep POLL between scans -- exiting on:
+     when last_poll is HEARTBEAT_SEC old, rewrite and push it in
+     agents/<AGENT_ID>.yaml (the heartbeat), push any commit not on origin,
+     and sleep POLL between scans -- exiting on:
        STOP (exit 2): ~/.mesh-stop exists -> end cleanly
        WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
        IDLE (exit 5): idle deadline (240 s, under the cache TTL) -> re-park

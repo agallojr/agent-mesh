@@ -7,7 +7,8 @@
 # Usage: mesh-register.sh <REPO>
 #   Reads $HOME/.agent-identity.env (AGENT_ID, AGENT_NAME, AGENT_CONTEXT,
 #   POLL_INTERVAL_SEC, MESH_HEARTBEAT_SEC, AGENT_ROLES or a legacy AGENT_ROLE),
-#   and only the key names, never the values, of $HOME/.agent-credentials.env when it exists.
+#   and only the key names, never the values, of $HOME/.agent-credentials.env
+#   when it exists.
 #   MESH_SESSION_MODEL, if set in the environment, is written as `model:`
 #   (the model id of the session that runs /mesh-on).
 # Output and exit status: those of mesh-commit.sh (COMMITTED <sha7> and
@@ -71,8 +72,9 @@ AGENT_CONTEXT=$(idv AGENT_CONTEXT)
 POLL=$(idv POLL_INTERVAL_SEC)
 HB=$(idv MESH_HEARTBEAT_SEC)
 [ -n "$HB" ] || HB="${MESH_HEARTBEAT_SEC:-}"
-case "$HB" in ""|*[!0123456789]*) HB=900 ;; esac
-[ "$HB" -ge 1 ] 2>/dev/null || HB=900
+case "$HB" in ""|*[!0123456789]*|??????????*) HB=900 ;; esac
+HB=$((10#$HB))  # leading zeros are decimal
+[ "$HB" -ge 1 ] || HB=900
 ROLES=$(idv AGENT_ROLES)
 [ -n "$ROLES" ] || ROLES=$(idv AGENT_ROLE)
 

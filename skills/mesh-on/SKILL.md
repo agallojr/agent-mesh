@@ -209,8 +209,8 @@ therefore costs near-zero tokens (one cache-read re-park per ~4 min) and one
 heartbeat commit per heartbeat interval (900 s by default, about 96 a day):
 a scan past that interval rewrites `last_poll` in this node's
 `agents/<AGENT_ID>.yaml` and pushes it through `mesh-commit.sh`, so
-`mesh-check` can name a node that has stopped polling (after 3 intervals). The scanner runs on
-macOS and Linux (bash 3.2+, no external `timeout`).
+`mesh-check` can name a node that has stopped polling (after 3 intervals).
+The scanner runs on macOS and Linux (bash 3.2+, no external `timeout`).
 
 Pass `MESH_HEARTBEAT_SEC` (from the identity file; 900 when unset) to the
 poller the same way: it goes on the scanner and wait command lines, which read

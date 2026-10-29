@@ -3,10 +3,9 @@
 # sections 2.2 and 2.6, R2; heartbeat-every-15-min R1): a scan rewrites
 # last_poll in the node's own agents/<id>.yaml and pushes it through
 # mesh-commit.sh, in a commit that holds only that file and no gitlink, once
-# per heartbeat interval (MESH_HEARTBEAT_SEC, 900 s by default) and not on
-# every scan; a failed push never stops or delays the scan; the scanner's
-# output words and exit codes are as before. Runs under 60 s (short POLL,
-# MAX_WAIT and heartbeat values).
+# per heartbeat interval; a failed push never stops or delays the scan; the
+# scanner's output words and exit codes are as before. The cadence itself is
+# in test_mesh_scan_cadence.sh. Runs under 60 s (short POLL and MAX_WAIT).
 set -u
 . "$(dirname "$0")/lib.sh"
 unit_setup
@@ -37,12 +36,12 @@ export MESH_HEARTBEAT_SEC=1
 # the node's own file, the pin unmoved, the staged gitlink still staged.
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
 t0=$(utc_now); SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 2); rc=$?
 el=$SECONDS; t1=$(utc_now)
 check "idle run prints IDLE and exits 5" eq "$rc:$out" "5:IDLE"
-check "idle run returns by its deadline (3 s, slack 4 s)" test "$el" -le 7
+check "idle run returns by its deadline (2 s, slack 4 s)" test "$el" -le 6
 n=$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")
-check "idle run pushed at least 2 heartbeats" test "$n" -ge 2
+check "idle run pushed at least 1 heartbeat" test "$n" -ge 1
 bad=0
 for c in $(g -C "$BUS_ORIGIN" rev-list "$base..main"); do
   [ "$(changed_paths "$BUS_ORIGIN" "$c")" = "agents/$ID.yaml" ] || bad=$((bad + 1))
@@ -58,38 +57,6 @@ check "the stale gitlink is still staged" \
 check "the record is otherwise unchanged" \
   eq "$(grep -v '^last_poll:' "$BUS/agents/$ID.yaml" | tr '\n' '|')" \
   "schema_version: 1|agent_id: n1|agent_name: node-one|poll_interval_sec: 1|"
-
-# --- the cadence: with a 1 s poll and MESH_HEARTBEAT_SEC=5, a run of about
-# 12 s pushes 2 or 3 heartbeats, each at least 5 s and at most 6 s after the
-# one before.
-reset_lp
-base=$(g -C "$BUS_ORIGIN" rev-parse main)
-out=$(MESH_HEARTBEAT_SEC=5 bash "$SCAN" "$BUS" build "$ID" 1 12); rc=$?
-check "the cadence run ends IDLE" eq "$rc:$out" "5:IDLE"
-n=$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")
-check "2 or 3 heartbeats in about 12 s at 5 s ($n)" test "$n" -ge 2 -a "$n" -le 3
-prev=""; gaps=""; bad=0
-for c in $(g -C "$BUS_ORIGIN" rev-list --reverse "$base..main"); do
-  e=$(epoch "$(g -C "$BUS_ORIGIN" show "$c:agents/$ID.yaml" | sed -n 's/^last_poll: //p')")
-  if [ -n "$prev" ]; then
-    d=$((e - prev)); gaps="$gaps $d"
-    [ "$d" -ge 5 ] && [ "$d" -le 6 ] || bad=$((bad + 1))
-  fi
-  prev=$e
-done
-check "consecutive heartbeats are 5 to 6 s apart (gaps:$gaps s)" eq "$bad" 0
-
-# --- the default (unset) interval is 900 s: from an old last_poll, a run of
-# about 10 s pushes exactly one heartbeat, then a second run right after it
-# pushes none (the fresh heartbeat stands).
-reset_lp
-base=$(g -C "$BUS_ORIGIN" rev-parse main)
-out=$(env -u MESH_HEARTBEAT_SEC bash "$SCAN" "$BUS" build "$ID" 1 10); rc=$?
-check "by default a run of about 10 s pushes at most 1 heartbeat" \
-  eq "$rc:$out:$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "5:IDLE:1"
-out=$(env -u MESH_HEARTBEAT_SEC bash "$SCAN" "$BUS" build "$ID" 1 1); rc=$?
-check "a fresh heartbeat is not repeated by default" \
-  eq "$rc:$out:$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "5:IDLE:1"
 
 # --- work: the scan that finds work writes its heartbeat, then WORK.
 OTHER="$T/other"
@@ -118,7 +85,7 @@ g -C "$BUS" remote set-url origin "$T/no-such-origin.git"
 sed -i.bak 's/^last_poll: .*/last_poll: 2026-01-01T00:00:00Z/' "$BUS/agents/$ID.yaml"
 rm -f "$BUS/agents/$ID.yaml.bak"
 SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 2); rc=$?
 el=$SECONDS
 check "with origin unreachable the scan still ends IDLE, exit 5" eq "$rc:$out" "5:IDLE"
 check "with origin unreachable it returns by its deadline (2 s) plus one heartbeat ($el s)" test "$el" -le 10

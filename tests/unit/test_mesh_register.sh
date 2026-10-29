@@ -102,6 +102,16 @@ for bad in abc "" 0 -5 1.5; do
   check "heartbeat_sec is 900 for the value '$bad'" eq "$(field heartbeat_sec)" 900
 done
 
+# Leading zeros are decimal, and 00 is the default.
+for pair in 08:8 09:9 0900:900 0100:100 00:900 007:7; do
+  sed -i.bak -e "s/^MESH_HEARTBEAT_SEC=.*/MESH_HEARTBEAT_SEC=${pair%%:*}/" \
+    "$HOME/.agent-identity.env"
+  rm -f "$HOME/.agent-identity.env.bak"
+  bash "$MR" "$BUS" >/dev/null
+  check "heartbeat_sec for ${pair%%:*} is ${pair##*:}" \
+    eq "$(field heartbeat_sec)" "${pair##*:}"
+done
+
 # Refusals write nothing.
 head=$(g -C "$BUS" rev-parse HEAD)
 sed -i.bak -e 's/^AGENT_ID=.*/AGENT_ID=..\/evil/' "$HOME/.agent-identity.env"

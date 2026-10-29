@@ -75,11 +75,19 @@ node a7 hb-absent - 2026-10-29T15:00:59Z       # 181 s: not flagged at the 900 s
 node a9 hb-junk abc 2026-10-29T14:18:59Z       # 2701 s, non-number: 900 s default
 printf 'agent_id: a8\nagent_name: "quoted name"  # a comment\nheartbeat_sec: "900"\nlast_poll: "2026-10-29T14:00:00Z"\n' \
   > "$R/agents/a8.yaml"
+node c1 lead-zero-08 08 2026-10-29T15:03:35Z   # 25 s at 8 s (not octal): flagged
+node c2 lead-zero-09 09 2026-10-29T15:03:50Z   # 10 s at 9 s: not flagged
+node c3 lead-zero-0900 0900 2026-10-29T14:48:00Z   # 960 s at 900 s: not flagged
+node c4 lead-zero-0100 0100 2026-10-29T14:58:59Z   # 301 s at 100 s: flagged
+node c5 zero-00 00 2026-10-29T14:18:59Z        # 00 is 900 s: 2701 s flagged
 out=$(bash "$MS" "$R" --now "$NOW"); rc=$?
 expected="NOT POLLING a6 hb-120-late: last poll 361 s ago at 2026-10-29T14:57:59Z, interval 120 s; holds nothing
 NOT POLLING a8 quoted name: last poll 3840 s ago at 2026-10-29T14:00:00Z, interval 900 s; holds nothing
-NOT POLLING a9 hb-junk: last poll 2701 s ago at 2026-10-29T14:18:59Z, interval 900 s; holds nothing"
-check "own interval, absent interval, non-number and quoted values" eq "$out" "$expected"
+NOT POLLING a9 hb-junk: last poll 2701 s ago at 2026-10-29T14:18:59Z, interval 900 s; holds nothing
+NOT POLLING c1 lead-zero-08: last poll 25 s ago at 2026-10-29T15:03:35Z, interval 8 s; holds nothing
+NOT POLLING c4 lead-zero-0100: last poll 301 s ago at 2026-10-29T14:58:59Z, interval 100 s; holds nothing
+NOT POLLING c5 zero-00: last poll 2701 s ago at 2026-10-29T14:18:59Z, interval 900 s; holds nothing"
+check "own interval, absent interval, non-number, leading zeros and quoted values" eq "$out" "$expected"
 
 # Ages across a day, a month, a year and a leap day.
 R="$T/bus3"

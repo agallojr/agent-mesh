@@ -337,12 +337,32 @@ mc_orphaned() {  # 0 if MC_PARENT is set and this process has lost that parent
 # when the node has no record, its id is not plain, or the node's recorded
 # last_poll is less than one heartbeat interval old, so heartbeats are one
 # heartbeat interval to one interval plus one caller's poll interval apart.
-# Returns 3, writing nothing, when the caller set MC_PARENT and has been orphaned, so no process that outlives the poller
-# writes last_poll. A failed push is not an error here: returns 0. It puts the
+# When it writes nothing for that reason and MC_PUSH_PENDING=1 (the scanner's),
+# it makes one push attempt for any commit not yet on origin (mc_push_pending).
+# Returns 3, writing nothing, when the caller set MC_PARENT and has been
+# orphaned, so no process that outlives the poller writes last_poll. A failed push is not an error here: returns 0. It puts the
 # record back as it was if the commit is refused. MC_HEARTBEAT_PUSHES=1 (the
 # scanner's, which pulls on every scan) makes one push attempt; unset (the
 # wait's, which never pulls) it pulls and retries a rejected push as any
 # commit does, so the heartbeat still lands while other nodes push.
+mc_push_pending() {  # one push attempt when HEAD has commits not on origin
+  local branch up
+  [ "${MC_PUSH_PENDING:-}" = 1 ] || return 0
+  branch=$(mc_git symbolic-ref -q --short HEAD 2>/dev/null) || return 0
+  up="refs/remotes/origin/$branch"
+  mc_git rev-parse -q --verify "$up" >/dev/null 2>&1 || return 0
+  [ "$(mc_git rev-list --count "$up..HEAD" 2>/dev/null)" -gt 0 ] 2>/dev/null \
+    || return 0
+  mc_in_progress && return 0
+  MC_GATE=$(mc_find_gate) || return 0
+  if [ -x /usr/bin/python3 ]; then MC_PY=/usr/bin/python3
+  else MC_PY=$(command -v python3) || return 0; fi
+  mc_gate push || return 0
+  mc_outgoing_gitlink "$branch" && return 0  # never push a pin
+  mc_git push -q origin HEAD >/dev/null 2>&1 </dev/null
+  return 0
+}
+
 mc_heartbeat() {
   local file f now last tmp hb
   case "${AGENT_ID:-}" in
@@ -351,8 +371,9 @@ mc_heartbeat() {
   esac
   mc_orphaned && return 3
   hb="${MESH_HEARTBEAT_SEC:-}"
-  case "$hb" in ""|*[!0123456789]*) hb=900 ;; esac
-  [ "$hb" -ge 1 ] 2>/dev/null || hb=900
+  case "$hb" in ""|*[!0123456789]*|??????????*) hb=900 ;; esac
+  hb=$((10#$hb))  # leading zeros are decimal
+  [ "$hb" -ge 1 ] || hb=900
   file="agents/$AGENT_ID.yaml"
   f="$REPO/$file"
   [ -f "$f" ] || return 0
@@ -361,6 +382,7 @@ mc_heartbeat() {
   last=$(mc_epoch "$last")
   if [ "$last" -ge 0 ] 2>/dev/null && \
      [ $(( $(mc_epoch "$now") - last )) -lt "$hb" ] 2>/dev/null; then
+    mc_push_pending
     return 0  # the last heartbeat is younger than one interval
   fi
   tmp=$(mktemp "${TMPDIR:-/tmp}/mesh-heartbeat.XXXXXX") || return 0

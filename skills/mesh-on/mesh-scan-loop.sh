@@ -18,8 +18,11 @@
 # so a re-park does not double it, and heartbeats are one heartbeat interval
 # to one interval plus one poll interval apart. A node whose poller has
 # stopped shows an old last_poll (mesh-check's mesh-stale.sh flags it after 3
-# intervals). A failed push neither stops nor delays the
-# scan: the next nap is cut by the time the heartbeat took. Nothing here runs
+# intervals). On every scan, whether or not a heartbeat is due, a checkout
+# with commits not yet on origin (a lost race, or a failed registration,
+# status or result push) makes one push attempt, so those go out at the next
+# scan, not a heartbeat interval later. A failed push neither stops nor delays
+# the scan: the next nap is cut by the time the heartbeat took. Nothing here runs
 # after the scanner exits, so nothing writes last_poll once the poller stops.
 # A node with no agents/<AGENT_ID>.yaml gets no heartbeat. These heartbeats
 # are the scanner's only git writes; mesh-commit.sh applies the git gate's
@@ -92,6 +95,7 @@ SECONDS=0
 # set).
 . "$SCAN_DIR/mesh-commit.sh"
 MC_PARENT=$PPID  # a heartbeat is never written once this caller is orphaned
+MC_PUSH_PENDING=1  # a scan with a commit not on origin makes one push attempt
 MC_HEARTBEAT_PUSHES=1  # one push per heartbeat: the next scan's pull carries it
 
 fm() {  # fm <key> <file> -> first frontmatter value for key

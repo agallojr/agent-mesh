@@ -217,7 +217,8 @@ went:
 
 - `PUSHED` or `NOTHING TO COMMIT`: done; go on.
 - `PUSH FAILED` (exit 3): the commit is local and goes out with the next push
-  from this checkout (the scanner's next heartbeat). Do not sync the same paths
+  from this checkout (the scanner's next scan makes one push attempt for
+  any commit not on origin, heartbeat due or not). Do not sync the same paths
   again: that prints `NOTHING TO COMMIT` and pushes nothing. For a claim, see
   step 4a: a claim that is not on origin is dropped, never worked on.
 - `REFUSED <reason>` (exit 1): nothing was committed. Do not retry the same
