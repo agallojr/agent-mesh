@@ -103,22 +103,41 @@ literal-path discipline, single-writer rules, credential-name-only handling, and
 coding conventions. Load them now, before self-registration, so the rules govern
 everything that follows. (`git pull` in the next step keeps this file
 byte-identical across all nodes; a fresh clone may need `git -C /abs/repo
-submodule update --init --recursive` first so `product/` — which the
-chain imports from — is present.)
+submodule update --init --recursive -- product` first so `product/` — which the
+chain imports from — is present, and core cloned, which holds the overlay;
+`INSTALL.md` step 1.)
 
 ## Step 4 — sync and self-register
 
 Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
 
-1. `git -C /abs/repo pull --rebase` then
-   `git -C /abs/repo submodule update --init --recursive` (adopter mode, the
-   default: realize the product commit the bus records — nodes ride the recorded
-   pin, they do not chase product `main`). In **developer mode** only — when
-   `MESH_PRODUCT_TRACK=tip` is set in `~/.agent-identity.env` — add `--remote`
-   (`git -C /abs/repo submodule update --init --remote --recursive`) to track the
-   tip of `submodule.product.branch` (`main`). The explicit update, not a
-   clone-time `--recurse` flag, is what guarantees the product tree is present.
-   Neither op is gated; the git gate only touches add/commit/push.
+1. `git -C /abs/repo pull --rebase`, then the same submodule updates the
+   scanner makes each cycle (`mesh-scan-loop.sh`), one call per path that
+   `.gitmodules` lists:
+   - **A code submodule** (any path outside `spaces/`): for the product,
+     `git -C /abs/repo submodule update --init --recursive -- product`, and the
+     same with its own path for each other code submodule (adopter mode, the
+     default: realize the commit the bus records — nodes ride the recorded pin,
+     they do not chase product `main`). In **developer mode** only — when
+     `MESH_PRODUCT_TRACK=tip` is set in `~/.agent-identity.env` — add `--remote`
+     (`git -C /abs/repo submodule update --init --remote --recursive -- product`)
+     to track the tip of `submodule.<name>.branch` (`main`). The explicit
+     update, not a clone-time `--recurse` flag, is what guarantees the product
+     tree is present.
+   - **A memory space this node has cloned** (`spaces/<x>`, its folder holding
+     a `.git`): follow the tip of the space's `main` and stay on `main`, with
+     `git -C /abs/repo submodule update --remote --merge -- spaces/core`,
+     `git -C /abs/repo submodule update --remote --merge -- spaces/lore` and
+     `git -C /abs/repo submodule update --remote --merge -- spaces/tmp`, and the
+     same for each project space cloned here. Never `--init` a space here: a
+     project space is cloned only on first need (`mesh-load`, or a task's
+     `project:`), and `--init` with no path clones every space. Never
+     update a space without `--remote --merge` either: that checks it out at
+     the commit the bus records, detached and behind its tip. A space found
+     detached goes back on its branch first, with
+     `git -C /abs/repo/spaces/<x> checkout main`.
+
+   None of these is gated; the git gate only touches add/commit/push.
 2. Register by script, with the literal path of THIS skill directory, the
    literal repo path, and the model id of THIS session (from your system
    prompt) on the command line:

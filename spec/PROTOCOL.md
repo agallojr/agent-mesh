@@ -1112,7 +1112,16 @@ boot (mesh-on, main session):
   verify REPO_PATH is on ~/.claude/mesh-git-allowlist.txt
   rm -f ~/.mesh-stop
   git -C /abs/repo pull --rebase
-  git -C /abs/repo submodule update --init --recursive   (realize product/ pin)
+  then, as the scanner does each cycle, one call per .gitmodules path:
+    a code submodule (outside spaces/, e.g. product):
+      git -C /abs/repo submodule update --init --recursive -- <path>
+                                         (realize the recorded pin; developer
+                                         mode adds --remote)
+    a space this node has cloned (spaces/<x> holds a .git):
+      git -C /abs/repo submodule update --remote --merge -- spaces/<x>
+                                         (follow the tip of its main, staying
+                                         on main; never --init a space here: a
+                                         project space is cloned on first need)
   load guidance/CLAUDE.md chain          (base + user overlay + operating + perms)
   skills/mesh-on/mesh-register.sh /abs/repo
                                          (overwrite agents/<AGENT_ID>.yaml with
