@@ -66,8 +66,12 @@ and it writes the file and pushes. By hand it is:
    `to: role:<role>`, `type: task.request` for work or `type: query` for a
    question/status ask, plus `Goal / Context / Done when / On failure`. To ping one
    specific node instead, address its direct inbox `tasks/<id>/` with `to: <id>`.
-4. `git -C <repo> add <that one file>`, then `commit` (PLAIN-TEXT message), then
-   `push origin HEAD`.
+4. Commit only that file, naming it: `mesh-commit.sh <repo> "<plain-text
+   message>" <that one file>` (in the bus, `product/skills/mesh-on/`), or by
+   hand `git -C <repo> add -- <that one file>`, then
+   `git -C <repo> commit -m "<plain-text message>" -- <that one file>`, then
+   `git -C <repo> push origin HEAD`. A bare `commit` would also record any
+   submodule pin already staged in the bus.
 
 A node holding that role senses it on its next scan and claims it (accept-as-claim,
 so exactly one runs it even if several hold the role), tracks status, and writes the

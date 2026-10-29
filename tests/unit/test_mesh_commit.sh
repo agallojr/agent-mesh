@@ -263,4 +263,103 @@ check "the gitlink commit is undone" eq "$(g -C "$BUS" rev-parse HEAD:product)" 
 check "the stale gitlink is staged again" \
   eq "$(g -C "$BUS" ls-files -s product | awk '{print $2}')" "$PROD_OLD"
 
+# --- fix round 1 (T3 review) ---
+
+# The gitlink lift on a large index: it must filter the index once, not fork
+# per entry (46 s on a 1794-entry bus index at review). 3000 entries, with
+# the stale gitlink staged among them; a watchdog ends it at 20 s.
+mkdir -p "$BUS/memory/bulk"
+i=0
+while [ "$i" -lt 3000 ]; do : > "$BUS/memory/bulk/r$i.md"; i=$((i + 1)); done
+g -C "$BUS" add -- memory/bulk
+g -C "$BUS" commit -q -m "bulk" -- memory/bulk
+g -C "$BUS" push -q origin HEAD 2>/dev/null
+check "the index holds more than 3000 entries" \
+  test "$(g -C "$BUS" ls-files -s | wc -l | tr -d ' ')" -gt 3000
+( . "$MC"; REPO="$BUS"; mc_lift_gitlinks
+  printf '%s' "$MC_LIFTED" > "$T/lifted"
+  g -C "$REPO" ls-files -s product | awk '{print $2}' > "$T/during"
+  mc_restore_gitlinks ) & lpid=$!
+( sleep 20; kill "$lpid" 2>/dev/null ) & dog=$!
+SECONDS=0
+wait "$lpid"; lrc=$?
+el=$SECONDS
+kill "$dog" 2>/dev/null; wait "$dog" 2>/dev/null
+check "lift and restore on a 3000-entry index finish within 5 s ($el s)" \
+  test "$lrc" -eq 0 -a "$el" -le 5
+check "the lift took out exactly the staged gitlink" \
+  eq "$(cat "$T/lifted" 2>/dev/null)" "$PROD_OLD product"
+check "while lifted, the index holds the pin" eq "$(cat "$T/during" 2>/dev/null)" "$PIN"
+check "after the restore the stale gitlink is staged again" \
+  eq "$(g -C "$BUS" ls-files -s product | awk '{print $2}')" "$PROD_OLD"
+
+# A claim race (T1.TS4): another holder pushes status/<id>.json first, so the
+# rebase of this checkout's claim conflicts (add/add). mesh-commit.sh aborts
+# the rebase, ends PUSH FAILED (exit 3) with HEAD its own commit, and leaves the
+# index and the other local change as they were. The poller's yield then drops
+# the local claim (reset --soft HEAD~1, unstage, delete) and the next pull is
+# clean.
+g -C "$OTHER" pull -q --rebase 2>/dev/null
+echo '{"agent_id": "other", "state": "accepted"}' > "$OTHER/status/R1.json"
+g -C "$OTHER" add status/R1.json
+g -C "$OTHER" commit -q -m "other claims R1"
+g -C "$OTHER" push -q origin main 2>/dev/null
+check "the other holder's claim is on origin" \
+  eq "$(g -C "$BUS_ORIGIN" log -1 --format=%s main)" "other claims R1"
+echo "operator edit" >> "$BUS/README.md"
+before=$(g -C "$BUS" rev-parse HEAD)
+echo '{"agent_id": "me", "state": "accepted"}' > "$BUS/status/R1.json"
+out=$(bash "$MC" "$BUS" "status R1 -> accepted" status/R1.json 2>/dev/null); rc=$?
+check "a conflicting claim ends PUSH FAILED, exit 3" \
+  eq "$rc:$(printf '%s\n' "$out" | tail -1)" "3:PUSH FAILED"
+mine=$(g -C "$BUS" rev-parse HEAD)
+check "HEAD is this checkout's own claim commit" \
+  eq "$(g -C "$BUS" log -1 --format=%s HEAD):$(g -C "$BUS" rev-parse HEAD~1)" \
+  "status R1 -> accepted:$before"
+check "no rebase is left in progress" \
+  test ! -d "$BUS/.git/rebase-merge" -a ! -d "$BUS/.git/rebase-apply"
+check "the other local change is still there" \
+  eq "$(g -C "$BUS" diff --name-only -- README.md)" "README.md"
+check "the stale gitlink is still staged" \
+  eq "$(g -C "$BUS" ls-files -s product | awk '{print $2}')" "$PROD_OLD"
+check "no autostash is left behind" eq "$(g -C "$BUS" stash list | wc -l | tr -d ' ')" 0
+g -C "$BUS" reset -q --soft HEAD~1
+g -C "$BUS" reset -q -- status/R1.json
+rm -f "$BUS/status/R1.json"
+check "the yield leaves HEAD where it was before the claim" \
+  eq "$(g -C "$BUS" rev-parse HEAD)" "$before"
+. "$MC"; REPO="$BUS"
+mc_lift_gitlinks; g -C "$BUS" pull -q --rebase --autostash 2>/dev/null; plrc=$?; mc_restore_gitlinks
+check "after the yield the pull is clean and brings the other claim" \
+  eq "$plrc:$(sed -n 's/.*"agent_id": "\([^"]*\)".*/\1/p' "$BUS/status/R1.json")" "0:other"
+check "after the yield the stale gitlink is still staged" \
+  eq "$(g -C "$BUS" ls-files -s product | awk '{print $2}')" "$PROD_OLD"
+
+# One push attempt when asked (MESH_COMMIT_PUSHES=1, the heartbeat's): a
+# rejected push is not pulled and retried; the next scan's pull carries it.
+g -C "$OTHER" pull -q --rebase 2>/dev/null
+echo "three" > "$OTHER/other3.txt"
+g -C "$OTHER" add other3.txt
+g -C "$OTHER" commit -q -m "other node three"
+g -C "$OTHER" push -q origin main 2>/dev/null
+before=$(g -C "$BUS" rev-parse HEAD)
+printf 'agent_id: q\n' > "$BUS/agents/q.yaml"
+out=$(MESH_COMMIT_PUSHES=1 bash "$MC" "$BUS" "t" agents/q.yaml 2>/dev/null); rc=$?
+check "with one push allowed, a rejected push ends PUSH FAILED" \
+  eq "$rc:$(printf '%s\n' "$out" | tail -1)" "3:PUSH FAILED"
+check "and nothing was pulled: HEAD sits on the old local base" \
+  eq "$(g -C "$BUS" rev-parse HEAD~1)" "$before"
+
+# A refused heartbeat leaves the node's record as it was, so the scanner's
+# next pull is not blocked by a modified file.
+printf 'schema_version: 1\nagent_id: hb\nlast_poll: 2026-01-01T00:00:00Z\n' > "$BUS/agents/hb.yaml"
+bash "$MC" "$BUS" "add hb" agents/hb.yaml >/dev/null 2>&1
+mv "$CLAUDE_CONFIG_DIR/mesh-git-allowlist.txt" "$T/allowlist.saved"
+REPO="$BUS"; AGENT_ID=hb; POLL=1; MC_PARENT=""
+mc_heartbeat; hrc=$?
+mv "$T/allowlist.saved" "$CLAUDE_CONFIG_DIR/mesh-git-allowlist.txt"
+check "a refused heartbeat returns 0" eq "$hrc" 0
+check "a refused heartbeat leaves the record unmodified" \
+  eq "$(g -C "$BUS" diff --name-only -- agents/hb.yaml)" ""
+
 unit_done

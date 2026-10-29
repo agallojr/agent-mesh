@@ -19,6 +19,10 @@ import tempfile
 import types
 import unittest
 
+# Write no __pycache__ beside the monitor's source (each test removes what it
+# makes, plan section 2.7).
+sys.dont_write_bytecode = True
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MONITOR = os.path.join(HERE, "..", "..", "services", "librarian-email-monitor",
                        "email_monitor.py")
@@ -127,6 +131,11 @@ class EmailMonitorStaging(unittest.TestCase):
                              "README.md"), "README.md")
         self.assertEqual(git("-C", f"{self.tmp}/bus.git", "rev-parse", "main"),
                          git("-C", self.bus, "rev-parse", "HEAD"))
+
+    def test_loading_writes_nothing_into_the_source_tree(self) -> None:
+        cache = os.path.join(os.path.dirname(MONITOR), "__pycache__")
+        self.assertFalse(os.path.exists(cache),
+                         "loading the monitor wrote __pycache__ into the source tree")
 
     def test_run_once_names_exactly_the_files_it_wrote(self) -> None:
         em = self.em

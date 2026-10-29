@@ -141,4 +141,21 @@ out=$(bash "$SCAN" "$BUS" build "../agents/n1" 1 1); rc=$?
 check "an id that is not plain writes no heartbeat" \
   eq "$rc:$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "5:0"
 
+# --- fix round 1: a local commit that conflicts with origin (a lost claim)
+# never leaves the checkout mid-rebase after the scanner's pull.
+g -C "$OTHER" pull -q --rebase 2>/dev/null
+echo '{"agent_id": "other"}' > "$OTHER/status/C1.json"
+g -C "$OTHER" add status/C1.json
+g -C "$OTHER" commit -q -m "other claims C1"
+g -C "$OTHER" push -q origin main 2>/dev/null
+echo '{"agent_id": "n1"}' > "$BUS/status/C1.json"
+g -C "$BUS" add -- status/C1.json
+g -C "$BUS" commit -q -m "n1 claims C1" -- status/C1.json
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 1); rc=$?
+check "with a conflicting local commit the scan still ends IDLE" eq "$rc:$out" "5:IDLE"
+check "the scanner's pull leaves no rebase in progress" \
+  test ! -d "$BUS/.git/rebase-merge" -a ! -d "$BUS/.git/rebase-apply"
+check "and the local commit is still on the branch, under its heartbeat" \
+  eq "$(g -C "$BUS" log -2 --format=%s HEAD | tr '\n' '|')" "heartbeat n1|n1 claims C1|"
+
 unit_done

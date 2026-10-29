@@ -265,26 +265,26 @@ EOF
 # Lift every staged gitlink (index differs from HEAD) out of the index, so a
 # rebase cannot write it into a commit, and keep it to put back afterwards.
 mc_lift_gitlinks() {
-  local mode sha path head_entry
+  # One pass over the index and one over HEAD, then work on gitlinks only:
+  # a bus index holds thousands of entries and a handful of gitlinks.
+  local sha path hs heads
   MC_LIFTED=""
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    mode=$(printf '%s\n' "$line" | awk '{print $1}')
-    sha=$(printf '%s\n' "$line" | awk '{print $2}')
-    path=${line#*	}
-    [ "$mode" = 160000 ] || continue
-    head_entry=$(mc_git ls-tree HEAD -- "$path" 2>/dev/null | awk '{print $1" "$3}')
-    if [ "$head_entry" = "160000 $sha" ]; then continue; fi
+  heads=$(mc_git ls-tree -r HEAD 2>/dev/null \
+    | awk -F'\t' '{split($1, m, " "); if (m[1] == "160000") print m[3] "\t" $2}')
+  while IFS='	' read -r sha path; do
+    [ -n "$sha" ] && [ -n "$path" ] || continue
+    hs=$(printf '%s\n' "$heads" | awk -F'\t' -v p="$path" '$2 == p {print $1; exit}')
+    [ "$hs" = "$sha" ] && continue
     MC_LIFTED="$MC_LIFTED$sha $path
 "
-    if [ -n "$head_entry" ]; then
-      mc_git update-index --cacheinfo "${head_entry% *},${head_entry#* },$path" \
-        >/dev/null 2>&1
+    if [ -n "$hs" ]; then
+      mc_git update-index --cacheinfo "160000,$hs,$path" >/dev/null 2>&1
     else
       mc_git update-index --force-remove -- "$path" >/dev/null 2>&1
     fi
   done <<EOF
-$(mc_git ls-files -s 2>/dev/null)
+$(mc_git ls-files -s 2>/dev/null \
+  | awk -F'\t' '{split($1, m, " "); if (m[1] == "160000") print m[2] "\t" $2}')
 EOF
 }
 
@@ -336,7 +336,9 @@ mc_orphaned() {  # 0 if MC_PARENT is set and this process has lost that parent
 # the node has no record, its id is not plain, or a heartbeat within half a
 # poll interval already stands. Returns 3, writing nothing, when the caller
 # set MC_PARENT and has been orphaned, so no process that outlives the poller
-# writes last_poll. A failed push is not an error here: returns 0.
+# writes last_poll. A failed push is not an error here: returns 0. It makes
+# one push attempt (the next scan pulls and carries an unpushed one), and
+# puts the record back as it was if the commit is refused.
 mc_heartbeat() {
   local file f now last tmp
   case "${AGENT_ID:-}" in
@@ -360,15 +362,20 @@ mc_heartbeat() {
   else
     cat "$f" > "$tmp"; printf 'last_poll: %s\n' "$now" >> "$tmp"
   fi
+  cp -p "$f" "$tmp.orig" 2>/dev/null || { rm -f "$tmp"; return 0; }
   cat "$tmp" > "$f"
   rm -f "$tmp"
-  bash "$MC_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" "$file" \
-    >/dev/null 2>&1 </dev/null || true
+  MESH_COMMIT_PUSHES=1 bash "$MC_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" \
+    "$file" >/dev/null 2>&1 </dev/null
+  case $? in
+    1|2) cat "$tmp.orig" > "$f" ;;  # refused: leave the record as it was
+  esac
+  rm -f "$tmp.orig"
   return 0
 }
 
 mc_main() {
-  local raw p head_before branch attempt pushed files err sha
+  local raw p head_before branch attempt pushed pushes files err sha
   if [ $# -lt 2 ]; then
     echo "usage: mesh-commit.sh <REPO> <message> <path> [<path> ...]" >&2
     exit 2
@@ -440,6 +447,10 @@ EOF
     mc_refuse "the commit held a path not named or a gitlink; undone"
 
   branch=$(mc_git symbolic-ref -q --short HEAD 2>/dev/null || true)
+  # At most 3 pushes; MESH_COMMIT_PUSHES=1 (the heartbeat's) makes one and
+  # leaves the retry to the next scan's pull.
+  pushes=3
+  case "${MESH_COMMIT_PUSHES:-}" in 1|2) pushes=$MESH_COMMIT_PUSHES ;; esac
   attempt=1; pushed=0
   while :; do
     if mc_outgoing_gitlink "$branch"; then
@@ -448,7 +459,7 @@ EOF
       break
     fi
     if mc_git push -q origin HEAD >/dev/null 2>&1; then pushed=1; break; fi
-    [ "$attempt" -ge 3 ] && break
+    [ "$attempt" -ge "$pushes" ] && break
     mc_lift_gitlinks
     if [ -n "$branch" ]; then
       mc_git pull -q --rebase --autostash origin "$branch" >/dev/null 2>&1 || \

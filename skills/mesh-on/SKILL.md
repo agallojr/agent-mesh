@@ -71,7 +71,11 @@ Each prints how to spawn that agent (Step 5): `model <alias>`, or
 `agent <name>` for a full id (it writes the agent definition
 `<config dir>/agents/<name>.md` whose `model:` is that id, since the Agent
 tool's `model` parameter takes an alias only). Keep both lines. If either
-prints `REFUSED <reason>`, STOP and tell the user the reason.
+prints `REFUSED <reason>`, STOP and tell the user the reason. If either also
+prints `NEW DEFINITION <path>`, tell the user once, in one line, that
+Claude Code loads agent definitions at session start: this session may run
+that agent on the id's family alias (the start report then shows a fallback)
+until they restart it and run `/mesh-on` again.
 
 ## Step 2 — clear any stale stop sentinel
 

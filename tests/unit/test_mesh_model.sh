@@ -23,9 +23,9 @@ check "an unset poller model is the sonnet default" eq "$rc:$out" "0:model sonne
 
 # --- spawn: a full id is an agent definition whose model is that id
 out=$(bash "$MM" spawn poller claude-sonnet-5-5); rc=$?
-check "a full poller id spawns as its agent definition" \
-  eq "$rc:$out" "0:agent mesh-claude-sonnet-5-5"
 D="$AG/mesh-claude-sonnet-5-5.md"
+check "a full poller id spawns as its agent definition, new this time" \
+  eq "$rc:$out" "0:$(printf 'agent mesh-claude-sonnet-5-5\nNEW DEFINITION %s' "$D")"
 check "the definition file exists" test -f "$D"
 check "the definition names itself" grep -qx 'name: mesh-claude-sonnet-5-5' "$D"
 check "the definition pins the model id" grep -qx 'model: claude-sonnet-5-5' "$D"
@@ -34,16 +34,21 @@ check "the definition sets no tools line (it inherits the tools)" \
   eq "$(grep -c '^tools:' "$D")" 0
 before=$(cksum < "$D")
 out=$(bash "$MM" spawn executor claude-sonnet-5-5); rc=$?
-check "the same id for an executor spawns as the same definition" \
+check "the same id again spawns as the same definition, not new" \
   eq "$rc:$out" "0:agent mesh-claude-sonnet-5-5"
 check "a second spawn leaves the definition as it was" eq "$(cksum < "$D")" "$before"
 out=$(bash "$MM" spawn executor claude-opus-5-5); rc=$?
 check "a full executor id spawns as its own definition" \
-  eq "$rc:$out:$(sed -n 's/^model: //p' "$AG/mesh-claude-opus-5-5.md")" \
+  eq "$rc:$(printf '%s\n' "$out" | sed -n 1p):$(sed -n 's/^model: //p' "$AG/mesh-claude-opus-5-5.md")" \
   "0:agent mesh-claude-opus-5-5:claude-opus-5-5"
+ln -s "$T/elsewhere.md" "$AG/mesh-claude-fable-5-1.md"
+out=$(bash "$MM" spawn executor claude-fable-5-1); rc=$?
+check "a link at the definition path is refused" eq "$rc:${out%% *}" "1:REFUSED"
+check "and nothing is written through it" test ! -e "$T/elsewhere.md"
+rm -f "$AG/mesh-claude-fable-5-1.md"
 out=$(env -u CLAUDE_CONFIG_DIR CLAUDE_CODE_CONFIG_DIR="$T/cfg2" bash "$MM" spawn poller claude-haiku-5-5); rc=$?
 check "the definition goes to the config dir Claude Code uses" \
-  test "$rc:$out" = "0:agent mesh-claude-haiku-5-5" -a -f "$T/cfg2/agents/mesh-claude-haiku-5-5.md"
+  test "$rc:$(printf '%s\n' "$out" | sed -n 1p)" = "0:agent mesh-claude-haiku-5-5" -a -f "$T/cfg2/agents/mesh-claude-haiku-5-5.md"
 
 # --- spawn: a value that is neither is refused, and writes nothing
 n=$(ls "$AG" | wc -l | tr -d ' ')

@@ -63,7 +63,10 @@ ago at <last_poll>, interval <interval> s; holds <held>`, and one line per node
 with no `last_poll`, `NO LAST POLL <agent_id> <agent_name>; holds <held>`.
 `<held>` names each task the node holds in `accepted` or `running`, or says
 `nothing`. A held task on a node that is not polling is stuck: no executor is
-working on it.
+working on it. Two exceptions (PROTOCOL §4.3): a node whose client runs an
+executor in the foreground writes no heartbeat while that executor runs, and
+poller-side work over many turns (many result files, a librarian drain, an
+archiver sweep) writes none either; such a node can be flagged while working.
 
 Report these lines **verbatim and first**, under the heading
 `Nodes not polling`, before the buckets of Step 4. If the script prints

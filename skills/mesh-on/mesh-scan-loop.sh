@@ -106,9 +106,12 @@ while :; do
   iter_start=$SECONDS
 
   # read-only, ungated; failures are transient -> keep looping. A staged
-  # gitlink is lifted out around the pull and put back (mesh-commit.sh).
+  # gitlink is lifted out around the pull and put back (mesh-commit.sh). A
+  # rebase that stops on a conflict is aborted, so the checkout is never left
+  # mid-rebase; the local commit stays as it was.
   mc_lift_gitlinks
-  git -C "$REPO" pull --rebase --quiet 2>/dev/null || true
+  git -C "$REPO" pull --rebase --quiet >/dev/null 2>&1 || \
+    git -C "$REPO" rebase --abort >/dev/null 2>&1 || true
   mc_restore_gitlinks
   # One submodule per call, so one bad path never blocks the rest. stdin is
   # /dev/null so git cannot read the path list the loop is iterating.

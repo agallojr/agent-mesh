@@ -303,6 +303,15 @@ Two fields carry the node's liveness:
   `running` is stuck; `mesh-check` names both
   (`skills/mesh-check/mesh-stale.sh`). A `poll_interval_sec` that is absent is
   read as 60 s.
+- While an executor runs, the poller parks on `skills/mesh-on/mesh-wait.sh`,
+  which writes the heartbeat. Two gaps remain, in which a working node writes
+  no heartbeat and, past 3 poll intervals, is flagged:
+  - an executor that the client runs in the foreground, with no way to run
+    it in the background (the poller asks for the background wherever the
+    Agent tool offers it): no heartbeat is written while it runs;
+  - poller-side work that spans many model turns between parks, such as
+    publishing many result files, a librarian drain, an archiver sweep or a
+    workflow step.
 
 ### 4.4 Bootstrap guidance chain (well-known location)
 
@@ -1029,8 +1038,9 @@ loop (poller subagent):
   4. task.request: verify creds; status blocked if missing names, else
        status -> running; sync; dispatch executor sub-subagent; while it runs
        (in the background), PARK on skills/mesh-on/mesh-wait.sh -- ONE
-       SYNCHRONOUS call, re-parked until DONE, heartbeat going; never end
-       the turn to wait
+       SYNCHRONOUS call, re-parked until DONE (TIMEOUT at the task's
+       timeout_min -> failed), heartbeat going; never end the turn to wait;
+       the stop sentinel takes effect at the next scan, after the task
        terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md;
        write each file the task asked for under outbox/<AGENT_ID>/<task-id>-files/
        and list it in the result's files: (§5.1);

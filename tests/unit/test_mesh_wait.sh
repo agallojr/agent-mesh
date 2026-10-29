@@ -70,14 +70,31 @@ check "with origin unreachable the wait still ends DONE" eq "$rc:$out" "0:DONE"
 g -C "$BUS" remote set-url origin "$BUS_ORIGIN"
 rm -f "$STAGE/.done"
 
-# --- STOP: the stop sentinel ends the wait at once, with no heartbeat.
-before=$(sed -n 's/^last_poll: //p' "$BUS/agents/$ID.yaml")
-sleep 1
+# --- the stop sentinel does not end a wait: the running executor finishes,
+# the poller writes its terminal status, and the scanner stops it at the top
+# of the next cycle (R1.S3). The heartbeat goes on meanwhile.
 touch "$HOME/.mesh-stop"
+( sleep 3; : > "$STAGE/.done" ) &
 out=$(bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 30); rc=$?
-check "the stop sentinel gives STOP, exit 2" eq "$rc:$out" "2:STOP"
-check "no heartbeat on STOP" eq "$(sed -n 's/^last_poll: //p' "$BUS/agents/$ID.yaml")" "$before"
-rm -f "$HOME/.mesh-stop"
+wait
+check "with the stop sentinel up the wait still ends DONE" eq "$rc:$out" "0:DONE"
+rm -f "$HOME/.mesh-stop" "$STAGE/.done"
+
+# --- the task's deadline (its timeout_min, as a UTC epoch in s) caps the
+# wait: TIMEOUT, exit 4, so the poller writes the task failed.
+past=$(( $(date -u +%s) - 1 ))
+out=$(bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 30 "$past"); rc=$?
+check "a passed task deadline gives TIMEOUT, exit 4" eq "$rc:$out" "4:TIMEOUT"
+soon=$(( $(date -u +%s) + 3 ))
+SECONDS=0
+out=$(bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 30 "$soon"); rc=$?
+el=$SECONDS
+check "a task deadline 3 s ahead gives TIMEOUT within 6 s" test "$rc:$out" = "4:TIMEOUT" -a "$el" -le 6
+far=$(( $(date -u +%s) + 3600 ))
+out=$(bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 2 "$far"); rc=$?
+check "a far deadline still gives WAITING at the call's own deadline" eq "$rc:$out" "5:WAITING"
+bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 30 soon >/dev/null 2>&1; rc=$?
+check "a task deadline that is not a number is a usage error" eq "$rc" 2
 
 # --- it leaves no process behind once it returns.
 bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 2 >/dev/null & wpid=$!

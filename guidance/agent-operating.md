@@ -115,10 +115,9 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
 3. **Claim each candidate before doing any work:** write status `accepted` with
    `agent_id` = you, then sync it through `mesh-commit.sh`, naming
    `status/<id>.json` (the commit rule, above). **If it prints `PUSH FAILED`**,
-   another holder may have won: fetch and read the upstream
-   `status/<id>.json`; if it exists and is not yours, YIELD (drop your local
-   claim, as the poller prompt's step 4a says) and move to the next
-   candidate; otherwise sync the claim again. The winning `accepted` write is
+   the claim is not on origin: YIELD (drop your local claim, as the poller
+   prompt's step 4a says) and move to the next candidate; the next scan offers
+   the task again if it is still unclaimed. The winning `accepted` write is
    your claim and its ACK; the node's liveness is the scanner's `last_poll`
    heartbeat. (A direct-inbox task has one consumer and never contends.)
 4. Verify every credential **name** the task lists is present in your env. If
@@ -143,8 +142,8 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    you relied on in the result you return.
 5. Write status `running`, sync, then execute: dispatch an executor
    sub-subagent, and while it runs park on `skills/mesh-on/mesh-wait.sh` as ONE
-   synchronous call, re-parking until it prints `DONE` (it keeps the heartbeat
-   going). The executor runs in the background, so never end your turn to wait
+   synchronous call, re-parking until it prints `DONE` or `TIMEOUT` (it keeps
+   the heartbeat going). The executor runs in the background, so never end your turn to wait
    for it: that leaves the node deaf. Do NOT rewrite status on a timer while it runs — write
    status only at real transitions. The node's timer-driven write is its
    `last_poll` heartbeat, never a status file.
@@ -209,9 +208,11 @@ anything credential-shaped before you write it. `artifacts` holds pointers
 ## Conflict handling -- re-derive, never resolve textually
 
 `mesh-commit.sh` retries a rejected push itself (`pull --rebase --autostash`,
-3 pushes at most). If it still prints `PUSH FAILED`, re-read the current state
-of the file you were writing and re-apply your *intent* against that state; for
-a contested claim, yield as in step 3. Do not pull, rebase or push by hand.
+3 pushes at most). If it still prints `PUSH FAILED`, the commit stays local and
+the next push from the checkout (the scanner's next heartbeat) carries it; do
+not sync the same paths again, which prints `NOTHING TO COMMIT` and pushes
+nothing. A claim that did not reach origin is dropped, never worked on (step 3,
+and the poller prompt's step 4a). Do not pull, rebase or push by hand.
 Never `-X ours`, never `-X theirs`, never hand-edit a conflict. Your job is to
 re-derive your write, not to merge text.
 

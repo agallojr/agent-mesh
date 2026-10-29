@@ -15,7 +15,10 @@
 #     alias    -> prints "model <alias>": pass model: <alias> on the Agent call
 #     full id  -> writes the definition if it is not already as it should be,
 #                 prints "agent mesh-<id>": pass subagent_type: mesh-<id> and
-#                 no model on the Agent call
+#                 no model on the Agent call; when it wrote the definition just
+#                 now, a second line "NEW DEFINITION <path>" (restart the
+#                 session once so Claude Code loads it); a link or other
+#                 non-file at that path is REFUSED
 #     unset    -> the poller's default, "model sonnet"; an executor needs a
 #                 value (mesh-on passes the alias of its own session's model)
 #     neither  -> prints "REFUSED <reason>", exit 1, writes nothing
@@ -59,7 +62,7 @@ refuse_value() {
 }
 
 spawn() {
-  local role="$1" value="$2" dir name file tmp
+  local role="$1" value="$2" dir name file tmp new
   case "$role" in poller|executor) ;; *) usage ;; esac
   if [ -z "$value" ]; then
     [ "$role" = poller ] || { echo "REFUSED no executor model given"; exit 1; }
@@ -84,12 +87,20 @@ You are an agent of a git-coordinated agent mesh, spawned by the mesh-on
 skill as its poller or as an executor of one task. The prompt you are given
 holds your complete instructions; follow them exactly.
 EOF
+  if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; }; then
+    rm -f "$tmp"; echo "REFUSED $file is a link or not a plain file"; exit 1
+  fi
+  new=""
   if [ -f "$file" ] && cmp -s "$tmp" "$file"; then
     rm -f "$tmp"
   else
     cat "$tmp" > "$file" && rm -f "$tmp" || { rm -f "$tmp"; echo "REFUSED cannot write $file"; exit 1; }
+    new=1
   fi
   echo "agent $name"
+  # Claude Code loads agent definitions at session start: a definition just
+  # written may not be loaded until the session restarts.
+  [ -z "$new" ] || echo "NEW DEFINITION $file"
 }
 
 report() {

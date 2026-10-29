@@ -41,8 +41,8 @@ message to the main session (SendMessage does not end your turn), after an
 executor dispatch, after a task ends (done or failed), and after an error in
 one task, your next action is the next step of the loop: a tool call, most
 often the scanner (step 0) or the wait script (step 4d). You end your turn
-only on `STOP` from the scanner or the wait script, a direct stop through the
-task system, `STALE_PRODUCT`, or the unrecoverable-scanner-error rule in step 0.
+only on `STOP` from the scanner, a direct stop through the task system,
+`STALE_PRODUCT`, or the unrecoverable-scanner-error rule in step 0.
 
 The main agent that spawned you filled in these values (they are literal; use
 them verbatim):
@@ -213,7 +213,9 @@ went:
 
 - `PUSHED` or `NOTHING TO COMMIT`: done; go on.
 - `PUSH FAILED` (exit 3): the commit is local and goes out with the next push
-  from this checkout (the scanner's next heartbeat). For a claim, see step 4a.
+  from this checkout (the scanner's next heartbeat). Do not sync the same paths
+  again: that prints `NOTHING TO COMMIT` and pushes nothing. For a claim, see
+  step 4a: a claim that is not on origin is dropped, never worked on.
 - `REFUSED <reason>` (exit 1): nothing was committed. Do not retry the same
   call; report the reason to the main session (step 4½) and go on to the next
   task, or for a terminal write, write status `failed` naming the reason.
@@ -240,14 +242,13 @@ commit rule"). The paths to name, step by step:
       `status <id> -> accepted`). This single write IS your claim and the
       acknowledgment; the node's liveness is the scanner's `last_poll`
       heartbeat, not a status write. **If the sync prints `PUSH FAILED`**,
-      another holder may have claimed it first. Run
-      `git -C «REPO» fetch -q origin` and
-      `git -C «REPO» show @{u}:status/<id>.json`: if that exists with a
-      different `agent_id`, YIELD: drop your local claim with
+      the claim is not on origin (another holder may have claimed the task
+      first, or origin cannot be reached): YIELD. Drop your local claim with
       `git -C «REPO» reset -q --soft HEAD~1`, then
       `git -C «REPO» reset -q -- status/<id>.json`, then delete your
-      `«REPO»/status/<id>.json`, and go to the next candidate. Otherwise sync
-      the claim again. Only once you own the claim do you proceed. If the
+      `«REPO»/status/<id>.json`, and go to the next candidate. Never work on
+      a claim that is not on origin; if the task is still unclaimed, the next
+      scan offers it again. Only once the claim is pushed do you proceed. If the
       message is a `query` (a ping), write a
       `reply` addressed to the sender — a new file in `tasks/<sender-id>/` with
       `type: reply` and `in_reply_to: <this query id>` — then sync and move on.
@@ -288,32 +289,42 @@ commit rule"). The paths to name, step by step:
       - Keep the space's literal absolute path, `«REPO»/<path>`, for the
         executor's prompt (see "Dispatching an executor").
    c. Write status `running`, sync.
-   d. **Dispatch an executor sub-subagent** (see below), then wait for it
-      **without ending your turn**. In an interactive session Claude Code runs
-      it in the background: the Agent call returns at once ("Async agent
-      launched ..."). Then park on the wait script, ONE **synchronous** Bash
-      call with `timeout` 600000 ms, exactly as you park on the scanner:
+   d. **Dispatch an executor sub-subagent in the background** (see below),
+      then wait for it **without ending your turn**. In the same Bash call
+      that makes the staging folder, note the task's deadline in s since the
+      epoch: `date -u +%s` plus the task's `timeout_min` × 60. Pass
+      `run_in_background: true` on the Agent call whenever the tool offers
+      that parameter; in an interactive session it does not, and runs the
+      executor in the background anyway. Either way the call returns at once
+      ("Async agent launched ..."). Then park on the wait script, ONE
+      **synchronous** Bash call with `timeout` 600000 ms, exactly as you park
+      on the scanner:
 
       ```
-      «SKILL_DIR»/mesh-wait.sh «REPO» «AGENT_ID» «POLL_SEC» «STAGING»/.done
+      «SKILL_DIR»/mesh-wait.sh «REPO» «AGENT_ID» «POLL_SEC» «STAGING»/.done 240 <deadline>
       ```
 
       It keeps the node's `last_poll` heartbeat going while the executor
       runs, and writes one of:
-      - `DONE` (exit 0): the executor has finished. Its report reaches you as
-        a message (it may already be in your context); go to step e.
+      - `DONE` (exit 0): the executor has finished and its result is in
+        `«STAGING»/RESULT.md`. Go to step e, using its report message if it
+        has reached you, else that file. Do not wait for the message.
       - `WAITING` (exit 5): not finished yet. If the executor's report has
         reached you meanwhile, go to step e; otherwise run the same call
         again at once. Do not think or write anything in between.
-      - `STOP` (exit 2): the stop sentinel is up; see "Stopping".
+      - `TIMEOUT` (exit 4): the task's `timeout_min` has passed with no
+        result. Write status `failed` with `error` saying so, sync, and go to
+        the next task; a late report from that executor is ignored.
 
-      If instead the Agent call returned with the executor's result (it ran
-      in the foreground), go straight to step e. **Never end your turn to
-      wait for an executor**: a turn ended with no call in flight leaves the
-      node scanning nothing and pushing no heartbeat, deaf until the
-      executor's report wakes you, if it ever does. Status is written only at
-      real transitions (completion, failure, or block); the heartbeat is the
-      wait script's.
+      The wait does not end on the stop sentinel: the executor finishes, you
+      write its terminal status, and the scanner stops you at the top of the
+      next cycle. If the Agent call ran in the foreground anyway (it returned
+      the executor's result), go straight to step e; no heartbeat was written
+      while it ran (PROTOCOL §4.3). **Never end your turn to wait for an
+      executor**: a turn ended with no call in flight leaves the node scanning
+      nothing and pushing no heartbeat, deaf until the executor's report wakes
+      you, if it ever does. Status is written only at real transitions
+      (completion, failure, or block); the heartbeat is the wait script's.
    e. On executor completion: write terminal status `done` or `failed` with a
       short `progress`/`error` (scrub anything credential-shaped from `log_tail`,
       cap 20 lines), AND write `outbox/«AGENT_ID»/<id>-result.md` (self-contained
@@ -419,8 +430,9 @@ costs per day. Take in only what the next step needs:
 
 ## Dispatching an executor sub-subagent
 
-For each task, spawn ONE sub-subagent with the Agent tool and wait for its
-result before writing the terminal status. Always pass «EXECUTOR_SPAWN» on that
+For each task, spawn ONE sub-subagent with the Agent tool, in the background
+(`run_in_background: true` wherever the tool offers it), and wait for its
+result on the wait script (step 4d) before writing the terminal status. Always pass «EXECUTOR_SPAWN» on that
 Agent call (for `subagent_type: <name>`, pass no `model`). If you leave it out,
 the executor inherits YOUR model, and you run on a cheaper model picked for
 this mechanical loop, not for task work. If the Agent tool rejects
@@ -451,17 +463,18 @@ payloads except the files the task asks for), and any durable lesson learned.
 Return each file the task asks for under files:, text only, at most 1048576 bytes each.
 Write each one to `«STAGING»/<rel>`, where `<rel>` is the relative path the task
 gives it, and list each `<rel>` under `files:` in your result; return no other
-file that way. Never emit a credential value anywhere. As your very last act,
-after every other step and just before you report, create the empty file
-`«STAGING»/.done` (for example `touch «STAGING»/.done`), whether the task
-succeeded or failed: the poller waits on it."
+file that way. Never emit a credential value anywhere. When you are done,
+whether the task succeeded or failed: first write your structured result, the
+same text you will report, to `«STAGING»/RESULT.md`; then, as your very last
+act before you report, create the empty file `«STAGING»/.done` (for example
+`touch «STAGING»/.done`). The poller waits on it."
 
 **Staging directory.** Before you spawn the executor, make a fresh, empty
 directory outside «REPO» and outside every space checkout (`mktemp -d`), and
 put its literal absolute path in the prompt wherever «STAGING» appears. The
 executor writes the files the task asks for there, and you check and publish
-them in step 4e. It also creates `«STAGING»/.done` last, which ends your wait
-(step 4d); `.done` is never a result file.
+them in step 4e. It also writes `«STAGING»/RESULT.md` (its result) and then
+`«STAGING»/.done`, which ends your wait (step 4d); neither is a result file.
 
 **A task with `project:`** also gets these lines in the executor's prompt, with
 the values from step 4b2 filled in: "The project space `proj:<name>` is loaded
@@ -656,7 +669,9 @@ product) and END.
 
 ## Stopping
 
-You stop when `~/.mesh-stop` exists (the scanner and the wait script check it
-at the top of every cycle, and print `STOP`) OR when the main agent stops you
-directly via the task system. Either way, finish the current task's status
-write if mid-flight, then end cleanly. Nothing else ends your turn.
+You stop when `~/.mesh-stop` exists (the scanner checks it at the top of every
+cycle and prints `STOP`) OR when the main agent stops you directly via the task
+system. With a task in flight, the wait script does not stop on the sentinel:
+the executor finishes, you write the task's terminal status, and the scanner
+then stops you. Either way, finish the current task's status write if
+mid-flight, then end cleanly. Nothing else ends your turn.
