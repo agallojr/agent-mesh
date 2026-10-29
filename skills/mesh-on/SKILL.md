@@ -127,9 +127,9 @@ session returns immediately and stays interactive.
 
 **Models.** Spawn the poller with `model:` set to `MESH_POLLER_MODEL` from
 identity, or `sonnet` if it is unset. Its loop is mechanical, so it needs no
-more. Sonnet 5.5 halves the output and cache-write prices of Opus 5.5, but a
-cache read costs the same $0.20/MTok on both, and reads are most of what an idle
-re-park costs. What cuts idle cost is the deadline below and a small context.
+more. Most of what an idle re-park costs is the cache read of the poller's
+context, so the deadline below and a small context cut idle cost more than the
+choice of model does.
 Fill `«EXECUTOR_MODEL»` with `MESH_EXECUTOR_MODEL` from identity, or, if that is
 unset, the alias of the model running THIS session (`opus`, `sonnet`, `haiku` or
 `fable`), which executors used to inherit through the poller. The poller passes
