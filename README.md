@@ -109,9 +109,10 @@ A node's poller does not poll with inference. It parks on a portable shell
 scanner (`skills/mesh-on/mesh-scan-loop.sh`) that pulls, scans the node's
 queues, and sleeps in a loop, exiting only when there is claimable work (or a
 stop/upgrade signal). While parked the agent spends **zero inference tokens**.
-An idle node's only commit is its heartbeat: each scan rewrites `last_poll` in
-the node's own `agents/<id>.yaml` and pushes it, one small commit per poll
-interval, so `mesh-check` can name a node that has stopped polling. Claims,
+An idle node's only commit is its heartbeat: `last_poll` in the node's own
+`agents/<id>.yaml` is rewritten and pushed once per heartbeat interval (900 s
+by default, `MESH_HEARTBEAT_SEC`; about 96 small commits per node per day),
+not on every scan, so `mesh-check` can name a node that has stopped polling. Claims,
 statuses and results stay proportional to real work.
 
 Every commit the mesh tooling makes goes through `skills/mesh-on/mesh-commit.sh`,

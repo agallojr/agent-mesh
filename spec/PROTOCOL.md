@@ -295,6 +295,7 @@ AGENT_ID=a7f3c2                 # opaque, stable, immutable
 AGENT_NAME=frontier-login       # human-readable, mutable, display only
 AGENT_CONTEXT=frontier-login    # scopes lore relevance
 POLL_INTERVAL_SEC=300
+MESH_HEARTBEAT_SEC=900          # optional; heartbeat interval in s, default 900
 AGENT_ROLES=build,slurm.submit,results.groom,install   # comma-separated roles
 REPO_PATH=/ccs/home/agallojr/agent-mesh   # literal absolute path; no $HOME/~
 ```
@@ -355,6 +356,7 @@ cwd: /ccs/home/agallojr/agent-mesh
 repo_commit: abc1234
 model: claude-opus-4-8
 poll_interval_sec: 300
+heartbeat_sec: 900
 credentials_available: [GH_PAT_RESEARCH, OLCF_PROJECT_ID]
 registered_at: 2026-07-18T14:30:00Z
 session_started: 2026-07-18T14:30:00Z
@@ -365,24 +367,31 @@ last_poll: 2026-07-18T14:30:00Z
 credentials file. Rewriting on every boot catches hostname or capability drift
 between sessions.
 
-Two fields carry the node's liveness:
+Three fields carry the node's liveness:
 
 - `poll_interval_sec` is the node's poll interval in s, from
   `POLL_INTERVAL_SEC` in its identity file.
-- `last_poll` is the UTC time, to the second, of the node's latest scan of its
-  queues. Registration writes it with the time it registers. While the node's
-  poller is live, the node rewrites it and pushes it at least once per poll
-  interval, an executor's run included, in a commit that holds only this file
-  (the scanner, `skills/mesh-on/mesh-scan-loop.sh`, does it on each scan).
+- `heartbeat_sec` is the node's heartbeat interval in s, from
+  `MESH_HEARTBEAT_SEC` in its identity file (a whole number of at least 1;
+  900 when unset, empty or not a number).
+- `last_poll` is the UTC time, to the second, of the node's latest heartbeat,
+  at most one heartbeat interval behind its latest scan of its queues.
+  Registration writes it with the time it registers. While the node's poller
+  is live, the node rewrites it and pushes it once its recorded `last_poll`
+  is `heartbeat_sec` old, an executor's run included, in a commit that holds only
+  this file (the scanner, `skills/mesh-on/mesh-scan-loop.sh`, does it on a
+  scan; a scan before that writes and pushes nothing). Consecutive heartbeats
+  are one heartbeat interval to one heartbeat interval plus one poll interval
+  apart: about 96 commits per node per day at 900 s.
   Nothing writes it once the poller has stopped: no process that can outlive
-  the poller writes `last_poll`. A node whose `last_poll` is older than 3 poll
-  intervals has stopped polling, and any task it holds in `accepted` or
+  the poller writes `last_poll`. A node whose `last_poll` is older than 3 of its
+  heartbeat intervals (2700 s by default) has stopped polling, and any task it holds in `accepted` or
   `running` is stuck; `mesh-check` names both
-  (`skills/mesh-check/mesh-stale.sh`). A `poll_interval_sec` that is absent is
-  read as 60 s.
+  (`skills/mesh-check/mesh-stale.sh`). A `heartbeat_sec` that is absent or not a
+  whole number is read as 900 s.
 - While an executor runs, the poller parks on `skills/mesh-on/mesh-wait.sh`,
   which writes the heartbeat. Two gaps remain, in which a working node writes
-  no heartbeat and, past 3 poll intervals, is flagged:
+  no heartbeat and, past 3 heartbeat intervals, is flagged:
   - an executor that the client runs in the foreground, with no way to run
     it in the background (the poller asks for the background wherever the
     Agent tool offers it): no heartbeat is written while it runs;
@@ -648,10 +657,11 @@ re-derived intent against current state is "already taken, yield". A task on a
 direct inbox `tasks/<id>/` has a single consumer and never contends.
 
 **Liveness: the `last_poll` heartbeat, and ACK.** Each live node rewrites the
-`last_poll` in its own `agents/<id>.yaml` once per poll interval and pushes it
-(§4.3): the one timer-driven write, one small commit per node per interval,
+`last_poll` in its own `agents/<id>.yaml` once per heartbeat interval (900 s by
+default) and pushes it (§4.3): the one timer-driven write, one small commit per
+node per interval,
 which is what lets a node that has gone deaf be told from one that is working.
-`mesh-check` names every node whose `last_poll` is older than 3 poll intervals,
+`mesh-check` names every node whose `last_poll` is older than 3 heartbeat intervals,
 with what it holds. A node also proves it is alive by *acting* on its inbox:
 reading a message and writing status `accepted` is the acknowledgment. To check
 whether a specific node is listening, any participant drops a `query` (a ping)
@@ -663,10 +673,11 @@ real work, not to node count.
 **Orphan detection.** A task left in `accepted`/`running` with no terminal status
 past a generous bound (its `timeout_min`, or a multiple of the owner's
 `poll_interval_sec`) is presumed dead, and so is one whose owner's `last_poll` is
-older than 3 of its poll intervals. Discerning this is a read-only ledger query
-any node or operator can run — scan `status/**` for non-terminal states whose
-`updated` is stale, or whose owner is not polling (`mesh-stale.sh`), and report
-the owning `agent_id`. The mesh does not reap:
+older than 3 of its heartbeat intervals (`heartbeat_sec`, 2700 s by default).
+Discerning this is a read-only ledger query any node or operator can run — scan
+`status/**` for non-terminal states whose `updated` is stale, or whose owner is
+not polling (`mesh-stale.sh`), and report the owning `agent_id`. The mesh does
+not reap:
 recovery is manual (restart the named node). Only the owning agent or the human may
 transition a task to `failed` — a dead agent cannot report its own death, so
 staleness is inferred, never asserted by a third party.
@@ -1097,8 +1108,9 @@ inference tokens. Each re-park re-sends the poller's context, so the deadline
 sits under the 5-min prompt-cache TTL: the re-park is then a cache read, where a
 longer park would re-write the whole context at the cache-write price. An idle
 node therefore costs near-zero tokens (one cache-read re-park per deadline
-window) and one heartbeat commit per poll interval: each scan rewrites
-`last_poll` in the node's own `agents/<id>.yaml` and pushes it through
+window) and one heartbeat commit per heartbeat interval (900 s by default): a scan
+past that interval rewrites `last_poll` in the node's own
+`agents/<id>.yaml` and pushes it through
 `mesh-commit.sh` (§4.3). Claims, statuses and results stay proportional to real
 work. The read-only `pull`/`submodule update` inside the script are ungated;
 the heartbeat is the scanner's only write, and `mesh-commit.sh` applies the git
@@ -1138,8 +1150,9 @@ loop (poller subagent):
      --remote only in developer mode; a cloned space --remote --merge; a
      product bump on the bus takes effect here), scan
      tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/,
-     rewrite and push last_poll in agents/<AGENT_ID>.yaml (the heartbeat), and
-     sleep POLL between scans -- exiting on:
+     when last_poll is HEARTBEAT_SEC old, rewrite and push it in
+     agents/<AGENT_ID>.yaml (the heartbeat), push any commit not on origin,
+     and sleep POLL between scans -- exiting on:
        STOP (exit 2): ~/.mesh-stop exists -> end cleanly
        WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
        IDLE (exit 5): idle deadline (240 s, under the cache TTL) -> re-park

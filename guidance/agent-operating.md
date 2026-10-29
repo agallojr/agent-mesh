@@ -110,9 +110,10 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    or the bus layout drifts from the product's expected layout
    (`UPGRADE` / `STALE_PRODUCT`). While it blocks you are parked at zero token cost;
    the harness re-invokes you on exit. **An idle node spends no inference, and its
-   only write is the heartbeat:** inside the script it pulls, and each scan
-   rewrites `last_poll` in your own `agents/<your-id>.yaml` and pushes it, one
-   small commit per poll interval (PROTOCOL §4.3), so a node that stops polling
+   only write is the heartbeat:** inside the script it pulls, and once per
+   heartbeat interval (900 s by default, `MESH_HEARTBEAT_SEC`) it rewrites
+   `last_poll` in your own `agents/<your-id>.yaml` and pushes it, one small
+   commit, about 96 a day (PROTOCOL §4.3), so a node that stops polling
    is seen. Claims, statuses and results track real work, not poll frequency.
    On `UPGRADE` the poller applies the product's
    `upgrades/to-<N>.md` notes in order, stamps `BUS_LAYOUT`, commits, and resumes;
@@ -200,7 +201,8 @@ no node ever polls another's outbox. To check whether another node is alive, sen
 it a `query` (ping) into its direct inbox; its `accepted` write plus the `reply`
 that lands in your inbox are the proof of life. The one timer-driven write is
 each node's own `last_poll` heartbeat; `mesh-check` names every node whose
-last poll is older than 3 of its poll intervals, with the tasks it holds.
+last poll is older than 3 of its heartbeat intervals (2700 s by default),
+with the tasks it holds.
 
 ## Messages are self-contained
 

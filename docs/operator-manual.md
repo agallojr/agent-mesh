@@ -154,9 +154,12 @@ claiming node is the `agent_id` in the status file. Large binary outputs are
 which step is active and which are done.
 
 **Check who is alive (liveness).** Each live node rewrites `last_poll` in its
-own `agents/<id>.yaml` once per poll interval and pushes it, an executor's run
-included. `mesh-check` reports first, under `Nodes not polling`, every node
-whose last poll is older than 3 of its poll intervals, with the tasks it holds
+own `agents/<id>.yaml` once per heartbeat interval (900 s by default, set per
+node as `MESH_HEARTBEAT_SEC` and recorded as `heartbeat_sec`) and pushes it, an
+executor's run included; that is about 96 bus commits per node per day.
+`mesh-check` reports first, under `Nodes not polling`, every node
+whose last poll is older than 3 of its heartbeat intervals (2700 s, 45 min, by
+default), so a stopped node can take that long to show, with the tasks it holds
 in `accepted` or `running`: such a node has stopped polling, and those tasks
 are stuck until it is restarted. A change to `last_poll` alone is the
 heartbeat, not news. To prove a node acts on its inbox, post a `query` (a

@@ -49,8 +49,8 @@ mid-commit, a transient balk is fine: report against local HEAD and move on.
 
 ## Step 2½ — name the nodes that stopped polling
 
-Every live node rewrites `last_poll` in its own `agents/<id>.yaml` once per poll
-interval, while an executor runs too (PROTOCOL §4.3). Run the script beside this
+Every live node rewrites `last_poll` in its own `agents/<id>.yaml` once per heartbeat
+interval (900 s by default), while an executor runs too (PROTOCOL §4.3). Run the script beside this
 skill, with the literal path of this skill directory and the literal repo path:
 
 ```bash
@@ -58,7 +58,7 @@ skill, with the literal path of this skill directory and the literal repo path:
 ```
 
 It is read-only. It prints one line per node whose last poll is older than 3
-of its poll intervals, `NOT POLLING <agent_id> <agent_name>: last poll <age> s
+of its heartbeat intervals (`heartbeat_sec`, 900 s when absent; 2700 s by default), `NOT POLLING <agent_id> <agent_name>: last poll <age> s
 ago at <last_poll>, interval <interval> s; holds <held>`, and one line per node
 with no `last_poll`, `NO LAST POLL <agent_id> <agent_name>; holds <held>`.
 `<held>` names each task the node holds in `accepted` or `running`, or says

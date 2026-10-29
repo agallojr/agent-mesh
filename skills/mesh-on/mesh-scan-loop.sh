@@ -10,13 +10,19 @@
 # launch it as a background call: a background child is not guaranteed to
 # survive the poller ending its turn, which orphans the node.
 #
-# Heartbeat (PROTOCOL 4.3): each scan iteration rewrites last_poll (UTC, to
+# Heartbeat (PROTOCOL 4.3): a scan iteration rewrites last_poll (UTC, to
 # the second) in the node's own agents/<AGENT_ID>.yaml and pushes it through
-# mesh-commit.sh, in a commit that holds only that file, so a node whose
-# poller has stopped shows an old last_poll (mesh-check's mesh-stale.sh). A
-# scan within half a poll interval of the last heartbeat writes none, so a
-# re-park does not double it. A failed push neither stops nor delays the
-# scan: the next nap is cut by the time the heartbeat took. Nothing here runs
+# mesh-commit.sh, in a commit that holds only that file, once the recorded
+# last_poll is MESH_HEARTBEAT_SEC old (900 s by default; set from the
+# identity file by the poller). A scan before that writes and pushes nothing,
+# so a re-park does not double it, and heartbeats are one heartbeat interval
+# to one interval plus one poll interval apart. A node whose poller has
+# stopped shows an old last_poll (mesh-check's mesh-stale.sh flags it after 3
+# intervals). On every scan, whether or not a heartbeat is due, a checkout
+# with commits not yet on origin (a lost race, or a failed registration,
+# status or result push) makes one push attempt, so those go out at the next
+# scan, not a heartbeat interval later. A failed push neither stops nor delays
+# the scan: the next nap is cut by the time the heartbeat took. Nothing here runs
 # after the scanner exits, so nothing writes last_poll once the poller stops.
 # A node with no agents/<AGENT_ID>.yaml gets no heartbeat. These heartbeats
 # are the scanner's only git writes; mesh-commit.sh applies the git gate's
@@ -85,9 +91,11 @@ touch "$SEEN" 2>/dev/null || true
 SECONDS=0
 
 # mesh-commit.sh's functions (sourcing runs nothing): the gitlink lift
-# and the heartbeat (mc_heartbeat, with REPO, AGENT_ID and POLL set).
+# and the heartbeat (mc_heartbeat, with REPO, AGENT_ID and MESH_HEARTBEAT_SEC
+# set).
 . "$SCAN_DIR/mesh-commit.sh"
 MC_PARENT=$PPID  # a heartbeat is never written once this caller is orphaned
+MC_PUSH_PENDING=1  # a scan with a commit not on origin makes one push attempt
 MC_HEARTBEAT_PUSHES=1  # one push per heartbeat: the next scan's pull carries it
 
 fm() {  # fm <key> <file> -> first frontmatter value for key

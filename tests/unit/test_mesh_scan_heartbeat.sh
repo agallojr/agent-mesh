@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Unit test of the heartbeat in skills/mesh-on/mesh-scan-loop.sh (plan
-# sections 2.2 and 2.6, R2): each scan iteration rewrites last_poll in the
-# node's own agents/<id>.yaml and pushes it through mesh-commit.sh, in a
-# commit that holds only that file and no gitlink; a failed push never stops
-# or delays the scan; the scanner's output words and exit codes are as before.
-# Runs about 30 s (short POLL and MAX_WAIT values).
+# sections 2.2 and 2.6, R2; heartbeat-every-15-min R1): a scan rewrites
+# last_poll in the node's own agents/<id>.yaml and pushes it through
+# mesh-commit.sh, in a commit that holds only that file and no gitlink, once
+# per heartbeat interval; a failed push never stops or delays the scan; the
+# scanner's output words and exit codes are as before. The cadence itself is
+# in test_mesh_scan_cadence.sh. Runs under 60 s (short POLL and MAX_WAIT).
 set -u
 . "$(dirname "$0")/lib.sh"
 unit_setup
@@ -22,17 +23,25 @@ stale_product
 origin_lp() { g -C "$BUS_ORIGIN" show "main:agents/$ID.yaml" | sed -n 's/^last_poll: //p'; }
 local_lp() { sed -n 's/^last_poll: //p' "$BUS/agents/$ID.yaml"; }
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+epoch() { python3 -I -c 'import sys,calendar,time;print(calendar.timegm(time.strptime(sys.argv[1],"%Y-%m-%dT%H:%M:%SZ")))' "$1"; }
+reset_lp() {
+  sed -i.bak 's/^last_poll: .*/last_poll: 2026-01-01T00:00:00Z/' "$BUS/agents/$ID.yaml"
+  rm -f "$BUS/agents/$ID.yaml.bak"
+  bash "$MC" "$BUS" "reset n1" "agents/$ID.yaml" >/dev/null
+}
+# The sections below that are not about the cadence heartbeat on every scan.
+export MESH_HEARTBEAT_SEC=1
 
 # --- idle: IDLE at the deadline, a heartbeat on the scans, each commit only
 # the node's own file, the pin unmoved, the staged gitlink still staged.
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
 t0=$(utc_now); SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 6); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 2); rc=$?
 el=$SECONDS; t1=$(utc_now)
 check "idle run prints IDLE and exits 5" eq "$rc:$out" "5:IDLE"
-check "idle run returns by its deadline (6 s, slack 4 s)" test "$el" -le 10
+check "idle run returns by its deadline (2 s, slack 4 s)" test "$el" -le 6
 n=$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")
-check "idle run pushed at least 2 heartbeats" test "$n" -ge 2
+check "idle run pushed at least 1 heartbeat" test "$n" -ge 1
 bad=0
 for c in $(g -C "$BUS_ORIGIN" rev-list "$base..main"); do
   [ "$(changed_paths "$BUS_ORIGIN" "$c")" = "agents/$ID.yaml" ] || bad=$((bad + 1))
@@ -48,13 +57,6 @@ check "the stale gitlink is still staged" \
 check "the record is otherwise unchanged" \
   eq "$(grep -v '^last_poll:' "$BUS/agents/$ID.yaml" | tr '\n' '|')" \
   "schema_version: 1|agent_id: n1|agent_name: node-one|poll_interval_sec: 1|"
-
-# --- one heartbeat per interval: a scan within half an interval of the last
-# heartbeat writes none (here POLL is 60 s and the last heartbeat is fresh).
-base=$(g -C "$BUS_ORIGIN" rev-parse main)
-out=$(bash "$SCAN" "$BUS" build "$ID" 60 1); rc=$?
-check "a fresh heartbeat is not repeated" \
-  eq "$rc:$out:$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "5:IDLE:0"
 
 # --- work: the scan that finds work writes its heartbeat, then WORK.
 OTHER="$T/other"
@@ -83,7 +85,7 @@ g -C "$BUS" remote set-url origin "$T/no-such-origin.git"
 sed -i.bak 's/^last_poll: .*/last_poll: 2026-01-01T00:00:00Z/' "$BUS/agents/$ID.yaml"
 rm -f "$BUS/agents/$ID.yaml.bak"
 SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 6); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 2); rc=$?
 el=$SECONDS
 check "with origin unreachable the scan still ends IDLE, exit 5" eq "$rc:$out" "5:IDLE"
 check "with origin unreachable it returns by its deadline (2 s) plus one heartbeat ($el s)" test "$el" -le 10

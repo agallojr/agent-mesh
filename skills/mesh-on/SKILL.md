@@ -38,7 +38,7 @@ cat ~/.agent-identity.env
 ```
 
 Extract `AGENT_ID`, `AGENT_NAME`, `AGENT_CONTEXT`, `POLL_INTERVAL_SEC`,
-`AGENT_ROLES` (comma-separated; becomes the registration `roles` list and the set
+the optional `MESH_HEARTBEAT_SEC` (default 900), `AGENT_ROLES` (comma-separated; becomes the registration `roles` list and the set
 of `tasks/roles/<role>/` queues this node monitors), `REPO_PATH`, and the optional
 `MESH_PRODUCT_TRACK`, `MESH_POLLER_MODEL` and `MESH_EXECUTOR_MODEL`. A lone legacy
 `AGENT_ROLE` is read as a one-role list. If `~/.agent-identity.env`
@@ -150,6 +150,7 @@ Using the LITERAL repo path (substitute the real value of `REPO_PATH`):
    It overwrites `agents/<AGENT_ID>.yaml` (this file is yours alone) per
    PROTOCOL.md §4.3: `hostname`, `platform`, `repo_commit`, `roles` (from
    `AGENT_ROLES`), `poll_interval_sec` (from `POLL_INTERVAL_SEC`),
+   `heartbeat_sec` (from `MESH_HEARTBEAT_SEC`, 900 when unset),
    `credentials_available` (KEY NAMES only, never values), `model`, and a fresh
    `registered_at` and `last_poll`. It then commits that one file through
    `mesh-commit.sh` (beside it) and pushes, retrying a rejected push itself.
@@ -224,10 +225,15 @@ idle deadline (~4 min), where it returns `IDLE` and the poller immediately
 re-parks. The deadline sits under the 5-min prompt-cache TTL, so each re-park
 reads the poller's context from cache instead of re-writing it. An idle node
 therefore costs near-zero tokens (one cache-read re-park per ~4 min) and one
-heartbeat commit per poll interval: each scan rewrites `last_poll` in this
-node's `agents/<AGENT_ID>.yaml` and pushes it through `mesh-commit.sh`, so
-`mesh-check` can name a node that has stopped polling. The scanner runs on
-macOS and Linux (bash 3.2+, no external `timeout`).
+heartbeat commit per heartbeat interval (900 s by default, about 96 a day):
+a scan past that interval rewrites `last_poll` in this node's
+`agents/<AGENT_ID>.yaml` and pushes it through `mesh-commit.sh`, so
+`mesh-check` can name a node that has stopped polling (after 3 intervals).
+The scanner runs on macOS and Linux (bash 3.2+, no external `timeout`).
+
+Pass `MESH_HEARTBEAT_SEC` (from the identity file; 900 when unset) to the
+poller the same way: it goes on the scanner and wait command lines, which read
+it from their environment.
 
 Pass `MESH_PRODUCT_TRACK` through to the poller so it reaches the scanner. You
 sourced `~/.agent-identity.env`, so the value (if any) is in your environment;
