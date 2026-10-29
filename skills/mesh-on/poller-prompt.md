@@ -246,9 +246,16 @@ commit rule"). The paths to name, step by step:
       first, or origin cannot be reached): YIELD. Drop your local claim with
       `git -C «REPO» reset -q --soft HEAD~1`, then
       `git -C «REPO» reset -q -- status/<id>.json`, then delete your
-      `«REPO»/status/<id>.json`, and go to the next candidate. Never work on
-      a claim that is not on origin; if the task is still unclaimed, the next
-      scan offers it again. Only once the claim is pushed do you proceed. If the
+      `«REPO»/status/<id>.json`. Then check whether the push reached origin
+      after all (a connection lost after the update):
+      `git -C «REPO» fetch -q origin`, then
+      `git -C «REPO» show @{u}:status/<id>.json`. If that names
+      `agent_id` «AGENT_ID», the claim is yours: run
+      `git -C «REPO» pull -q --rebase --autostash` (nothing local is left to
+      replay) and proceed with the task. Otherwise go to the next candidate.
+      Never work on a claim that is not on origin; if the task is still
+      unclaimed, the next scan offers it again. Only once the claim is on
+      origin do you proceed. If the
       message is a `query` (a ping), write a
       `reply` addressed to the sender — a new file in `tasks/<sender-id>/` with
       `type: reply` and `in_reply_to: <this query id>` — then sync and move on.
@@ -292,7 +299,10 @@ commit rule"). The paths to name, step by step:
    d. **Dispatch an executor sub-subagent in the background** (see below),
       then wait for it **without ending your turn**. In the same Bash call
       that makes the staging folder, note the task's deadline in s since the
-      epoch: `date -u +%s` plus the task's `timeout_min` × 60. Pass
+      epoch: `date -u +%s` plus the task's `timeout_min` × 60. If the task
+      has no `timeout_min`, or one that is not a whole number of minutes,
+      use 120 (the default `timeout_min`), so the deadline is always a whole
+      number. Pass
       `run_in_background: true` on the Agent call whenever the tool offers
       that parameter; in an interactive session it does not, and runs the
       executor in the background anyway. Either way the call returns at once

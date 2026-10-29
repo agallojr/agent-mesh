@@ -26,6 +26,19 @@ sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 MONITOR = os.path.join(HERE, "..", "..", "services", "librarian-email-monitor",
                        "email_monitor.py")
+CACHE = os.path.join(os.path.dirname(MONITOR), "__pycache__")
+
+
+def cache_listing() -> list[tuple[str, int]] | None:
+    """What __pycache__ beside the monitor holds now (None if absent)."""
+    if not os.path.isdir(CACHE):
+        return None
+    return sorted((n, os.stat(os.path.join(CACHE, n)).st_mtime_ns)
+                  for n in os.listdir(CACHE))
+
+
+# Taken before any test loads the monitor, to compare with afterwards.
+CACHE_BEFORE = cache_listing()
 
 
 def git(*args: str, cwd: str | None = None) -> str:
@@ -133,9 +146,8 @@ class EmailMonitorStaging(unittest.TestCase):
                          git("-C", self.bus, "rev-parse", "HEAD"))
 
     def test_loading_writes_nothing_into_the_source_tree(self) -> None:
-        cache = os.path.join(os.path.dirname(MONITOR), "__pycache__")
-        self.assertFalse(os.path.exists(cache),
-                         "loading the monitor wrote __pycache__ into the source tree")
+        self.assertEqual(cache_listing(), CACHE_BEFORE,
+                         "loading the monitor changed __pycache__ beside it")
 
     def test_run_once_names_exactly_the_files_it_wrote(self) -> None:
         em = self.em

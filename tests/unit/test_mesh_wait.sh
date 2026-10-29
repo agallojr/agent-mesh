@@ -96,6 +96,35 @@ check "a far deadline still gives WAITING at the call's own deadline" eq "$rc:$o
 bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 30 soon >/dev/null 2>&1; rc=$?
 check "a task deadline that is not a number is a usage error" eq "$rc" 2
 
+# --- fix round 2: another node pushes during the wait. The wait's heartbeat
+# pulls and retries a rejected push, so last_poll on origin keeps advancing.
+OTHER="$T/other"
+g clone -q "$BUS_ORIGIN" "$OTHER" 2>/dev/null
+echo o1 > "$OTHER/o1.txt"
+g -C "$OTHER" add o1.txt
+g -C "$OTHER" commit -q -m "other one"
+g -C "$OTHER" push -q origin main 2>/dev/null
+base=$(g -C "$BUS_ORIGIN" rev-parse main)
+lp0=$(origin_lp)
+( for k in 2 3 4 5; do
+    sleep 2
+    g -C "$OTHER" pull -q --rebase 2>/dev/null
+    echo "o$k" > "$OTHER/o$k.txt"
+    g -C "$OTHER" add "o$k.txt"
+    g -C "$OTHER" commit -q -m "other $k"
+    g -C "$OTHER" push -q origin main 2>/dev/null
+  done
+  : > "$STAGE/.done" ) &
+out=$(bash "$MW" "$BUS" "$ID" 2 "$STAGE/.done" 40); rc=$?
+wait
+check "with another node pushing, the wait still ends DONE" eq "$rc:$out" "0:DONE"
+check "last_poll on origin advanced while another node pushed" test "$(origin_lp)" != "$lp0"
+hb=$(g -C "$BUS_ORIGIN" log --format=%s "$base..main" | grep -c '^heartbeat n1$')
+check "at least two heartbeats reached origin during that wait ($hb)" test "$hb" -ge 2
+check "origin still pins the product at the pin after those rebases" \
+  eq "$(g -C "$BUS_ORIGIN" rev-parse main:product)" "$PIN"
+rm -f "$STAGE/.done"
+
 # --- it leaves no process behind once it returns.
 bash "$MW" "$BUS" "$ID" 1 "$STAGE/.done" 2 >/dev/null & wpid=$!
 wait "$wpid"

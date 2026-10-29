@@ -336,9 +336,11 @@ mc_orphaned() {  # 0 if MC_PARENT is set and this process has lost that parent
 # the node has no record, its id is not plain, or a heartbeat within half a
 # poll interval already stands. Returns 3, writing nothing, when the caller
 # set MC_PARENT and has been orphaned, so no process that outlives the poller
-# writes last_poll. A failed push is not an error here: returns 0. It makes
-# one push attempt (the next scan pulls and carries an unpushed one), and
-# puts the record back as it was if the commit is refused.
+# writes last_poll. A failed push is not an error here: returns 0. It puts the
+# record back as it was if the commit is refused. MC_HEARTBEAT_PUSHES=1 (the
+# scanner's, which pulls on every scan) makes one push attempt; unset (the
+# wait's, which never pulls) it pulls and retries a rejected push as any
+# commit does, so the heartbeat still lands while other nodes push.
 mc_heartbeat() {
   local file f now last tmp
   case "${AGENT_ID:-}" in
@@ -365,13 +367,24 @@ mc_heartbeat() {
   cp -p "$f" "$tmp.orig" 2>/dev/null || { rm -f "$tmp"; return 0; }
   cat "$tmp" > "$f"
   rm -f "$tmp"
-  MESH_COMMIT_PUSHES=1 bash "$MC_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" \
+  MESH_COMMIT_PUSHES="${MC_HEARTBEAT_PUSHES:-}" \
+    bash "$MC_DIR/mesh-commit.sh" "$REPO" "heartbeat $AGENT_ID" \
     "$file" >/dev/null 2>&1 </dev/null
   case $? in
     1|2) cat "$tmp.orig" > "$f" ;;  # refused: leave the record as it was
   esac
   rm -f "$tmp.orig"
   return 0
+}
+
+mc_in_progress() {  # 0 if a rebase, merge, cherry-pick or revert is underway
+  local x p
+  for x in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+    p=$(mc_git rev-parse --git-path "$x" 2>/dev/null) || continue
+    case "$p" in /*) ;; *) p="$REPO/$p" ;; esac
+    [ -e "$p" ] && return 0
+  done
+  return 1
 }
 
 mc_main() {
@@ -390,6 +403,7 @@ mc_main() {
   p=$(mc_git rev-parse --show-toplevel 2>/dev/null) || mc_refuse "not a git repo: $REPO"
   [ "$(cd "$p" && pwd -P)" = "$MC_REAL_REPO" ] || \
     mc_refuse "not the top of its work tree: $REPO"
+  mc_in_progress && mc_refuse "a rebase, merge or cherry-pick is in progress in $REPO"
   [ -n "$MSG" ] || mc_refuse "empty message"
   case "$MSG" in *$'\n'*|*$'\r'*) mc_refuse "message is not one line" ;; esac
   [ $# -gt 0 ] || mc_refuse "no path given"

@@ -88,6 +88,7 @@ SECONDS=0
 # and the heartbeat (mc_heartbeat, with REPO, AGENT_ID and POLL set).
 . "$SCAN_DIR/mesh-commit.sh"
 MC_PARENT=$PPID  # a heartbeat is never written once this caller is orphaned
+MC_HEARTBEAT_PUSHES=1  # one push per heartbeat: the next scan's pull carries it
 
 fm() {  # fm <key> <file> -> first frontmatter value for key
   sed -n "s/^$1:[[:space:]]*//p" "$2" | head -1
@@ -107,12 +108,15 @@ while :; do
 
   # read-only, ungated; failures are transient -> keep looping. A staged
   # gitlink is lifted out around the pull and put back (mesh-commit.sh). A
-  # rebase that stops on a conflict is aborted, so the checkout is never left
-  # mid-rebase; the local commit stays as it was.
-  mc_lift_gitlinks
-  git -C "$REPO" pull --rebase --quiet >/dev/null 2>&1 || \
-    git -C "$REPO" rebase --abort >/dev/null 2>&1 || true
-  mc_restore_gitlinks
+  # rebase this pull starts and that stops on a conflict is aborted, so the
+  # checkout is never left mid-rebase; the local commit stays as it was. A
+  # rebase or merge already in progress (by hand, say) is left alone: no pull.
+  if ! mc_in_progress; then
+    mc_lift_gitlinks
+    git -C "$REPO" pull --rebase --quiet >/dev/null 2>&1 || \
+      git -C "$REPO" rebase --abort >/dev/null 2>&1 || true
+    mc_restore_gitlinks
+  fi
   # One submodule per call, so one bad path never blocks the rest. stdin is
   # /dev/null so git cannot read the path list the loop is iterating.
   while IFS= read -r p; do

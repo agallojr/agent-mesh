@@ -335,6 +335,39 @@ check "after the yield the pull is clean and brings the other claim" \
 check "after the yield the stale gitlink is still staged" \
   eq "$(g -C "$BUS" ls-files -s product | awk '{print $2}')" "$PROD_OLD"
 
+# Fix round 2: a claim whose push reached origin although the client saw a
+# failure. The yield drops the local claim; the fetch and check of the
+# upstream claim find it is this node's own, and the pull brings it back, so
+# the task is kept, not stranded as accepted.
+echo '{"agent_id": "me", "state": "accepted"}' > "$BUS/status/R2.json"
+g -C "$BUS" add -- status/R2.json
+g -C "$BUS" commit -q -m "status R2 -> accepted" -- status/R2.json
+g -C "$OTHER" fetch -q "$BUS" main 2>/dev/null
+g -C "$OTHER" push -q origin FETCH_HEAD:main 2>/dev/null
+check "the claim commit reached origin" \
+  eq "$(g -C "$BUS_ORIGIN" log -1 --format=%s main)" "status R2 -> accepted"
+g -C "$BUS" reset -q --soft HEAD~1
+g -C "$BUS" reset -q -- status/R2.json
+rm -f "$BUS/status/R2.json"
+g -C "$BUS" fetch -q origin 2>/dev/null
+up=$(g -C "$BUS" show '@{u}:status/R2.json' 2>/dev/null | sed -n 's/.*"agent_id": "\([^"]*\)".*/\1/p')
+check "the upstream claim is this node's own" eq "$up" "me"
+mc_lift_gitlinks; g -C "$BUS" pull -q --rebase --autostash 2>/dev/null; plrc=$?; mc_restore_gitlinks
+check "the pull brings this node's claim back and the task is kept" \
+  eq "$plrc:$(sed -n 's/.*"agent_id": "\([^"]*\)".*/\1/p' "$BUS/status/R2.json")" "0:me"
+check "nothing local is left ahead of origin" \
+  eq "$(g -C "$BUS" rev-list --count origin/main..HEAD)" 0
+
+# Fix round 2: no commit while a rebase is in progress in the checkout.
+mkdir -p "$BUS/.git/rebase-merge"
+printf 'agent_id: rb\n' > "$BUS/agents/rb.yaml"
+head=$(g -C "$BUS" rev-parse HEAD)
+out=$(bash "$MC" "$BUS" "t" agents/rb.yaml); rc=$?
+check "a rebase in progress is refused and commits nothing" \
+  eq "$rc:${out%% *}:$(g -C "$BUS" rev-parse HEAD)" "1:REFUSED:$head"
+rmdir "$BUS/.git/rebase-merge"
+rm -f "$BUS/agents/rb.yaml"
+
 # One push attempt when asked (MESH_COMMIT_PUSHES=1, the heartbeat's): a
 # rejected push is not pulled and retried; the next scan's pull carries it.
 g -C "$OTHER" pull -q --rebase 2>/dev/null

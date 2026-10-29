@@ -158,4 +158,16 @@ check "the scanner's pull leaves no rebase in progress" \
 check "and the local commit is still on the branch, under its heartbeat" \
   eq "$(g -C "$BUS" log -2 --format=%s HEAD | tr '\n' '|')" "heartbeat n1|n1 claims C1|"
 
+# --- fix round 2: a rebase someone started by hand is left alone. The scan
+# does not abort it, and no heartbeat is committed in the middle of it.
+g -C "$BUS" fetch -q origin 2>/dev/null
+g -C "$BUS" rebase -q origin/main >/dev/null 2>&1
+check "a hand-started rebase stopped on its conflict" test -d "$BUS/.git/rebase-merge"
+rhead=$(g -C "$BUS" rev-parse HEAD)
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 1); rc=$?
+check "during a rebase by hand the scan still ends IDLE" eq "$rc:$out" "5:IDLE"
+check "the scan leaves the rebase by hand in progress" test -d "$BUS/.git/rebase-merge"
+check "no heartbeat is committed in the middle of it" eq "$(g -C "$BUS" rev-parse HEAD)" "$rhead"
+g -C "$BUS" rebase --abort >/dev/null 2>&1
+
 unit_done
