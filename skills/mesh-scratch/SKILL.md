@@ -18,8 +18,8 @@ path. Stop at the first line that fails.
 ## Start
 
 Make `<REPO_PATH>/spaces/tmp/<spike>/` and work in it. A spike name matches
-`[a-z0-9][a-z0-9._-]*`. Pull first with the `pull --rebase` line of `save`
-if other nodes may have written.
+`[a-z0-9][a-z0-9._-]*`. Pull first with the `pull --rebase --autostash` line
+of `save` if other nodes may have written.
 
 ## Save
 
@@ -27,8 +27,11 @@ if other nodes may have written.
 sh <skill dir>/spike.sh save <spike> [--root <scratch root>]
 ```
 
-Prints four `RUN` lines: add the folder, commit it, pull with rebase, push.
-The commit holds only that spike's files.
+Prints four `RUN` lines: add the folder, commit it, pull with rebase (and
+autostash, so another spike's unsaved change does not stop it), push. The
+commit holds only that spike's files. `save` prints `REFUSED <spike>: <reason>`
+and exits 1 for a bad spike name, a missing folder, or a scratch root that is
+not a git work tree or not the top of its own work tree.
 
 ## End
 
@@ -40,9 +43,15 @@ sh <skill dir>/spike.sh end <spike> (--filed <space id>/<record id> |
 File the content first (through `space-librarian` for core or lore), then end
 the spike. `end` writes `<spike>.outcome.md` at the scratch root and prints
 five `RUN` lines: remove the folder, add the outcome file, commit both, pull
-with rebase, push. The one commit removes every file of the spike and adds the
-outcome file.
+with rebase and autostash, push. The one commit removes every file of the
+spike and adds the outcome file.
 
-`end` prints `REFUSED <spike>: <reason>`, writes nothing and exits 1 for a bad
-spike name, a missing folder, untracked files in the folder (save them first
-or delete them), or a `--filed` record found in no file of that space.
+`end` prints `REFUSED <spike>: <reason>`, writes nothing and exits 1 for:
+
+- a bad spike name, or a missing folder;
+- a scratch root that is not a git work tree, or not the top of its own work
+  tree (a folder inside another repo);
+- untracked files in the folder, or tracked files there that are modified,
+  staged or deleted: save the spike first, or delete or restore them;
+- a folder with no tracked file: save it first;
+- a `--filed` record found in no file of that space.

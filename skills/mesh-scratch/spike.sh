@@ -11,6 +11,10 @@
 # environment or ~/.agent-identity.env. A refusal prints
 # "REFUSED <spike>: <reason>", writes nothing and exits 1.
 
+# The C locale, so the spike-name ranges below are ASCII in every shell.
+LC_ALL=C
+export LC_ALL
+
 refuse() {
   echo "REFUSED $spike: $1"
   exit 1
@@ -63,10 +67,21 @@ case $spike in
 esac
 [ -d "$root/$spike" ] || refuse "no folder $spike in the scratch space"
 
+# The root must be the top of its own work tree: git walks up from a folder
+# inside another repo, and the RUN lines would then write that repo's main.
+need_top() {
+  inside=$(git -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)
+  [ "$inside" = true ] || refuse "scratch root is not a git work tree"
+  prefix=$(git -C "$root" rev-parse --show-prefix 2>/dev/null) ||
+    refuse "scratch root is not a git work tree"
+  [ -z "$prefix" ] || refuse "scratch root is not the top of its work tree"
+}
+
 if [ "$cmd" = save ]; then
+  need_top
   echo "RUN git -C $root add -- $spike"
   echo "RUN git -C $root commit -q -m \"Save spike $spike\" -- $spike"
-  echo "RUN git -C $root pull --rebase -q origin main"
+  echo "RUN git -C $root pull --rebase --autostash -q origin main"
   echo "RUN git -C $root push -q origin HEAD:main"
   exit 0
 fi
@@ -78,7 +93,8 @@ n=0
 [ -n "$abandoned" ] && n=$((n + 1))
 [ "$n" -eq 1 ] || usage
 
-dirty=$(git -C "$root" status --porcelain -- "$spike") ||
+need_top
+dirty=$(git --no-optional-locks -C "$root" status --porcelain -- "$spike") ||
   refuse "scratch root is not a git work tree"
 [ -z "$dirty" ] ||
   refuse "untracked, modified or staged files in the folder, save first"
@@ -125,15 +141,15 @@ out=$root/$spike.outcome.md
   echo "spike: $spike"
   echo "outcome: $outcome"
   echo "ended: $(date -u +%Y-%m-%dT%H:%MZ)"
-  [ -n "$filed" ] && echo "filed_as: $filed"
+  [ -n "$filed" ] && printf 'filed_as: %s\n' "$filed"
   [ -n "$spawned" ] && echo "project: $spawned"
   echo "---"
-  [ -n "$why" ] && echo "$why"
+  [ -n "$why" ] && printf '%s\n' "$why"
 } >"$out"
 
 echo "RUN git -C $root rm -r -q -- $spike"
 echo "RUN git -C $root add -- $spike.outcome.md"
 echo "RUN git -C $root commit -q -m \"End spike $spike: $outcome\"" \
   "-- $spike $spike.outcome.md"
-echo "RUN git -C $root pull --rebase -q origin main"
+echo "RUN git -C $root pull --rebase --autostash -q origin main"
 echo "RUN git -C $root push -q origin HEAD:main"
