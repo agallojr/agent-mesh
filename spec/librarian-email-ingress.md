@@ -20,7 +20,7 @@ and ordinary node self-submission — converge on the one `library.submit` queue
 the librarian drains (PROTOCOL §5, §7).
 
 **Why a separate role, not a librarian duty.** An earlier draft had the librarian
-read the mailbox and write `memory/` inline. Splitting the mailbox-watcher into
+read the mailbox and write the library inline. Splitting the mailbox-watcher into
 its own role is strictly better:
 
 - **Least privilege for credentials.** The Gmail OAuth token and the shared
@@ -29,9 +29,10 @@ its own role is strictly better:
 - **The secret never touches the bus by construction.** The email-monitor strips
   the `X-Mesh-Key` line before it composes the `library.submit`, so no bus path,
   commit, or record can ever carry it.
-- **No PROTOCOL §7 exception.** "Only the librarian writes `memory/`, with no
-  self-submission" stays literally true. The email-monitor is an ordinary
-  *producer* — like the phone Worker — that submits and never writes `memory/`.
+- **No PROTOCOL §7 exception.** "Only the librarian writes the library (the
+  core and lore spaces), with no self-submission" stays literally true. The
+  email-monitor is an ordinary *producer* — like the phone Worker — that
+  submits and never writes core or lore.
 - **Auditability — the point of using the bus.** Every accepted email becomes a
   `library.submit` visible in the ledger, and every *rejected* email leaves a
   metadata-only audit breadcrumb (§9). Hostile attempts are visible on the bus,
@@ -50,13 +51,15 @@ not a node. The phone case is solved by the ingress Worker. Email generalizes it
 anyone who can send mail — from any device, offline-composed, with attachments —
 can hand the mesh a learning, **without** ever touching the bus, holding a bus
 credential, or being a node. The email-monitor is the single privileged reader of
-that mailbox; the librarian remains the single privileged writer of `memory/`;
+that mailbox; the librarian remains the single privileged writer of the
+library, the core and lore spaces;
 email is just another producer feeding the one submission queue.
 
 ## 2. Scope
 
 **In scope (v1):** a valid email becomes one `library.submit` message on the bus
-(PROTOCOL §5), which the librarian folds into `memory/**` (PROTOCOL §7), plus any
+(PROTOCOL §5), which the librarian files into the core space (`spaces/core/`)
+or the lore space (`spaces/lore/`) (PROTOCOL §7), plus any
 attachments filed by pointer. Categories: `lore`, `workflows`, or any other
 open library category (PROTOCOL §7), selectable per message, defaulting to a
 configured category.
@@ -311,8 +314,10 @@ artifacts: [<attachment pointers…>]       # if any (§8)
 
 The librarian drains `tasks/roles/librarian/` exactly as today (PROTOCOL §7,
 poller-prompt): for each `library.submit` it dedupes, validates the header,
-assigns the final `id`, sets any category-specific verification, and writes
-`memory/<category>/<slug>.md` (the library keeps no index file, §7). It does **not** know
+assigns the final `id`, sets any category-specific verification, and files the
+record through `space-librarian`: a lore record as `lore/<id>-<slug>.md` in the
+lore space (`spaces/lore/lore/`), any other as `<category>/<id>-<slug>.md` in
+core (`spaces/core/`) (the library keeps no index file, §7). It does **not** know
 or care that this submission came from email rather than the Worker or a node —
 the envelope is identical. No librarian-side change is required.
 
@@ -325,15 +330,16 @@ an emailed lore note is not auto-`verified`; it is treated like any submitted no
 ## 8. Attachments — honoring the blob rule
 
 Because the email-monitor reads Gmail directly, attachment bytes **never transit
-the bus queue**. The single invariant that still binds is that the **bus itself
-holds no blobs**: `memory/**` (and every queue message) is text and pointers, and
+the bus queue**. The single invariant that still binds is that the **bus and the
+library hold no data blobs**: a library record in core or lore (and every queue
+message) is text and pointers, and
 the git gate rejects blob-class files (blocked extensions, or > 5 MB) — see
 PROTOCOL §7 and `hooks/git-gate.py`. So the email-monitor routes each attachment
 as it composes the submission:
 
 - **Text-class and small** (`.md`, `.txt`, `.json`, `.yaml`, within the gate's
   limits): may be inlined into the submission body (or referenced as its own
-  intended `memory/<category>/` record) — it is exactly the kind of small text the
+  intended record in core or lore) — it is exactly the kind of small text the
   library holds.
 - **Blob-class** (binary, or over the gate's size/extension limits): filed into
   the **downstream file store** — the "Research Notes"/any-file store that lives
@@ -362,7 +368,7 @@ reachable by the email-monitor node; the librarian only ever sees the pointer in
 Rejections are recorded on the bus, not just locally — that visibility is a
 motivation for the role split. A **reject audit** is a metadata-only record the
 email-monitor writes to its own `outbox/<email-monitor-id>/` (single-writer safe,
-never `memory/`): `{email_message_id, dkim, dmarc, from, decision, category?,
+never core or lore): `{email_message_id, dkim, dmarc, from, decision, category?,
 ts}` — **never the body, never the secret, never attachment contents**. It shows
 in the ledger diff like any other bus write.
 
@@ -384,7 +390,8 @@ in the ledger diff like any other bus write.
 
 - **Two single-holder roles, two writers, no contention.** `email-monitor` is the
   sole writer of its own `outbox/**` and the sole poster of these `library.submit`
-  messages; `librarian` remains the sole writer of `memory/**` (PROTOCOL §2, §10,
+  messages; `librarian` remains the sole writer of the core and lore spaces
+  (PROTOCOL §2, §10,
   writer table). Neither writes a path the other owns.
 - **Two at-least-once boundaries collapse to exactly-once:**
   - *Mailbox → bus:* the email-monitor marks a mail read only **after** its
@@ -392,10 +399,10 @@ in the ledger diff like any other bus write.
     a crash re-presents the mail and it is not double-posted.
   - *Bus → memory:* the librarian dedupes on `email_message_id` when draining
     (its normal submission dedup), so even a duplicate submission yields one
-    `memory/` record.
+    library record.
 - **No new bus *path* and no `.gitattributes` change.** `library.submit` rides the
   existing `tasks/roles/librarian/` queue; reject audits ride the existing
-  `outbox/<agent-id>/`; the librarian writes only `memory/<category>/` records.
+  `outbox/<agent-id>/`; the librarian writes only records in core and lore.
 - **One new role name** (`email-monitor`) registered in `agents/<id>.yaml` like
   any other role; no protocol mechanism changes.
 
@@ -409,8 +416,8 @@ it touches:
 1. **`spec/PROTOCOL.md`** — a short pointer under §7 (the library) noting email as
    a second ingress: the single-holder `email-monitor` role validates mail and
    posts a `library.submit`, which the librarian drains unchanged. The
-   email-monitor always submits, never writes `memory/` — so §7's "only the
-   librarian writes `memory/`, no self-submission" rule is unchanged.
+   email-monitor always submits, never writes core or lore — so §7's "only the
+   librarian writes the library, no self-submission" rule is unchanged.
 2. **`skills/mesh-on/poller-prompt.md`** — add an `email-monitor` role-specific
    duty block (the §7a pipeline), guarded by `LIBRARIAN_EMAIL_ENABLED`. The
    `librarian` duty block is unchanged.
@@ -432,7 +439,7 @@ end-to-end cases, `librarian`) with the duty enabled:
 1. **Happy path (end to end).** An email from an allowlisted sender,
    DKIM/DMARC-passing, with the correct `X-Mesh-Key` and a Markdown body, produces
    a `library.submit` in `tasks/roles/librarian/` (secret stripped), which the
-   librarian drains into a new `memory/<category>/<slug>.md` with the §7 header.
+   librarian files as a new record in core or lore with the §7 header.
    The message is left read + `mesh-processed`. The
    secret appears in **no** file, message, commit, or log.
 2. **Spoof rejected.** The same email with a forged `From` (DKIM/DMARC fail) posts
@@ -448,7 +455,7 @@ end-to-end cases, `librarian`) with the duty enabled:
    into the bus (the git gate does not fire because nothing blob-class was added).
 6. **Idempotency.** Re-presenting the same `Message-ID` (simulated crash before
    marking read) posts no duplicate `library.submit`; and if one was already
-   drained, the librarian's dedup yields no duplicate `memory/` record.
+   drained, the librarian's dedup yields no duplicate library record.
 7. **Out-of-scope intent.** `X-Mesh-Intent: run-task` is rejected as unsupported
    in v1; no submission posted, reject audit `decision: intent-unsupported`.
 8. **Missing credential name.** With `LIBRARIAN_EMAIL_SECRET` (or the OAuth name)

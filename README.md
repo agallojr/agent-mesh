@@ -5,10 +5,13 @@ and installer that turn a machine into a coordination node for Claude agents on
 hosts that cannot reach each other directly.
 
 This repo is the reusable software. The runtime coordination state — the
-append-only ledger nodes read and write, plus the shared library — lives in a
-separate **bus** repo (`agent-mesh-bus-<mesh>`, one per mesh, named for the
-mesh), where this product is linked in as a pinned `product/` submodule. A node
-clones the bus, checks out the recorded product pin, and runs it. See
+append-only ledger nodes read and write — lives in a separate **bus** repo
+(`agent-mesh-<mesh>`, one per mesh, named for the mesh), where this product is
+linked in as a pinned `product/` submodule. The shared library and the agents'
+scratch live in memory spaces the bus mounts, each its own repo: core at
+`spaces/core`, personal lore at `spaces/lore` and scratch at `spaces/tmp`. A
+node clones the bus and its spaces, checks out the recorded product pin, and
+runs it. See
 [`docs/product-data-split.md`](docs/product-data-split.md) for the rationale.
 
 ## What a turn looks like
@@ -41,6 +44,7 @@ server, no shared network — just files, single-writer paths, and git.
 | Implementing or auditing behavior | [`spec/PROTOCOL.md`](spec/PROTOCOL.md) — the normative reference |
 | Wondering where this sits in the multi-agent landscape | [`docs/positioning.md`](docs/positioning.md) |
 | Migrating an old node after the product/data split | [`docs/reinstall-after-split.md`](docs/reinstall-after-split.md) |
+| Splitting a bus's library into spaces, or renaming a bus | [`docs/operator-manual.md`](docs/operator-manual.md) §10 to §12 |
 
 ## Getting started — pick your path
 
@@ -51,10 +55,14 @@ that already exists**.
 **A. Standing up a new mesh (no bus yet — start here if you found this repo).**
 
 1. Create an **empty, private** repo on your own Git host — this becomes *your*
-   bus. Naming convention: `agent-mesh-bus-<mesh>`, named for the mesh it
-   coordinates. Keep it private: it holds your runtime coordination state, your
-   credential *names*, and your deployment-specific rules. The product stays
-   public; your bus never should.
+   bus. Naming convention: `agent-mesh-<mesh>`, named for the mesh it
+   coordinates. Keep it private: it holds your runtime coordination state and
+   your credential *names*. The product stays public; your bus never should.
+   The bus's three spaces get private repos of their own, named by the same
+   rule: `<owner>-core` (your library and your deployment-specific rules),
+   `<owner>-lore` (your operational lore) and `agent-mesh-<mesh>-tmp` (the
+   mesh's scratch). The installer prints the steps that make them from the
+   product's space templates and mount them.
 2. Clone this product repo and run the installer, pointing it at the public
    product URL and your new (empty) bus URL:
 
@@ -63,7 +71,7 @@ that already exists**.
    cd agent-mesh
    PRODUCT_URL=https://github.com/you/agent-mesh.git \
    BUS_URL=<your-empty-private-bus-url> \
-   BUS_PATH="$HOME/agent-mesh-bus-mymesh" \
+   BUS_PATH="$HOME/agent-mesh-mymesh" \
    ./install/install.sh --product-tag v0.1.0
    ```
 
@@ -108,17 +116,19 @@ which stages only the paths it is given and never records a submodule pin.
 
 ## The library — what the mesh remembers
 
-Durable knowledge lives on the bus under `memory/`, curated by the holder of
-the `librarian` role. Five fixed categories (normative definition:
+Durable knowledge lives in two memory spaces the bus mounts, each its own
+repo: **core** (`spaces/core`) and **personal lore** (`spaces/lore`), curated
+by the holder of the `librarian` role, who files each record through the
+`space-librarian` skill. Five fixed categories (normative definition:
 [`spec/PROTOCOL.md`](spec/PROTOCOL.md) §7):
 
-| Category | Holds |
-|---|---|
-| `lore/` | Verified operational gotchas: symptom / cause / fix / scope. |
-| `notes/` | Durable research and design knowledge: specs, designs, comparisons, plans, handoffs. |
-| `refs/` | External references (papers, decks, images) — stored via LFS, or pointer-only. |
-| `workflows/` | Curated write-ups of multi-node processes that ran. |
-| `runs/` | Provenance: one compact record per result-bearing task. |
+| Category | Space | Holds |
+|---|---|---|
+| `lore/` | lore | Verified operational gotchas: symptom / cause / fix / scope. |
+| `notes/` | core | Durable research and design knowledge: specs, designs, comparisons, plans, handoffs. |
+| `refs/` | core | External references (papers, decks, images) — stored via LFS, or pointer-only. |
+| `workflows/` | core | Curated write-ups of multi-node processes that ran. |
+| `runs/` | core | Provenance: one compact record per result-bearing task. |
 
 `runs/` is the mesh's **audit trail**. Task scratch (message, status, outbox
 result) is swept by retention, but the run record — who ran what, when, on
@@ -127,15 +137,23 @@ with git history (every state change is a commit by an identified writer), what
 the mesh did is reconstructable after the fact.
 
 Any node submits durable learning as a `library.submit` message into the
-librarian's queue; the librarian validates it, assigns an id, and promotes it
-into `memory/<category>/`. Records are small text — heavy payloads stay outside
-the bus and are referenced by pointer.
+librarian's queue; the librarian validates it, assigns an id, and files it in
+its category folder in core or lore. Records are small text — heavy payloads
+stay outside the bus and its spaces and are referenced by pointer.
+
+**Scratch** (`spaces/tmp`) is not library. It is the mesh's own space for
+agent work in progress, one folder per spike: any agent of the mesh writes it
+through the `mesh-scratch` skill, with no librarian, and ending a spike records
+whether it was filed into a space, spawned a project or was abandoned. Scratch
+belongs to one mesh; core, lore and project spaces carry no mesh name, so they
+can be handed on or used without the mesh.
 
 ## Project spaces
 
-`memory/` is this mesh's own library. A bus may also mount **memory spaces**:
-separate git repos of records, each with its own owner, visibility, writer and
-reference rules. A **project space** (`proj:<name>`) holds everything a
+Core and lore are this mesh's own library. A bus may also mount other
+**memory spaces**: separate git repos of records, each with its own owner,
+visibility, writer and reference rules. A **project space** (`proj:<name>`)
+holds everything a
 project's participants need to continue the work. The operator mounts one by
 hand, as a submodule under `spaces/` listed in `spaces.yaml`, and a node clones
 it only when something first needs it. A session loads it with
@@ -164,10 +182,11 @@ editing product files. Two overlay points:
 
 - **Guidance overlay.** The bus entry point `guidance/CLAUDE.md` composes the
   chain every node loads: the product's `best-practices.base.md`, then the
-  bus's private `memory/best-practices.user.md` (this deployment's rules,
-  layered on top), then the product's `agent-operating.md` and
-  `permissions.md`. To change mesh-wide behavior, edit the user overlay in the
-  bus — the base stays pristine and upgradable.
+  private overlay `spaces/core/best-practices.user.md` in core (this
+  deployment's rules, layered on top), then the product's
+  `agent-operating.md` and `permissions.md`. To change mesh-wide behavior,
+  edit the user overlay in core and commit it there by hand — the base stays
+  pristine and upgradable.
 - **Skills overlay.** `<bus>/skills/` overrides product skills by name: the
   installer links product skills into `~/.claude/skills/` first, then bus
   entries, so a same-named bus skill wins on that node and a new name adds an
@@ -200,19 +219,23 @@ editing product files. Two overlay points:
 | Path | Role |
 |---|---|
 | `spec/` | The protocol definition (`PROTOCOL.md`) — the normative reference. |
-| `skills/` | The `mesh-on` / `mesh-off` / `mesh-post` / `mesh-check` / `mesh-ref` / `mesh-load` / `space-librarian` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
+| `skills/` | The `mesh-on` / `mesh-off` / `mesh-post` / `mesh-check` / `mesh-ref` / `mesh-load` / `mesh-scratch` / `space-librarian` Claude skills; symlinked into `~/.claude/skills/` from `product/skills/`. |
 | `hooks/` | `git-gate.py` (path-scoped git gate + blob rejection), its settings snippet, and the allowlist template. |
-| `templates/` | `*.env.template` files copied to `$HOME` and filled in per node (never committed). |
+| `templates/` | `*.env.template` files copied to `$HOME` and filled in per node (never committed), and `templates/spaces/`, the core, lore and scratch space templates. |
 | `guidance/` | `best-practices.base.md` (universal, self-contained), `agent-operating.md`, `permissions.md`, `operator-interface.md`, and a product-side `CLAUDE.md`. |
-| `install/` | The installer that scaffolds a bus and links this product in. |
+| `install/` | The installer that scaffolds a bus and links this product in; `split-memory.sh`, which splits a bus's library into its spaces; and `check-ready.sh`, a node's read-only readiness check. |
 | `bus-skeleton/` | The empty, `.gitkeep`-tracked directory skeleton a fresh bus starts from. |
 | `docs/` | Design + operator docs (the product/data split, operator manual, re-install guide). |
 
 The coordination directories (`agents/`, `tasks/`, `status/`, `outbox/`,
-`workflows/`, `_archive/`) and the library (`memory/` — the five categories
-above, plus the deployment's `memory/best-practices.user.md` overlay) live at
-the **bus** root, not here. The bus's own `guidance/CLAUDE.md` composes the
-product base with the deployment's user overlay (see `spec/PROTOCOL.md` §4.4).
+`workflows/`, `_archive/`) live at the **bus** root, not here, and the bus
+mounts the spaces under `spaces/`: core (`spaces/core`, the four core
+categories above plus the deployment's `best-practices.user.md` overlay),
+personal lore (`spaces/lore`) and scratch (`spaces/tmp`). For one change-over
+period the bus also keeps seven compatibility links at the library and scratch
+paths of the layout before the split (`spec/PROTOCOL.md` §3.5). The bus's own
+`guidance/CLAUDE.md` composes the product base with the deployment's user
+overlay (see `spec/PROTOCOL.md` §4.4).
 
 ## Core invariants
 

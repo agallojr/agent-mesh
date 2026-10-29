@@ -3,9 +3,10 @@
 **schema_version: 1**
 **Status: draft, v1**
 
-A GitHub repository used as a durable, outbound-only message bus and shared
-knowledge store for Claude agents running on machines that cannot reach each
-other directly.
+A GitHub repository used as a durable, outbound-only message bus for Claude
+agents running on machines that cannot reach each other directly. The bus
+mounts the memory spaces that store the mesh's knowledge and its scratch, each
+its own repo (§3, §7).
 
 ---
 
@@ -50,7 +51,8 @@ Roles split by what they write:
   folder when the result returns files (§5.1). Any number of nodes may hold
   them; fan-out is unbounded and always conflict-free.
 - **Shared-output roles** (e.g. `librarian`, `archiver`) curate a shared namespace
-  (`memory/lore/**`, `_archive/**`). These should be held by exactly one node so
+  (the core and lore spaces, `spaces/core/**` and `spaces/lore/**`, and
+  `_archive/**`). These should be held by exactly one node so
   their shared writes stay single-writer. This is an operating convention, not a
   mechanism the mesh enforces — running two holders of a shared-output role risks
   a textual conflict on the shared path, at the operator's own risk.
@@ -68,12 +70,17 @@ posts task requests and queries into role queues and reads results from the ledg
 
 ## 3. Repository layout
 
-The repo nodes clone is the **bus**. Product code is linked in as a pinned
-submodule at `product/`; everything else at the bus root is runtime coordination
-state and the library.
+The repo nodes clone is the **bus**, named `agent-mesh-<mesh>` for the one mesh
+it coordinates (§3.4). It holds coordination state, mesh configuration and
+mounts, and no stored knowledge. Product code is linked in as a pinned
+submodule at `product/`. The library and the agents' scratch live in three
+memory spaces, each its own repo, mounted as submodules under `spaces/`: core
+(`spaces/core/`), personal lore (`spaces/lore/`) and scratch (`spaces/tmp/`)
+(§7, `spec/memory-spaces.md`). Seven compatibility links keep the paths of the
+layout before the split working for one change-over period (§3.5).
 
 ```
-BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
+BUS ROOT (agent-mesh-<mesh>) — coordination state, mesh configuration, mounts
 /agents/<agent-id>.yaml        self-registration; writer: that agent only
 /tasks/roles/<role>/           role queue; writer: anyone. task.request/query are
                                claimed (§6); a library.submit to role:librarian
@@ -84,24 +91,30 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /outbox/<agent-id>/            results, each with any result files in
                                <task-id>-files/ (§5.1), and replies; writer:
                                that agent only
-/memory/<category>/            the library — the categories defined in §7
-                               (lore/, notes/, refs/, workflows/, runs/); writer:
-                               `librarian` role only. No index file: the records
-                               are self-describing (§7)
-/memory/best-practices.user.md deployment-specific rules (guidance overlay);
-                               writer: the operator (NOT the librarian — see §7)
 /spaces.yaml                   registry of the memory spaces this bus mounts
-                               (spec/memory-spaces.md §4.3); optional, and
-                               absent means none is mounted, so it needs no
-                               layout bump; writer: the operator
-/spaces/<path>/                one mounted memory space: a submodule that
-                               follows the space repo's main (memory-spaces
-                               §4.2). The mount (.gitmodules entry, gitlink) is
-                               the operator's; the contents are written only by
-                               the space's librarian, in the space's own repo
+                               (spec/memory-spaces.md §4.3); writer: the operator
+/spaces/core/                  the core space, repo <owner>-core: the library's
+                               notes/, refs/, runs/ and workflows/ (§7), and the
+                               guidance overlay best-practices.user.md (§4.4).
+                               Records: the librarian; the overlay: the operator
+/spaces/lore/                  the personal lore space, repo <owner>-lore: the
+                               library's lore/ (§7); writer: the librarian
+/spaces/tmp/                   the scratch space, repo agent-mesh-<mesh>-tmp: one
+                               folder per spike; writer: any agent of this mesh,
+                               through the mesh-scratch skill. Not library (§7)
+/spaces/<path>/                any other mounted memory space, such as a project
+                               space. Every space is a submodule that follows
+                               its repo's main (memory-spaces §4.2). The mount
+                               (.gitmodules entry, gitlink) is the operator's;
+                               the contents are written in the space's own repo
+/memory/lore, /memory/notes,   the seven compatibility links into core, lore and
+/memory/refs, /memory/runs,    scratch (§3.5); writer: the operator, at the
+/memory/workflows,             mount. Nothing writes through them, and no other
+/memory/best-practices.user.md file is tracked under memory/ or agent-tmp
+/agent-tmp
 /workflows/<workflow-id>.yaml  LIVE multi-step workflow plans, cursor-driven and
                                in-flight; writer: the node that originated it.
-                               Distinct from memory/workflows/ (§7), the librarian-
+                               Distinct from core's workflows/ (§7), the librarian-
                                curated DURABLE write-ups of finished processes.
 /guidance/CLAUDE.md            bus entry point composing product + user rules;
                                writer: human + operator
@@ -111,7 +124,8 @@ BUS ROOT (agent-mesh-bus) — node-writable coordination state + library
 /BUS_LAYOUT                    layout stamp (integer); writer: operator or the
                                upgrading agent (see §3.3)
 /_archive/YYYY-MM/             swept messages and terminal status; writer: `archiver`
-/.gitmodules, /product (gitlink)  the product pin; writer: operator only
+/.gitmodules, /product (gitlink)  the product pin and the space mounts; writer:
+                               operator only
 
 PRODUCT SUBMODULE (agent-mesh @ recorded pin) — nodes ride the recorded pin
 /product/spec/PROTOCOL.md      this document
@@ -120,9 +134,11 @@ PRODUCT SUBMODULE (agent-mesh @ recorded pin) — nodes ride the recorded pin
                                permissions.md, operator-interface.md
 /product/hooks/                git-gate hook + settings snippet + allowlist tmpl
 /product/skills/               mesh-on / mesh-off / mesh-post skills
-/product/templates/            identity/credentials env templates
+/product/templates/            identity/credentials env templates, space templates
 /product/upgrades/             one to-<N>.md per bus-layout transition (§3.3)
-/product/install/              installer + bus-skeleton
+/product/install/              installer + bus-skeleton, the memory split tool
+                               split-memory.sh and the readiness check
+                               check-ready.sh
 ```
 
 ### 3.1 Writer table
@@ -134,7 +150,11 @@ PRODUCT SUBMODULE (agent-mesh @ recorded pin) — nodes ride the recorded pin
 | `tasks/<X>/` | any agent **except** X (new files only) |
 | `status/<task-id>.json` | the agent that first accepted (claimed) that task |
 | `outbox/<X>/` | X (new files only) |
-| `memory/lore/**` | holder of the `librarian` role |
+| `spaces/core/` (`notes/`, `refs/`, `runs/`, `workflows/`) | holder of the `librarian` role, filing each record through the `space-librarian` skill and pushing it in core's own repo, never through the bus |
+| `spaces/core/best-practices.user.md` | the operator, committing and pushing it in core by hand (NOT the librarian, §7) |
+| `spaces/lore/` (`lore/`) | holder of the `librarian` role, through `space-librarian`, in lore's own repo |
+| `spaces/tmp/` | any agent of this mesh, through the `mesh-scratch` skill, in scratch's own repo; the operator's sync tool may check scratch in and push it too. `spaces.yaml` lists it with `librarian: none` |
+| `memory/<category>`, `memory/best-practices.user.md`, `agent-tmp` | the operator, as the mount writes them: compatibility links (§3.5), never written through |
 | `spaces.yaml` | the operator |
 | `spaces/<path>/` | the mount (its `.gitmodules` entry and gitlink, bumped only as a checkpoint): the operator. The space's contents: the holder of the librarian role `spaces.yaml` names for it, committing and pushing in the space's own repo, never through the bus |
 | `_archive/**` | holder of the `archiver` role |
@@ -172,8 +192,15 @@ committed index (§7), which was the only file that ever justified one. The
 `filter=lfs` lines make the stored **reference artifacts** the `refs` category
 holds (papers, slides, images — §7) go to git-LFS, so they do not bloat the pack
 and are not subject to the gate's 5 MB non-LFS blob limit; these extensions must
-match the gate's `LFS_EXTS` (`hooks/git-gate.py`). git-lfs must be available on
-every node that clones the bus, or these land as raw blobs.
+match the gate's `LFS_EXTS` (`hooks/git-gate.py`).
+
+The same `.gitattributes` is at the root of each space the split makes from the
+bus (memory-spaces §9 step 3), and its rules hold there: in core
+(`spaces/core/.gitattributes`), whose `refs/` holds the stored artifacts, and in
+scratch (`spaces/tmp/.gitattributes`), whose spikes may hold images and
+archives. Each space keeps its LFS objects in its own repo's LFS store. git-lfs
+must be available on every node that clones the bus or its spaces, or these
+land as raw blobs or as pointer files.
 
 ### 3.3 Layout versioning and upgrades
 
@@ -203,6 +230,56 @@ maintainer's own mesh, opt-in via `MESH_PRODUCT_TRACK=tip` in the node's identit
 env): the poller tracks product `main` tip with `--remote`, and the maintainer's
 chained-pin tooling advances the recorded pin at each checkpoint. The two modes
 differ only in how often the pin moves.
+
+**Layout 1 and the memory split.** The split of the library and scratch into
+spaces (memory-spaces §9 step 3) leaves the layout at 1: `BUS_LAYOUT` and
+`LAYOUT_VERSION` stay `1` while the compatibility links last (§3.5), and no
+`upgrades/to-2.md` is written for it. The links keep layout 1's paths valid for
+a node still on older product code, whereas a stamp of 2 would stop that node's
+poller (its scanner's `STALE_PRODUCT` exit), and only a stop signal should stop
+a poller. The change that removes the links bumps the layout. This product
+version expects a split bus: it reads the library and scratch at their space
+paths.
+
+### 3.4 Repo names
+
+A repo is named by its scope. One that belongs to one mesh carries the mesh's
+name; a portable space's repo carries none, so it can be handed on or mounted by
+another mesh unchanged (memory-spaces §8).
+
+| Repo | Name |
+|---|---|
+| the bus of a mesh | `agent-mesh-<mesh>` |
+| another repo of one mesh | `agent-mesh-<mesh>-<role>`; scratch is `agent-mesh-<mesh>-tmp` |
+| core | `<owner>-core` |
+| personal lore | `<owner>-lore` |
+| a project space | `<project>-space` |
+
+`install/split-memory.sh names --owner <owner> --mesh <mesh>` prints the bus,
+scratch, core and lore names. A bus whose repo carries another name is renamed
+on its git host (`docs/operator-manual.md` §12).
+
+### 3.5 Compatibility links
+
+The split replaces the library and scratch folders of the bus before the split
+with seven relative symbolic links (git mode 120000) into the spaces:
+
+```
+# the seven compatibility links: path -> target
+memory/lore                    -> ../spaces/lore/lore
+memory/notes                   -> ../spaces/core/notes
+memory/refs                    -> ../spaces/core/refs
+memory/runs                    -> ../spaces/core/runs
+memory/workflows               -> ../spaces/core/workflows
+memory/best-practices.user.md  -> ../spaces/core/best-practices.user.md
+agent-tmp                      -> spaces/tmp
+```
+
+They are compatibility links for one change-over period, so that a node still
+on older product code reads the same records at the old paths. Nothing writes
+through them, no other file is tracked under `memory/` or `agent-tmp`, and the
+product gives the space paths everywhere else. A later change removes them and
+bumps the layout (§3.3).
 
 ---
 
@@ -333,11 +410,14 @@ The bus owns the composition (the product never reaches up out of its submodule)
 1. `product/guidance/best-practices.base.md` — universal agent + coding
    conventions that ship with the product. Self-contained and publishable; the
    same on every deployment.
-2. `memory/best-practices.user.md` — this deployment's operator-specific rules,
-   a text record in the bus library (like lore). It rides the same one-pull
-   propagation. If absent, only the base rules apply, so a bare product is still
-   complete. This is how the operator's environment rules reach every node
-   without forking the base file.
+2. `spaces/core/best-practices.user.md` — this deployment's operator-specific
+   rules, the overlay, imported as `@../spaces/core/best-practices.user.md`. It
+   is the operator's own file in the core space (§3, §7), not a library record:
+   the operator commits and pushes it in core by hand, and each node that has
+   cloned core follows core's tip on its pulls (memory-spaces §4.2). If absent,
+   only the base rules apply, so a bare product is still complete. This is how
+   the operator's environment rules reach every node without forking the base
+   file.
 3. `product/guidance/agent-operating.md` — how to be a mesh agent: the loop, the
    writer table, message schemas, single-writer discipline, credential-name-only
    rule, and conflict re-derivation. A fresh agent with no history operates
@@ -427,14 +507,14 @@ What to report, and how far to back off before giving up.
 ```
 
 **Types:** `task.request`, `task.cancel`, `query`, `reply`, `library.submit`,
-`library.deprecate`. (`library.submit` carries any durable-knowledge record for the
-librarian — a lore note, a workflow record, or any other category; it generalizes
-the older `lore.submit`.) A `library.submit` is posted into the `librarian` role
-queue like any other message, but it is **drained, not claimed** — the librarian
-folds it into `memory/` (§7) and writes no `status/<id>.json` for it. The queue is
-one per role; the message `type` is what tells a consumer whether an item is
-claimable work (`task.request`/`query`) or a drain-and-curate submission
-(`library.submit`).
+`library.deprecate`. (`library.submit` carries any durable-knowledge record for
+the librarian — a lore note, a workflow record, or any other category; it
+generalizes the older `lore.submit`.) A `library.submit` is posted into the
+`librarian` role queue like any other message, but it is **drained, not
+claimed** — the librarian files it into the core or lore space (§7) and writes
+no `status/<id>.json` for it. The queue is one per role; the message `type` is
+what tells a consumer whether an item is claimable work (`task.request`/`query`)
+or a drain-and-curate submission (`library.submit`).
 
 **Addressing:** `to` is normally `role:<role>` — the sender posts into that role's
 queue and any holder claims it (§6). `to` may instead be a bare `agent_id` for a
@@ -595,7 +675,13 @@ staleness is inferred, never asserted by a third party.
 
 ## 7. The library (durable memory)
 
-`memory/` is the durable knowledge store — the **library**. This section is the
+The **library** is the durable knowledge store: two memory spaces, each its own
+repo mounted in the bus (§3, `spec/memory-spaces.md`). The **core** space
+(`spaces/core/`) holds the `notes/`, `refs/`, `runs/` and `workflows/`
+categories, and the **personal lore** space (`spaces/lore/`) holds `lore/`, as
+`spaces/lore/lore/`. A record's path inside its space is its category folder
+and its file name, as below. Scratch (`spaces/tmp/`) is not library (see
+*Scratch is not library* below). This section is the
 **single source of truth** for its structure: the categories below are the whole
 set, and nothing elsewhere — a per-category index, a nested folder scheme, a
 sibling convention — may define, extend, or contradict it. A record's own
@@ -653,25 +739,30 @@ Cross-references between records (`related`, `supersedes`, `wf_ref`,
 `discovered_in`) are always by `id`, never by path — so renaming a slug never
 breaks a link.
 
-> `memory/workflows/` (durable, curated records of processes that *ran*) is
-> deliberately distinct from the top-level `/workflows/` (§8.1), which holds the
-> LIVE, cursor-driven plan a node is still driving. Same word, two paths, related
-> by design: a live plan finishes, and its write-up is submitted for the
-> librarian to fold into `memory/workflows/` with a `wf_ref` back to the plan id.
+> Core's `workflows/` (`spaces/core/workflows/`: durable, curated records of
+> processes that *ran*) is deliberately distinct from the bus's top-level
+> `/workflows/` (§8.1), which holds the LIVE, cursor-driven plan a node is still
+> driving. Same word, two paths, related by design: a live plan finishes, and its
+> write-up is submitted for the librarian to file into core's `workflows/` with a
+> `wf_ref` back to the plan id.
 
 **One writer: the `librarian` role — for the five categories.** Every path under
-the library **categories** — `memory/lore/`, `memory/notes/`, `memory/refs/`,
-`memory/workflows/`, `memory/runs/` — is written solely by the holder of the
-`librarian` role, for all five, not just lore. A node that does not hold
-`librarian` never writes those paths; it submits (below). A node that *does* hold
-`librarian` (a worker that is its own librarian) writes them directly and inline,
-with no self-submission. Either way the categories have exactly one writer.
-(Running two `librarian` holders risks a shared-path collision; single-holder is
-an operating convention, §10.) The one file under `memory/` that this rule does
-**not** cover is the guidance overlay `memory/best-practices.user.md`: it is the
-**operator's** file, not a library record and not a librarian-curated category, so
-the operator owns it (§4.4). The single-writer scope here is the five categories;
-the overlay's single writer is the operator.
+the library **categories** — `spaces/lore/lore/`, `spaces/core/notes/`,
+`spaces/core/refs/`, `spaces/core/workflows/`, `spaces/core/runs/` — is written
+solely by the holder of the `librarian` role, for all five, not just lore. The
+librarian files each record through the `space-librarian` skill, which checks
+it against the space's rules (memory-spaces §6.3), commits it in the space's own
+repo, one commit per record, and pushes it to the space's `main`; it never
+commits the library through the bus. A node that does not hold `librarian` never
+writes those paths; it submits (below). A node that *does* hold `librarian` (a
+worker that is its own librarian) files them directly and inline, with no
+self-submission. Either way the categories have exactly one writer. (Running two
+`librarian` holders risks a shared-path collision; single-holder is an operating
+convention, §10.) The one file in core that this rule does **not** cover is the
+guidance overlay `spaces/core/best-practices.user.md`: it is the **operator's**
+file, not a library record and not a librarian-curated category, so the operator
+owns it and commits it in core by hand (§4.4). The single-writer scope here is
+the five categories; the overlay's single writer is the operator.
 
 **Common record header.** Every library record, in any category, carries a minimal
 header so the records are self-describing (any view can be built from them) and the
@@ -682,7 +773,7 @@ archiver knows what to keep:
 schema_version: 1
 id: <assigned by the librarian>
 title: one line
-category: lore            # the memory/<category>/ it belongs to
+category: lore            # the category folder it belongs to, in core or lore
 provenance: worker        # worker | workflow | human
 contexts: [frontier-login]   # WHERE it holds — coarse environment class (scopes relevance)
 tags: [build, hdf5]          # WHAT it is about — free subject keywords (scopes discovery)
@@ -764,7 +855,7 @@ physical workflows may feed one project over time, and each workflow may leave
 more than one artifact:
 
 ```
-memory/workflows/
+spaces/core/workflows/
   qtscope-data/                        <- PROJECT (a `project:` handle)
     channelflow-ingest/                <- one workflow (its `id` == this slug)
       record.md                        <- the write-up (frontmatter below)
@@ -857,38 +948,42 @@ Because the `runs` record is the durable copy, it must stand alone: it carries t
 run's essential facts inline (goal, result, artifact pointers) and does not depend
 on the `task_id` still resolving — that scratch is expected to be swept.
 
-**Refs — stored artifact + companion record.** When a ref is retrieved and stored,
-the binary lands at `memory/refs/<id>-<slug>.<ext>` and its companion record at
-`memory/refs/<id>-<slug>.md` — same `id` and `slug`, so they pair and both satisfy
-the naming invariant. The companion's front-matter adds, on top of the common
-header: `artifact` (the stored file's name, a local pointer), `source_path` (the
-origin URL), `source_sha256` (checksum of the stored file — now meaningful, since
-it is a fixed blob), and `retrieved_on` (UTC, since a URL's content is mutable). A
-pointer-only ref omits `artifact`/`source_sha256` and just carries `source_path`
-and `retrieved_on`. Either way the summary is the record body.
+**Refs — stored artifact + companion record.** When a ref is retrieved and
+stored, the binary lands at `spaces/core/refs/<id>-<slug>.<ext>` and its
+companion record at `spaces/core/refs/<id>-<slug>.md` — same `id` and `slug`, so
+they pair and both satisfy the naming invariant. The companion's front-matter
+adds, on top of the common header: `artifact` (the stored file's name, a local
+pointer), `source_path` (the origin URL), `source_sha256` (checksum of the
+stored file — now meaningful, since it is a fixed blob), and `retrieved_on`
+(UTC, since a URL's content is mutable). A pointer-only ref omits
+`artifact`/`source_sha256` and just carries `source_path` and `retrieved_on`.
+Either way the summary is the record body.
 
-**Payloads by pointer, artifacts by LFS.** A record is small text (markdown/JSON).
-Two different things it may refer to are handled differently. **Reference
-artifacts** — a paper, a deck, an image the `refs` category preserves — are stored
-in the bus under LFS (§3.2) and paired with a companion record. **Data / result
-payloads** — datasets, model checkpoints, large run outputs — stay OUTSIDE the bus
-and are referenced by pointer (a URL, path, or job id); the git gate hard-denies
-the data/model blob extensions regardless (`hooks/git-gate.py` `BLOB_EXTS`) and
-refuses a non-LFS file over the size limit. This keeps a recursive pull of the
-library from becoming a data-lake download while still letting the library hold the
-reference documents it is meant to curate.
+**Payloads by pointer, artifacts by LFS.** A record is small text
+(markdown/JSON). Two different things it may refer to are handled differently.
+**Reference artifacts** — a paper, a deck, an image the `refs` category
+preserves — are stored in core under LFS (§3.2) and paired with a companion
+record. **Data / result payloads** — datasets, model checkpoints, large run
+outputs — stay OUTSIDE the bus and its spaces and are referenced by pointer (a
+URL, path, or job id); the git gate hard-denies the data/model blob extensions
+regardless (`hooks/git-gate.py` `BLOB_EXTS`) and refuses a non-LFS file over the
+size limit. This keeps a recursive pull of the library from becoming a data-lake
+download while still letting the library hold the reference documents it is
+meant to curate.
 
-**Submission flow (`library.submit`).** A node without the `librarian` role drops a
-`library.submit` message into `tasks/roles/librarian/` — the librarian's ordinary
-role queue — with the record header inline and its `category` set. This is *not* a
-claim: the submitter writes no `status/<id>.json`, and no node competes for it.
-Each cycle the `librarian` holder scans its queue, and for every `library.submit`
-it dedupes, validates the header, assigns the `id`, sets any category-specific
-verification (e.g. lore's `verified_on`), writes `memory/<category>/<slug>.md`, and
-updates the index. There is no per-submission status file and no outbox result —
-the `memory/<category>/` record *is* the outcome. An unstaffed queue simply
-accumulates until a librarian runs — correct, not a fault. A node that is its own
-librarian performs the same steps inline as it scans its own queue.
+**Submission flow (`library.submit`).** A node without the `librarian` role
+drops a `library.submit` message into `tasks/roles/librarian/` — the librarian's
+ordinary role queue — with the record header inline and its `category` set. This
+is *not* a claim: the submitter writes no `status/<id>.json`, and no node
+competes for it. Each cycle the `librarian` holder scans its queue, and for
+every `library.submit` it dedupes, validates the header, assigns the `id`, sets
+any category-specific verification (e.g. lore's `verified_on`), and files the
+record through `space-librarian`: a lore record as `lore/<id>-<slug>.md` in the
+lore space, any other as `<category>/<id>-<slug>.md` in core. There is no
+per-submission status file and no outbox result — the filed record *is* the
+outcome. An unstaffed queue simply accumulates until a librarian runs — correct,
+not a fault. A node that is its own librarian performs the same steps inline as
+it scans its own queue.
 
 This is why there is no separate submissions mailbox: one queue per role is enough.
 The librarian is a single-holder role, so the claim/status machinery a task needs
@@ -903,14 +998,15 @@ is worse than no gotcha.
 
 **Consuming the library — recall is half the point.** The library exists to be
 read, not only appended to. Before doing work with a known failure surface, a
-node scans `memory/` for what is already known — `lore/` for verified gotchas,
-`runs/` for whether the task was already done and its outcome, `notes/` for
-design context — and reads the matches before acting. Retrieval rides the two
-header axes: filter on `contexts` (does the fact hold in your `AGENT_CONTEXT`
-environment class) and `tags` (is it about your subject). This is a standing
-duty of every node, interactive or unattended, not a step that only fires inside
-the poll loop (see `guidance/agent-operating.md` loop step 4a). A record relied
-on should be cited by `id` in the result that used it.
+node scans the library for what is already known — lore's `spaces/lore/lore/`
+for verified gotchas, core's `spaces/core/runs/` for whether the task was
+already done and its outcome, core's `spaces/core/notes/` for design context —
+and reads the matches before acting. Retrieval rides the two header axes: filter
+on `contexts` (does the fact hold in your `AGENT_CONTEXT` environment class) and
+`tags` (is it about your subject). This is a standing duty of every node,
+interactive or unattended, not a step that only fires inside the poll loop (see
+`guidance/agent-operating.md` loop step 4a). A record relied on should be cited
+by `id` in the result that used it.
 
 **There is no index file — the records are the library.** The single source of
 truth is the set of record front-matters; the library is self-describing, and
@@ -924,42 +1020,56 @@ move, merge, and be re-categorized over time; because each carries its own
 metadata, any index can be rebuilt from them at any moment.
 
 **Categories are metadata, not directories.** For the same reason, a record's
-categories live in its front-matter — `tags`, `project`, `related` — never in the
-path. Do **not** `mkdir` a folder per topic, venue, or project inside `memory/`:
-the five top-level directories are record *kinds*, and `lore/`, `notes/`, `refs/`
-are flat by design (naming invariant above). Only two directory shapes below them
-are legitimate: the `workflows/` nesting (project ⊃ workflow ⊃ artifacts), and
-payload directories under `memory/notes/assets/` — a `<slug>/` subtree, itself
-free to nest, holding the figures, data, and source files a note references.
-Metadata is what makes recategorization cheap: a record can sit in several
-categories at once, and moving it between them is a tag edit rather than a file
-move that breaks every pointer at the old path. So when proposing a taxonomy, say
-plainly that the groupings are tag sets, not folders; reuse an existing tag rather
-than coining a near-synonym (for `refs`, normalize against `memory/refs/TAGS.md`
-— see the `mesh-ref` skill); and when a genuinely new category is being
-established, state the convention inside the first record that uses it.
+categories live in its front-matter — `tags`, `project`, `related` — never in
+the path. Do **not** `mkdir` a folder per topic, venue, or project inside core
+or lore: the five category directories are record *kinds*, and `lore/`,
+`notes/`, `refs/` are flat by design (naming invariant above). Only two
+directory shapes below them are legitimate: the `workflows/` nesting (project ⊃
+workflow ⊃ artifacts), and payload directories under `spaces/core/notes/assets/`
+— a `<slug>/` subtree, itself free to nest, holding the figures, data, and
+source files a note references. Metadata is what makes recategorization cheap: a
+record can sit in several categories at once, and moving it between them is a
+tag edit rather than a file move that breaks every pointer at the old path. So
+when proposing a taxonomy, say plainly that the groupings are tag sets, not
+folders; reuse an existing tag rather than coining a near-synonym (for `refs`,
+normalize against `spaces/core/refs/TAGS.md` — see the `mesh-ref` skill); and
+when a genuinely new category is being established, state the convention inside
+the first record that uses it.
 
 **Email ingress (second submission source).** Besides nodes and the phone-facing
-ingress Worker, a single-holder **`email-monitor`** role may watch a Gmail mailbox
-and turn an authenticated message into a `library.submit` on the librarian queue.
-It is an ordinary *producer*: it validates the mail (transport auth + sender
-allowlist + shared secret), strips the secret before any bus write, and posts the
-same `library.submit` envelope above — it never writes `memory/` itself, so the
-single-writer rule is unchanged. The librarian drains it identically to any other
-submission. Full design in `spec/librarian-email-ingress.md`.
+ingress Worker, a single-holder **`email-monitor`** role may watch a Gmail
+mailbox and turn an authenticated message into a `library.submit` on the
+librarian queue. It is an ordinary *producer*: it validates the mail (transport
+auth + sender allowlist + shared secret), strips the secret before any bus
+write, and posts the same `library.submit` envelope above — it never writes core
+or lore itself, so the single-writer rule is unchanged. The librarian drains it
+identically to any other submission. Full design in
+`spec/librarian-email-ingress.md`.
 
-**Memory spaces.** `memory/` is this mesh's own library, and the categories
-above govern it. A bus may also mount **memory spaces**: git repos of
-self-describing records, each declaring its owner, visibility, writer model,
-reference policy and its own categories in a `space.yaml`, mounted as
-submodules under `spaces/` and listed in `spaces.yaml` (§3). Every space has
-exactly one librarian per mesh, its only mesh writer, and one librarian may
-manage several spaces; it files each record in the space's own repo and
-refuses one that breaks the space's header profile, reference policy or id
-rules. Today the mounted spaces are project spaces (`proj:<name>`), loaded by a
-session on request or by a task's `project:` field (§5). `memory/` stays where
-it is until it is split into core and lore spaces (memory-spaces §9). The
+**Memory spaces.** Core and lore are this mesh's own library, and the categories
+above govern them. A memory space is a git repo of self-describing records,
+declaring its owner, visibility, writer model, reference policy and its own
+categories in a `space.yaml`, mounted as a submodule under `spaces/` and listed
+in `spaces.yaml` (§3). Besides core and lore, a bus mounts its scratch space and
+any project spaces (`proj:<name>`), which a session loads on request or a task
+loads by its `project:` field (§5). Every space but scratch has exactly one
+librarian per mesh, its only mesh writer, and one librarian may manage several
+spaces; it files each record in the space's own repo through `space-librarian`
+and refuses one that breaks the space's header profile, reference policy or id
+rules. The library moved from the bus into core and lore at the memory split
+(memory-spaces §9 step 3); before the split it lived in the bus itself. The
 design, and which parts of it are implemented, is in `spec/memory-spaces.md`.
+
+**Scratch is not library.** The scratch space (`spaces/tmp/`, id `tmp`, kind
+`scratch`) holds the agents' work in progress for this one mesh, one top-level
+folder per spike. It has no librarian (`librarian: none` in `spaces.yaml`):
+any agent of the mesh writes it through the `mesh-scratch` skill, with no
+submission and no mesh task. No record is filed there, and nothing in it is a
+record. A spike ends when its content is filed into core, lore or a project
+space as a new record, spawns a project, or is dropped, and its end is recorded
+in an outcome file in the same commit that removes its folder
+(memory-spaces §6.4). A record in a shareable space never cites scratch; the
+librarian refuses one that does.
 
 ---
 
@@ -1101,7 +1211,8 @@ agent's job is to re-derive its intended write against current state.
 
 **Role-specific duties (only if you hold the role):** the `librarian` holder drains
 the `library.submit` messages from its own role queue `tasks/roles/librarian/`,
-curates `memory/**`, and re-verifies stale notes;
+files them into core and lore through `space-librarian`, curates both, and
+re-verifies stale notes;
 the `archiver` holder runs the retention sweep (§9); a node that originates a
 workflow drives it (§8.1). A node holding none of these does none of them.
 
@@ -1156,14 +1267,15 @@ terminal.
 | Workflow records, terminal | archive after 7 days |
 | Workflow records, running | never archived |
 | Library records | per the record's `retention` header (default permanent) |
+| Scratch spikes | until their outcome is recorded (memory-spaces §6.4) |
 | Agent registrations | overwritten each boot |
 
 Archiving is a `git mv` into `_archive/YYYY-MM/`, performed by the holder of the
 `archiver` role. An agent MUST NOT archive another agent's unprocessed message. A
 `library.submit` follows task-message retention (archive after 3 days); since a
-staffed `librarian` drains its queue every cycle, a submission is normally promoted
-into `memory/` long before that window elapses, so archiving the swept message
-loses nothing (the durable copy lives in `memory/`).
+staffed `librarian` drains its queue every cycle, a submission is normally filed
+into core or lore long before that window elapses, so archiving the swept message
+loses nothing (the durable copy lives in core or lore).
 
 **Sweep a task as a unit.** A task's message, its terminal `status/<id>.json`, its
 `outbox/<id>/<id>-result.md` and, when the result returns files (§5.1), its
@@ -1187,7 +1299,7 @@ when. Anyone can confirm the boundary is being held with a read-only check:
 `_archive/`, and `outbox/` no `-files/` folder whose result does. A non-empty result
 means the archiver is behind (or not running).
 
-Rationale for short task-message retention: promotion into `memory/` becomes a
+Rationale for short task-message retention: filing into core or lore becomes a
 deliberate ritual rather than an afterthought, and the coordination repo stays
 small enough to clone quickly from a login node.
 
@@ -1195,7 +1307,7 @@ small enough to clone quickly from a login node.
 swept into `_archive/YYYY-MM/` it is a historical record, not live state: it is
 not re-validated, re-categorized, re-indexed, or held to the library's structure
 rules. Curation (dedupe, verification, staleness, the canonical categories of §7)
-applies to live `memory/` only. Do not "tidy" the archive.
+applies to the live library, core and lore, only. Do not "tidy" the archive.
 
 ---
 

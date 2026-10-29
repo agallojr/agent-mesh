@@ -6,7 +6,7 @@ and one upgrade path. Everything in the system lives in exactly one of them.
 | Plane | Form | Visibility | Owner / writer |
 |---|---|---|---|
 | **Product** | git repo (`agent-mesh`) | public | the product maintainers |
-| **Bus** (instance) | git repo (e.g. `agent-mesh-bus-<mesh>`) | private, one per mesh | the operator + that mesh's nodes |
+| **Bus** (instance) | git repo (`agent-mesh-<mesh>`), mounting its memory spaces | private, one per mesh | the operator + that mesh's nodes |
 | **Node** | a machine's local install | local only, never in git | that machine's operator |
 
 ## 1. Product — the software
@@ -22,39 +22,65 @@ names, paths, credentials, or deployment specifics anywhere in it.
 - `skills/` — base skills (mesh-on, mesh-off, mesh-post, mesh-check, ...).
 - `hooks/` — enforcement code that runs on nodes (git-gate, settings
   snippet, allowlist template).
-- `templates/` — node identity / credentials templates.
+- `templates/` — node identity / credentials templates, and the core, lore
+  and scratch space templates (`templates/spaces/`).
 - `bus-skeleton/` — the executable form of "how to instantiate a bus": a
   complete, working bus layout. Instantiation = copy skeleton + pin product.
 - `install/` — the installer that scaffolds a bus from the skeleton and
-  wires a node.
+  wires a node; `split-memory.sh`, which splits a bus's library and scratch
+  into spaces; and `check-ready.sh`, a node's read-only readiness check.
 - `upgrades/` — one note per bus-layout transition (see §4). Upgrade notes
   are written to be executed by an agent, and include any node-side steps.
 - `spec/LAYOUT_VERSION` — the bus layout this product version expects.
 
 ## 2. Bus — one user mesh's instance
 
-The bus is private. One bus per user mesh. It contains the deployment's
-data and its deviations from the product defaults — nothing executable
-beyond what it overrides.
+The bus is private. One bus per user mesh, named for it: `agent-mesh-<mesh>`.
+It contains the deployment's coordination state, its mesh configuration and its
+deviations from the product defaults — nothing executable beyond what it
+overrides — and mounts the memory spaces that hold its knowledge, each its own
+repo and its own git submodule. It stores only a pointer to each space, never
+its contents.
 
-- **KB** — `memory/` — the durable library, librarian-curated
-  (`lore/ notes/ refs/ workflows/ runs/`), plus the operator-authored
-  guidance overlay `memory/best-practices.user.md`. Writer split: the
-  librarian role owns `memory/<category>/`; the operator owns the overlay.
+- **KB** — the core and personal lore spaces, at `spaces/core` (repo
+  `<owner>-core`: `notes/ refs/ workflows/ runs/`) and `spaces/lore` (repo
+  `<owner>-lore`: `lore/`) — the durable library, librarian-curated, plus the
+  operator-authored guidance overlay `spaces/core/best-practices.user.md`.
+  Writer split: the librarian role files the records into core and lore
+  through `space-librarian`, in each space's own repo; the operator owns the
+  overlay and commits it in core by hand.
+- **Scratch** — `spaces/tmp` (repo `agent-mesh-<mesh>-tmp`) — the agents'
+  work in progress, one folder per spike, written by any agent of this mesh
+  with no librarian. Not library, and it belongs to this mesh only.
+- **Other spaces** — project spaces under `spaces/`, mounted by the operator
+  and loaded on demand.
 - **MQ** — `agents/ tasks/ status/ outbox/ workflows/ _archive/` — live
   coordination state. Ephemeral, swept by the archiver, never pinned upward.
-- **Overrides** — `memory/best-practices.user.md` (guidance overlay) and
-  `skills/` at the bus root (instance skill overlays; a bus skill with the
-  same name as a product skill wins). Prefer skills that read tunables from
-  the guidance overlay; whole-skill override is the escape hatch. Instance
-  skill descriptions say when to invoke — never standing directives.
+- **Overrides** — the guidance overlay in core and `skills/` at the bus root
+  (instance skill overlays; a bus skill with the same name as a product skill
+  wins). Prefer skills that read tunables from the guidance overlay;
+  whole-skill override is the escape hatch. Instance skill descriptions say
+  when to invoke — never standing directives.
+- **Compatibility links** — for one change-over period, `memory/lore`,
+  `memory/notes`, `memory/refs`, `memory/runs`, `memory/workflows`,
+  `memory/best-practices.user.md` and `agent-tmp` link into the spaces, so a
+  node on older product code finds the paths of the layout before the split.
 - **Composer** — `guidance/CLAUDE.md` — the entry point that layers product
   base guidance under the instance overlay. The bus owns composition.
 - **Version stamp** — `BUS_LAYOUT` at the bus root: a single integer naming
   the layout this bus conforms to (see §4).
 - **The pin** — `product/` submodule + `.gitmodules`. The bus records
   exactly which product commit its state was written against. Nodes ride
-  the recorded pin; only the operator (or an upgrade) advances it.
+  the recorded pin; only the operator (or an upgrade) advances it. A space's
+  gitlink is different: nodes follow the space's tip, and the gitlink moves
+  only as a checkpoint.
+
+**Names.** A repo is named by its scope: one that belongs to one mesh carries
+the mesh's name (the bus `agent-mesh-<mesh>`, its other repos
+`agent-mesh-<mesh>-<role>`, scratch `agent-mesh-<mesh>-tmp`); a portable
+space's repo carries none (`<owner>-core`, `<owner>-lore`, `<project>-space`),
+so the space can be handed to a collaborator, or mounted by another mesh,
+unchanged (`spec/PROTOCOL.md` §3.4).
 
 ## 3. Node — one machine
 
@@ -111,8 +137,9 @@ the pin moves.
 One pattern, used twice:
 
 - **Guidance**: `bus/guidance/CLAUDE.md` imports product base files, then
-  the bus overlay. Later layers override earlier ones. The product defines
-  the base; the bus owns the composition order.
+  the overlay in core (`@../spaces/core/best-practices.user.md`). Later
+  layers override earlier ones. The product defines the base; the bus owns
+  the composition order.
 - **Skills**: the installer links product skills into `~/.claude/skills/`
   first, then bus `skills/` entries — same name, bus wins. The product
   defines the defaults; the bus supplies the deviations.
@@ -151,8 +178,8 @@ Direction, if built:
   Message forwarding is re-posting (new message, provenance noted), not
   mirroring.
 - **Unified KB is a read-side view.** A node that mounts both buses
-  searches both libraries; every record keeps exactly one home bus, and
-  single-writer discipline is per-bus and untouched. Durable sharing is a
+  searches both libraries; every record keeps exactly one home space, and
+  single-writer discipline is per-space and untouched. Durable sharing is a
   librarian-mediated export: a record is *submitted* to the other bus's
   librarian queue, filtered at the bridge.
 - **The trust boundary is directional.** Internal → external crossings are

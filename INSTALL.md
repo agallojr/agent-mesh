@@ -6,24 +6,28 @@ git. It applies to any node — a laptop or a remote server — doing a fresh in
 (To create a brand-new mesh instead — no bus exists yet — use the installer:
 `install/README.md`.)
 
-**The whole install, in one glance.** Five steps, ~10 minutes:
+**The whole install, in one glance.** Six steps, ~10 minutes:
 
-    1. clone the bus + init the product submodule      (git)
+    1. clone the bus, init the product and the three spaces   (git, Git LFS)
     2. install the git gate                            (hook + allowlist + settings)
     3. symlink the skills into ~/.claude/skills/       (mesh-on, mesh-off, ...)
     4. plant ~/.agent-identity.env + ~/.agent-credentials.env
-    5. start Claude, run /mesh-on
+    5. check the node: check-ready.sh after
+    6. start Claude, run /mesh-on
 
 When you are done the node sits parked on a zero-token scanner, pulls the bus
 on a cycle, and claims work addressed to its roles. Nothing further to babysit.
 
-The bus is its own git repo (`agent-mesh-bus-<mesh>`, named for the mesh). It
+The bus is its own git repo (`agent-mesh-<mesh>`, named for the mesh). It
 carries the runtime coordination state (`agents/`, `tasks/`, `status/`,
-`outbox/`, `workflows/`) and the memory library (`memory/` — `lore/`, `notes/`,
-`refs/`, `workflows/`, `runs/` — plus the deployment's
-`memory/best-practices.user.md` overlay). The product software lives in a git
-submodule at `product/`. Every path below that starts with `${REPO}/product/...`
-resolves inside that submodule.
+`outbox/`, `workflows/`) and mounts, as submodules, the three memory spaces
+every node clones: core at `spaces/core` (the library's `notes/`, `refs/`,
+`workflows/` and `runs/`, plus the deployment's `best-practices.user.md`
+overlay), personal lore at `spaces/lore` (the library's `lore/`), and the
+mesh's scratch at `spaces/tmp`, each its own repo (`docs/operator-manual.md`
+section 10). The product software lives in a git submodule at `product/`.
+Every path below that starts with `${REPO}/product/...` resolves inside that
+submodule.
 
 **Pin semantics — adopter mode (default).** A node rides the **recorded pin**:
 `submodule update` (without `--remote`) checks out exactly the product commit the
@@ -36,40 +40,66 @@ advancing the pin at each chained-pin checkpoint. Absent that variable, a node i
 in adopter mode.
 
 ## 0. Prerequisites
-- git and Python 3 (`/usr/bin/python3` is used by the hook).
+- git, Git LFS set up for your user (`git lfs install`), and Python 3
+  (`/usr/bin/python3` is used by the hook).
 - Claude Code installed.
-- Network access to the bus repo's git remote.
+- Network access to the bus repo's git remote and the three space repos'.
+- A git credential on this node that reaches those repos: read on the bus, on
+  each code submodule (`product/` and any other) and on the core, lore and
+  scratch repos; write on the bus and on scratch; and, on the node that holds
+  the `librarian` role, write on core and lore too. A fine-grained token
+  limited to named repos needs every one of them added; step 5 names any it
+  cannot reach.
 
-## 1. Clone the bus and realize the product submodule
-Clone your bus (`agent-mesh-bus-<mesh>`), not the old `agent-mesh`. After cloning
-you MUST init the submodule so the product is checked out under `product/`. In
-adopter mode (the default) you do **not** pass `--remote`: `product/` lands on the
-exact commit the bus records, which is what every node runs.
+## 1. Clone the bus, realize the product, and clone the spaces
+Clone your bus (`agent-mesh-<mesh>`), not the product repo `agent-mesh`. After
+cloning you MUST init the product submodule so the product is checked out
+under `product/`. In adopter mode (the default) you do **not** pass `--remote`:
+`product/` lands on the exact commit the bus records, which is what every node
+runs.
 
-    git clone <bus-url> ~/agent-mesh-bus-mymesh
-    REPO="$HOME/agent-mesh-bus-mymesh"
-    git -C "$REPO" submodule update --init --recursive
+    git clone <bus-url> ~/agent-mesh-mymesh
+    REPO="$HOME/agent-mesh-mymesh"
+    git -C "$REPO" submodule update --init --recursive -- product
 
+Name any other code submodule the bus carries after `product` too
+(`git -C "$REPO" config -f .gitmodules --get-regexp 'path$'` lists them all).
 Do not rely on `git clone --recurse-submodules` alone. Always run the explicit
 `submodule update --init --recursive` step: it is what the poller uses to realize
-the recorded pin, and it is robust across git versions. Confirm the submodule is
-populated:
+the recorded pin, and it is robust across git versions.
 
-    ls "$REPO/product/spec/PROTOCOL.md"
+Then clone the three spaces every node uses, core, lore and scratch, with
+their LFS content, and check out `main` in each: `submodule update` leaves a
+space on a detached HEAD, and each later pull follows the tip of the space's
+`main` instead.
 
-If `product/` is empty, the submodule was not realized. See Troubleshooting.
+    git -C "$REPO" submodule update --init -- spaces/core spaces/lore spaces/tmp
+    for s in core lore tmp; do git -C "$REPO/spaces/$s" checkout -q main; done
+
+Leave project spaces (`spaces/proj-<name>`) alone: a node clones one only when
+it first needs it (`docs/operator-manual.md` section 8). Confirm the product
+and the spaces are populated:
+
+    ls "$REPO/product/spec/PROTOCOL.md" "$REPO/spaces/core/space.yaml" \
+        "$REPO/spaces/lore/lore" "$REPO/spaces/tmp/space.yaml"
+
+If `product/` is empty, the submodule was not realized; if a space is empty,
+this node cannot read its repo. See Troubleshooting.
 
 Then register the `pullmesh` alias on this clone, so a later manual refresh lands
-the bus tip and its recorded product pin in one command:
+the bus tip, its recorded product pin and the spaces' tips in one command:
 
     git -C "$REPO" config alias.pullmesh \
-      '!f() { git pull "$@" && git submodule update --init --recursive; }; f'
+      '!f() { git pull "$@" && git submodule update --init --recursive -- product && git submodule update --remote --merge -- spaces/core spaces/lore spaces/tmp; }; f'
 
-`pullmesh` = `git pull` (advance the bus to its tip) followed by
-`submodule update --init --recursive` (realize whatever product pin that bus tip
-records). It does NOT chase product `main`; the recorded pin is the whole point of
-adopter mode. (Developer mode adds `--remote` — see the Pin semantics note at the
-top and the Notes section.)
+`pullmesh` = `git pull` (advance the bus to its tip), then
+`submodule update --init --recursive -- product` (realize whatever product pin
+that bus tip records), then `submodule update --remote --merge` for the three
+spaces (follow each space's `main` tip, as the poller does). It does NOT chase
+product `main`; the recorded pin is the whole point of adopter mode. A space is
+never set back to its recorded gitlink: that is only a checkpoint
+(`spec/memory-spaces.md` §4.2). (Developer mode adds `--remote` for the
+product — see the Pin semantics note at the top and the Notes section.)
 
 This works whether or not the git gate (step 2) is active. The gate still
 splits commands on `&&`/`;` before inspecting them, so the alias value (which
@@ -80,7 +110,7 @@ denying. If for any reason it is still denied, add the alias to `.git/config`
 directly, which is what `git config` would do — append under an `[alias]`
 section:
 
-    pullmesh = "!f() { git pull \"$@\" && git submodule update --init --recursive; }; f"
+    pullmesh = "!f() { git pull \"$@\" && git submodule update --init --recursive -- product && git submodule update --remote --merge -- spaces/core spaces/lore spaces/tmp; }; f"
 
 Then verify with the read-only `git -C "$REPO" config --get alias.pullmesh`.
 
@@ -173,11 +203,32 @@ values are secrets. The management model is **names travel, values never do**:
   refreshed name list.
 - **Defense in depth.** Add both filenames to a global gitignore
   (`git config --global core.excludesFile`), keep tokens fine-grained and
-  single-repo (the bus PAT needs Contents read/write on the bus repo only),
-  and on shared login nodes prefer the site's supported credential mechanism
-  where one exists.
+  limited to the repos this node needs (section 0: the bus, its code
+  submodules and its three spaces; a phone seat's PAT needs Contents
+  read/write on the bus repo only), and on shared login nodes prefer the
+  site's supported credential mechanism where one exists.
 
-## 5. Join the mesh
+## 5. Check the node
+Run the product's readiness check against the bus clone. It is read-only, and
+it reads this node's environment class from `AGENT_CONTEXT` in the identity
+file:
+
+    sh "$REPO/product/install/check-ready.sh" after --bus "$REPO"
+
+It prints one `OK`, `MISSING` or `INFO` line per item, then `READY <class>`
+(exit 0) or `NOT READY <class>: <n> missing` (exit 1). The items: the bus is at
+its fetched `origin/main` and `spaces.yaml` lists core, lore and tmp; each of
+`spaces/core`, `spaces/lore` and `spaces/tmp` is cloned, on `main`, with no LFS
+pointer file left in its work tree; the guidance chain reaches the overlay at
+`spaces/core/best-practices.user.md`; a SessionStart hook prints a lore catalog
+that names `spaces/lore/lore`; and the SWE Pod's role agents and the mesh's
+skills resolve in the Claude Code config. Each `MISSING` line ends with the step
+that fixes it, such as registering the product's `hooks/lore-recall.py` as a
+SessionStart hook. Apply it and run the check again until it prints `READY`.
+`check-ready.sh before --bus "$REPO"` also checks, read-only, that this node's
+credential reaches each repo (`docs/operator-manual.md` section 11, step 3).
+
+## 6. Join the mesh
 Start Claude, then run `/mesh-on` to start the node; `/mesh-off` stops it. The
 poller is session-scoped, so run unattended nodes under tmux or screen.
 
@@ -202,8 +253,12 @@ when the pin advances.
 - Refreshing the product (adopter mode, default): a sync realizes the product pin
   the bus records — it does NOT chase product `main`. For a manual refresh, run
   `git -C <REPO> pullmesh` = `git pull` (bus tip) + `git submodule update --init
-  --recursive` (that tip's recorded pin). A plain `git pull` without the submodule
-  update leaves `product/` on the previously realized commit.
+  --recursive -- product` (that tip's recorded pin) + `git submodule update
+  --remote --merge` for `spaces/core`, `spaces/lore` and `spaces/tmp` (each
+  space's tip). A plain `git pull` without the submodule updates leaves
+  `product/` on the previously realized commit and the spaces where they were.
+  Never run a bare `git submodule update` over the spaces: it sets each one back
+  to its recorded gitlink, detached.
 - Developer mode (product maintainer's own mesh only): set `MESH_PRODUCT_TRACK=tip`
   in `~/.agent-identity.env`. The poller then syncs `product/` to the tip of
   `submodule.product.branch` (`main`) each cycle with `git submodule update --init
@@ -219,12 +274,21 @@ when the pin advances.
 
 ## Troubleshooting
 - Submodule not checked out / `product/` empty: the clone did not realize the
-  submodule. Fix with `git -C <REPO> submodule update --init --recursive`,
-  then re-check `ls "$REPO/product/spec/PROTOCOL.md"`.
+  submodule. Fix with `git -C <REPO> submodule update --init --recursive --
+  product`, then re-check `ls "$REPO/product/spec/PROTOCOL.md"`.
+- A space empty or not cloned: this node's credential cannot read its repo, or
+  the clone has not initialized it. Grant read access (`check-ready.sh before`
+  names the repo), then rerun step 1's space lines.
+- A space on a detached HEAD (`check-ready.sh after` prints
+  `MISSING <class> cloned spaces/<x> detached at <sha7>`): check out `main`
+  in it, as step 1 does.
+- LFS pointer files in a space (`MISSING <class> lfs spaces/<x>`): Git LFS was
+  not set up when the space was cloned. Run `git lfs install`, then
+  `git -C "$REPO/spaces/<x>" lfs pull`.
 - Product not on the pin you expect: adopter mode realizes the commit the bus
   records, not the `main` tip. Run `git -C <REPO> pullmesh` (or
-  `git -C <REPO> submodule update --init --recursive`) to land the bus tip and its
-  recorded pin. To follow `main` tip instead, that is developer mode
+  `git -C <REPO> submodule update --init --recursive -- product`) to land the bus
+  tip and its recorded pin. To follow `main` tip instead, that is developer mode
   (`MESH_PRODUCT_TRACK=tip`) — not the default; do not enable it on adopter nodes.
 - Blob `git add` denied by the gate: you tried to stage a large or binary file
   (see Notes). Do not commit it. Reference the artifact by pointer in the
