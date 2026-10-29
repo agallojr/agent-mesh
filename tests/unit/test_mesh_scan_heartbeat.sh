@@ -4,7 +4,7 @@
 # node's own agents/<id>.yaml and pushes it through mesh-commit.sh, in a
 # commit that holds only that file and no gitlink; a failed push never stops
 # or delays the scan; the scanner's output words and exit codes are as before.
-# Runs about 35 s (short POLL and MAX_WAIT values).
+# Runs about 30 s (short POLL and MAX_WAIT values).
 set -u
 . "$(dirname "$0")/lib.sh"
 unit_setup
@@ -27,10 +27,10 @@ utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # the node's own file, the pin unmoved, the staged gitlink still staged.
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
 t0=$(utc_now); SECONDS=0
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 4); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
 el=$SECONDS; t1=$(utc_now)
 check "idle run prints IDLE and exits 5" eq "$rc:$out" "5:IDLE"
-check "idle run returns by its deadline (4 s, slack 3 s)" test "$el" -le 7
+check "idle run returns by its deadline (3 s, slack 3 s)" test "$el" -le 6
 n=$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")
 check "idle run pushed at least 2 heartbeats" test "$n" -ge 2
 bad=0
@@ -52,7 +52,7 @@ check "the record is otherwise unchanged" \
 # --- one heartbeat per interval: a scan within half an interval of the last
 # heartbeat writes none (here POLL is 60 s and the last heartbeat is fresh).
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
-out=$(bash "$SCAN" "$BUS" build "$ID" 60 2); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 60 1); rc=$?
 check "a fresh heartbeat is not repeated" \
   eq "$rc:$out:$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "5:IDLE:0"
 
@@ -106,7 +106,7 @@ g -C "$OTHER" add other2.txt
 g -C "$OTHER" commit -q -m "other node two"
 g -C "$OTHER" push -q origin main 2>/dev/null
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
-out=$(bash "$SCAN" "$BUS" build "$ID" 1 3); rc=$?
+out=$(bash "$SCAN" "$BUS" build "$ID" 1 2); rc=$?
 check "after origin returns the scan ends IDLE" eq "$rc:$out" "5:IDLE"
 check "the unpushed heartbeats reached origin" \
   eq "$(g -C "$BUS" rev-list --count main..origin/main):$(g -C "$BUS" rev-list --count origin/main..main)" "0:0"
@@ -134,10 +134,10 @@ rm -f "$HOME/.mesh-stop"
 
 # --- a node with no record, or an id that is not a plain id, writes nothing.
 base=$(g -C "$BUS_ORIGIN" rev-parse main)
-out=$(bash "$SCAN" "$BUS" build n9 1 2); rc=$?
+out=$(bash "$SCAN" "$BUS" build n9 1 1); rc=$?
 check "an unregistered node still scans" eq "$rc:$out" "5:IDLE"
 check "an unregistered node writes no record" test ! -e "$BUS/agents/n9.yaml"
-out=$(bash "$SCAN" "$BUS" build "../agents/n1" 1 2); rc=$?
+out=$(bash "$SCAN" "$BUS" build "../agents/n1" 1 1); rc=$?
 check "an id that is not plain writes no heartbeat" \
   eq "$rc:$(g -C "$BUS_ORIGIN" rev-list --count "$base..main")" "5:0"
 
