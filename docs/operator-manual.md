@@ -145,9 +145,14 @@ claiming node is the `agent_id` in the status file. Large binary outputs are
 **See in-flight workflows.** List `workflows/*.yaml` and read the cursor to see
 which step is active and which are done.
 
-**Check who is alive (liveness).** There is no separate heartbeat. `accepted`
-*is* the liveness ACK. To prove a node is alive, post a `query` (a ping) to its
-direct inbox:
+**Check who is alive (liveness).** Each live node rewrites `last_poll` in its
+own `agents/<id>.yaml` once per poll interval and pushes it, an executor's run
+included. `mesh-check` reports first, under `Nodes not polling`, every node
+whose last poll is older than 3 of its poll intervals, with the tasks it holds
+in `accepted` or `running`: such a node has stopped polling, and those tasks
+are stuck until it is restarted. A change to `last_poll` alone is the
+heartbeat, not news. To prove a node acts on its inbox, post a `query` (a
+ping) to its direct inbox:
 
 > "Ping node `worker-3`: query its liveness and tell me if it answers."
 
@@ -157,9 +162,10 @@ information to surface, not as a new task.
 
 ## 5. Interpreting states
 
-- **accepted** — A node has claimed the task and acknowledged it. This is also
-  the liveness signal. The node is alive and intends to work. Its `agent_id` in the
-  status file is the claimant.
+- **accepted** — A node has claimed the task and acknowledged it. The node
+  intends to work; whether it is still polling shows in its `last_poll`
+  (`mesh-check`, `Nodes not polling`). Its `agent_id` in the status file is the
+  claimant.
 - **running** — Work is actively in progress.
 - **done** — Completed; look for the result in the claimant's `outbox/`.
 - **failed** — The node tried and could not finish. Read the status/result for

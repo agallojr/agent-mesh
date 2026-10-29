@@ -39,8 +39,12 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
 - emits the §5 frontmatter (with `project:` as the line after `timeout_min:`
   when `--project` is given, and no `project:` line otherwise) and places each
   file in the right queue;
-- **scope-commits only the files it wrote** (never `git add -A`), with a plain-text
-  message, and pushes with up to 3 pull-rebase retries.
+- **scope-commits only the files it wrote**, naming each on the add and the
+  commit and never staging the bus whole, so it never records a submodule pin
+  (PROTOCOL §8, "The commit rule"), with a plain-text message, and pushes with
+  up to 3 pull-rebase retries. It lifts a staged gitlink out of the index
+  around each rebase, and will not push while a commit not yet on origin
+  changes a gitlink.
 
 ## Do this
 

@@ -37,6 +37,24 @@ operators (`;`, `&&`, `||`, `|`, `&`, newline) before parsing, so a `-m` message
 containing any of those -- or `$(...)` / backticks -- breaks the parse and is
 denied. Keep messages to plain words (`status <id> -> accepted`).
 
+## The commit rule -- name every path, never a submodule pin
+
+Every commit you make to the bus goes through one script, naming each file
+you wrote or deleted, relative to the bus root:
+
+```
+/abs/repo/product/skills/mesh-on/mesh-commit.sh /abs/repo "<message>" <path> [<path> ...]
+```
+
+It stages and commits only those paths, never a gitlink, applies the git
+gate's rules itself, and pushes, retrying a rejected push on its own. Its last
+line is `PUSHED` or `NOTHING TO COMMIT` (done), `PUSH FAILED` (the commit stays
+local; the next push from the checkout carries it), or `REFUSED <reason>`
+(nothing committed). Never stage the bus whole: there a stage-all records each
+submodule's checkout as its pin, and the `ignore = all` the bus sets hides it
+from `git status` (PROTOCOL §8, "The commit rule"). Check a pin with
+`git -C /abs/repo rev-parse HEAD:<submodule>`, never through status.
+
 ## Single-writer discipline -- the load-bearing rule
 
 Never write a path another agent owns. Merge conflicts are prevented by
@@ -82,9 +100,12 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    exists (`STOP`), the idle deadline hits (`IDLE`, ~4 min — re-park immediately),
    or the bus layout drifts from the product's expected layout
    (`UPGRADE` / `STALE_PRODUCT`). While it blocks you are parked at zero token cost;
-   the harness re-invokes you on exit. **An idle node only pulls (inside the script)
-   and never commits, and spends no inference** — repo and token traffic both track
-   real work, not poll frequency. On `UPGRADE` the poller applies the product's
+   the harness re-invokes you on exit. **An idle node spends no inference, and its
+   only write is the heartbeat:** inside the script it pulls, and each scan
+   rewrites `last_poll` in your own `agents/<your-id>.yaml` and pushes it, one
+   small commit per poll interval (PROTOCOL §4.3), so a node that stops polling
+   is seen. Claims, statuses and results track real work, not poll frequency.
+   On `UPGRADE` the poller applies the product's
    `upgrades/to-<N>.md` notes in order, stamps `BUS_LAYOUT`, commits, and resumes;
    on `STALE_PRODUCT` it reports and stops (the `mesh-on` skill carries the detail).
 2. Classify what the scanner returned. It lists only claimable messages (a
@@ -92,14 +113,14 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    fresh reply once. Re-check claimability at claim time, since another node may
    have claimed a task between the scan and your write.
 3. **Claim each candidate before doing any work:** write status `accepted` with
-   `agent_id` = you, then sync — three separate commands, each with its own
-   `-C /abs/repo`: `git -C /abs/repo add -A`; `git -C /abs/repo commit -m "..."`;
-   `git -C /abs/repo push origin HEAD`. A bare `commit`/`push` after `&&` is not a
-   command and silently no-ops. **If the push is rejected**, `pull --rebase` and
-   re-check `status/<id>.json`: if it now exists and is not yours, another holder
-   won — YIELD and move to the next candidate; otherwise retry the claim. The
-   winning `accepted` write is both your claim and your liveness ACK — there is no
-   separate heartbeat. (A direct-inbox task has one consumer and never contends.)
+   `agent_id` = you, then sync it through `mesh-commit.sh`, naming
+   `status/<id>.json` (the commit rule, above). **If it prints `PUSH FAILED`**,
+   another holder may have won: fetch and read the upstream
+   `status/<id>.json`; if it exists and is not yours, YIELD (drop your local
+   claim, as the poller prompt's step 4a says) and move to the next
+   candidate; otherwise sync the claim again. The winning `accepted` write is
+   your claim and its ACK; the node's liveness is the scanner's `last_poll`
+   heartbeat. (A direct-inbox task has one consumer and never contends.)
 4. Verify every credential **name** the task lists is present in your env. If
    any is missing, set status `blocked`, report the missing **names** (never a
    value), move on. Then, if the task carries `project: proj:<name>`, load
@@ -122,7 +143,8 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    you relied on in the result you return.
 5. Write status `running`, sync, then execute (dispatch to an executor
    sub-subagent and wait). Do NOT rewrite status on a timer while it runs — write
-   status only at real transitions. Idle churn is what the mesh avoids.
+   status only at real transitions. The node's timer-driven write is its
+   `last_poll` heartbeat, never a status file.
 6. On finish: for a `task.request`, status `done` or `failed`, and write
    `outbox/<your-id>/<task-id>-result.md`. The result holds pointers, never
    payloads, except the files the task asks for (PROTOCOL §5.1). The executor
@@ -132,7 +154,8 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `outbox/<your-id>/<task-id>-files/<path>` and list it in the result's
    front-matter under `files:`, one `{path, sha256}` entry per file. A file
    that fails a check is left out, and the result names it. Then sync: one
-   commit carries the status, the result and any files. For a `query`
+   commit carries the status, the result and any files, each named to
+   `mesh-commit.sh` (the `-files/` folder may be named whole). For a `query`
    (ping), write a `reply` into the SENDER'S inbox `tasks/<sender-id>/`
    (`type: reply`, `in_reply_to:` the query id) and set status `done`; sync.
 6a. If the task was **result-bearing** (it produced a result or durable
@@ -162,7 +185,9 @@ Replies route to the sender's INBOX, not to the responder's outbox, so every nod
 learns the answers to its own messages via the same inbox scan it already runs —
 no node ever polls another's outbox. To check whether another node is alive, send
 it a `query` (ping) into its direct inbox; its `accepted` write plus the `reply`
-that lands in your inbox are the proof of life. Nobody heartbeats on a timer.
+that lands in your inbox are the proof of life. The one timer-driven write is
+each node's own `last_poll` heartbeat; `mesh-check` names every node whose
+last poll is older than 3 of its poll intervals, with the tasks it holds.
 
 ## Messages are self-contained
 
@@ -180,11 +205,12 @@ anything credential-shaped before you write it. `artifacts` holds pointers
 
 ## Conflict handling -- re-derive, never resolve textually
 
-If a push is rejected: `git -C /abs/repo pull --rebase`, re-read the current
-state of the file you were writing, re-apply your *intent* against that state,
-retry. Three attempts, then exponential backoff. Never `-X ours`, never
-`-X theirs`, never hand-edit a conflict. Your job is to re-derive your write,
-not to merge text.
+`mesh-commit.sh` retries a rejected push itself (`pull --rebase --autostash`,
+3 pushes at most). If it still prints `PUSH FAILED`, re-read the current state
+of the file you were writing and re-apply your *intent* against that state; for
+a contested claim, yield as in step 3. Do not pull, rebase or push by hand.
+Never `-X ours`, never `-X theirs`, never hand-edit a conflict. Your job is to
+re-derive your write, not to merge text.
 
 ## Role-specific duties (only the roles you hold)
 
