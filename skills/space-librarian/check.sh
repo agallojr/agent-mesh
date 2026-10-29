@@ -90,8 +90,12 @@ sed -E 's#/+$##' "$W/paths" | grep -E '^/.{2,}' | sort -u | esc |
   sed 's#.*#&([^A-Za-z0-9_.-]|$)#' >> "$W/profile"
 printf '%s\n' '(^|[^A-Za-z0-9_.-])/(Users|home)/[A-Za-z0-9._-]+' >> "$W/profile"
 
-# reference: this space's id and its may_reference list.
+# reference: this space's id and its may_reference list. The profile check
+# is not run where header_profile is mesh (core, lore); a single-writer space
+# also takes the counter id form.
 SID=$(val id "$SPACE/space.yaml" | head -n 1)
+PROF=$(val header_profile "$SPACE/space.yaml" | head -n 1)
+WM=$(val writer_model "$SPACE/space.yaml" | head -n 1)
 awk '/^may_reference:/ {
        s = $0; sub(/^may_reference:[ \t]*/, "", s); sub(/[ \t]*#.*$/, "", s)
        if (s != "") { gsub(/\[|\]|[ \t"]/, "", s); n = split(s, a, ",")
@@ -100,8 +104,46 @@ awk '/^may_reference:/ {
      blk && /^[ \t]*-/ { s = $0; sub(/^[ \t]*-[ \t]*/, "", s)
                          sub(/[ \t]*#.*$/, "", s); gsub(/"/, "", s); print s; next }
      blk { exit }' "$SPACE/space.yaml" > "$W/mayref"
-QID='(^|[^A-Za-z0-9_.:/-])(core|lore|lore:[a-z0-9][a-z0-9-]*|proj:[a-z0-9][a-z0-9-]*)'
+# In core and in lore, a bare id also resolves in the other of the two, PEER,
+# when the bus mounts it beside this space: at its spaces.yaml path, else
+# spaces/<id>, with that id in its space.yaml.
+PEER=
+case "$SID" in core) o=lore ;; lore) o=core ;; *) o= ;; esac
+if [ -n "$o" ] && [ -n "$BUS" ]; then
+  pa=$(awk -v o="$o" '{ s = $0; sub(/[ \t]+#.*$/, "", s) }
+    s ~ ("[{,][ \t]*id:[ \t]*\"?" o "\"?[ \t]*[,}]") &&
+    match(s, /[{,][ \t]*path:[ \t]*[^,} \t]+/) {
+      x = substr(s, RSTART, RLENGTH); sub(/.*path:[ \t]*/, "", x)
+      gsub(/"/, "", x); print x; exit }' "$BUS/spaces.yaml" 2>/dev/null)
+  d=$BUS/${pa:-spaces/$o}; d=${d%/}
+  if [ -f "$d/space.yaml" ] && [ "$(val id "$d/space.yaml" | head -n 1)" = "$o" ]
+  then
+    sp=$(CDPATH= cd -P -- "$SPACE" && pwd); bp=$(CDPATH= cd -P -- "$BUS" && pwd)
+    case "$sp" in "$bp"/*) PEER=$d ;; esac
+  fi
+fi
+QID='(^|[^A-Za-z0-9_.:/-])(core|lore|tmp|lore:[a-z0-9][a-z0-9-]*'
+QID="$QID"'|proj:[a-z0-9][a-z0-9-]*)'
 QID="$QID"'/([a-z][a-z0-9]*-)?[0-9]{8}[A-Za-z0-9-]*(@[0-9a-f]+)?'
+# scratch: in a shareable space, a citation of scratch fails the reference
+# check: a path holding spaces/tmp/<name> or agent-tmp/<name>, a qualified id
+# tmp/<...>, or the scratch repo's URL, with or without .git, from the bus's
+# .gitmodules entry for spaces/tmp.
+: > "$W/scratch"
+if [ "$PROF" = shareable ]; then
+  printf '%s\n' '(^|[^A-Za-z0-9_.-])(spaces/tmp|agent-tmp)/[A-Za-z0-9_]' \
+    '(^|[^A-Za-z0-9_.:/-])tmp/[A-Za-z0-9_]' > "$W/scratch"
+  if [ -n "$BUS" ] && [ -f "$BUS/.gitmodules" ]; then
+    git config -f "$BUS/.gitmodules" --get-regexp '^submodule\..*\.path$' \
+      2>/dev/null |
+      while read -r k v; do
+        [ "$v" = spaces/tmp ] || continue
+        k=${k#submodule.}
+        git config -f "$BUS/.gitmodules" --get "submodule.${k%.path}.url"
+      done | sed -E 's#/+$##; s#\.git$##' | grep -E '^.{3,}$' | esc |
+      sed 's#.*#&(\\.git)?([^A-Za-z0-9_-]|$)#' >> "$W/scratch"
+  fi
+fi
 
 idof() {  # "<line> <id>" from a record's front-matter on stdin
   awk 'NR == 1 { if ($0 != "---") exit; next }
@@ -109,10 +151,24 @@ idof() {  # "<line> <id>" from a record's front-matter on stdin
        /^id:/ { x = $0; sub(/^id:[ \t]*/, "", x); sub(/[ \t]+#.*$/, "", x)
                 gsub(/"/, "", x); print NR, x; exit }'
 }
-holders() {  # files in the space named by id $1, or with id: $1
-  find "$SPACE" -name .git -prune -o -type f -name "$1*" -print
-  find "$SPACE" -name .git -prune -o -type f -name '*.md' \
+holders() {  # files in space root $2 (default this space) named by id $1,
+             # or with id: $1
+  find "${2:-$SPACE}" -name .git -prune -o -type f -name "$1*" -print
+  find "${2:-$SPACE}" -name .git -prune -o -type f -name '*.md' \
     -exec grep -lE "^id:[[:space:]]*\"?$1\"?[[:space:]]*\$" {} +
+}
+others() {  # holders on stdin other than record $2, at space path $1; under
+            # refs/, a stored artifact <stem>.<ext> beside it is no holder
+  while IFS= read -r h; do
+    [ "$h" = "$2" ] && continue
+    case "$1" in refs/*)
+      case "$h" in
+        "${2%.md}".*.md) ;;
+        "${2%.md}".*) [ "${h%/*}" = "${2%/*}" ] && continue ;;
+      esac ;;
+    esac
+    printf '%s\n' "$h"
+  done
 }
 chg() {  # the folder of change $1, live or archived
   if [ -d "$SPACE/changes/$1" ]; then echo "$SPACE/changes/$1"; return; fi
@@ -120,18 +176,22 @@ chg() {  # the folder of change $1, live or archived
   do [ -d "$d" ] && echo "$d" && return; done
 }
 resolve() {  # true if citation $1 resolves
-  c=$1
+  c=$1; bare=1
   case "$c" in *://*) return 0 ;; esac
   c=${c%%@*}
   case "$c" in
-    core/*|lore/*|lore:*/*|proj:*/*)
-      s=${c%%/*}; c=${c#*/}
+    core/*|lore/*|tmp/*|lore:*/*|proj:*/*)
+      s=${c%%/*}; c=${c#*/}; bare=0
       if [ "$s" != "$SID" ]; then
         grep -qE "^$(printf '%s\n' "$s" | esc)\$" "$W/mayref"; return
       fi ;;
   esac
   if printf '%s\n' "$c" | grep -qE '^([a-z][a-z0-9]*-)?[0-9]{8}[A-Za-z0-9-]*$'
-  then [ -n "$(holders "$c")" ]; return; fi
+  then
+    [ -n "$(holders "$c")" ] ||
+      { [ "$bare" = 1 ] && [ -n "$PEER" ] && [ -n "$(holders "$c" "$PEER")" ]; }
+    return
+  fi
   if printf '%s\n' "$c" | grep -qE '^[a-z0-9][a-z0-9-]*/T[0-9]+$'; then
     t=${c##*/}; d=$(chg "${c%/*}")
     [ -n "$d" ] && grep -qE \
@@ -140,6 +200,27 @@ resolve() {  # true if citation $1 resolves
     return
   fi
   printf '%s\n' "$c" | grep -qE '^[a-z0-9][a-z0-9-]*$' && [ -n "$(chg "$c")" ]
+}
+text() {  # record $1, line for line: its body outside inline code and fenced
+          # blocks; with $2 = 1, also the values of the front-matter
+          # reference fields and source_path
+  awk -v v="${2:-0}" 'NR == 1 && $0 == "---" { fm = 1; print ""; next }
+       fm && $0 == "---" { fm = 0; print ""; next }
+       fm && v && /^(related|supersedes|superseded_by|discovered_in|source_path):/ {
+         x = $0; sub(/^[a-z_]+:/, "", x); sub(/[ \t]+#.*$/, "", x)
+         blk = (x ~ /^[ \t]*$/); print x; next }
+       fm && v && blk && /^[ \t]+-[ \t]/ {
+         x = $0; sub(/[ \t]+#.*$/, "", x); print x; next }
+       fm { blk = 0; print ""; next }
+       /^[ \t]*(```|~~~)/ { fence = !fence; print ""; next }
+       fence { print ""; next }
+       /^[ \t]*$/ { code = 0 }
+       { out = ""; s = $0
+         while ((i = index(s, "`")) > 0) {
+           if (!code) out = out substr(s, 1, i - 1)
+           code = !code; s = substr(s, i + 1) }
+         if (!code) out = out s
+         print out }' "$1"
 }
 refs() {  # "<line> <citation>" for each citation in record $1
   awk 'function emit(x) { gsub(/^[ \t"]+|[ \t"]+$/, "", x)
@@ -153,18 +234,7 @@ refs() {  # "<line> <citation>" for each citation in record $1
        blk && /^[ \t]+-[ \t]/ { x = $0; sub(/^[ \t]+-[ \t]+/, "", x)
                                 sub(/[ \t]+#.*$/, "", x); emit(x); next }
        { blk = 0 }' "$1"
-  awk 'NR == 1 && $0 == "---" { fm = 1; print ""; next }
-       fm { if ($0 == "---") fm = 0; print ""; next }
-       /^[ \t]*(```|~~~)/ { fence = !fence; print ""; next }
-       fence { print ""; next }
-       /^[ \t]*$/ { code = 0 }
-       { out = ""; s = $0
-         while ((i = index(s, "`")) > 0) {
-           if (!code) out = out substr(s, 1, i - 1)
-           code = !code; s = substr(s, i + 1) }
-         if (!code) out = out s
-         print out }' "$1" |
-    grep -noE "$QID" | sed -E 's/^([0-9]+):[^a-z]?/\1 /'
+  text "$1" | grep -noE "$QID" | sed -E 's/^([0-9]+):[^a-z]?/\1 /'
 }
 
 BASE=HEAD
@@ -188,8 +258,10 @@ while IFS= read -r r <&3; do
   [ -f "$f" ] || f=$SPACE/$(old "$r")
   if [ ! -f "$f" ]; then echo "no such record: $r" >&2; continue; fi
   # profile
-  n=$(grep -naE -f "$W/profile" "$f" | head -n 1 | cut -d: -f1)
-  if [ -n "$n" ]; then echo "REFUSED $r: profile line $n"; continue; fi
+  if [ "$PROF" != mesh ]; then
+    n=$(grep -naE -f "$W/profile" "$f" | head -n 1 | cut -d: -f1)
+    if [ -n "$n" ]; then echo "REFUSED $r: profile line $n"; continue; fi
+  fi
   # Test fixtures are data, not records: the profile check only.
   case "$r" in
     changes/*/tests/fixtures/*|tests/*/fixtures/*) echo "CHECKED $r"; continue ;;
@@ -200,6 +272,10 @@ while IFS= read -r r <&3; do
   n=$(refs "$f" | sort -n | while read -r ln c; do
         resolve "$c" || { echo "$ln"; break; }
       done)
+  if [ -s "$W/scratch" ]; then
+    m=$(text "$f" 1 | grep -naE -f "$W/scratch" | head -n 1 | cut -d: -f1)
+    if [ -n "$m" ] && { [ -z "$n" ] || [ "$m" -lt "$n" ]; }; then n=$m; fi
+  fi
   if [ -n "$n" ]; then echo "REFUSED $r: reference line $n"; continue; fi
   # id
   x=$(idof < "$f"); n=${x%% *}; id=${x#* }
@@ -210,6 +286,7 @@ while IFS= read -r r <&3; do
   fi
   if [ -n "$id" ]; then
     form='[a-z][a-z0-9]*-[0-9]{8}T[0-9]{4}Z-[0-9a-f]{4}'; ev=0
+    [ "$WM" = single-writer ] && form="$form|[a-z][a-z0-9]*-[0-9]{8}-[0-9]{4}"
     case "$r" in
       changes/*/evidence/*) ev=1
         form="$form|ev-[0-9]{8}T[0-9]{4}Z(-T[0-9]+[a-z])?" ;;
@@ -232,7 +309,7 @@ while IFS= read -r r <&3; do
       if [ "${o#* }" = "$id" ]; then echo "CHECKED $r"; continue; fi
     fi
     if ! printf '%s\n' "$id" | grep -qE "^($form)\$" ||
-       holders "$id" | grep -vxE "$(printf '%s\n' "$f" | esc)" | grep -q .
+       [ -n "$(holders "$id" | others "$r" "$f")" ]
     then echo "REFUSED $r: id line $n"; continue; fi
   fi
   echo "CHECKED $r"

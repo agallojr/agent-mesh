@@ -1,6 +1,6 @@
 ---
 name: space-librarian
-description: File records into a memory space (a Project Space or any other rw space) after the header-profile, reference and id checks, one commit per record, pushed to the space's main; in integrate mode, a change's renames and edits in one commit. Invoke when a librarian node files records into a space that spaces.yaml assigns to its role, when a session with no bus files a record into a space checkout, when a change's lead files its integrate update, or when someone asks to file, check or desk-run records for a space.
+description: File records into a memory space (a Project Space, core, lore or any other rw space with a librarian) after the header-profile, reference and id checks, one commit per record, pushed to the space's main; in integrate mode, a change's renames and edits in one commit. Invoke when a librarian node files records into a space that spaces.yaml assigns to its role, when a session with no bus files a record into a space checkout, when a change's lead files its integrate update, or when someone asks to file, check or desk-run records for a space.
 allowed-tools: Read, Write, Bash, Grep, Glob
 ---
 
@@ -31,6 +31,24 @@ bus.
 
 It files what it is handed. Deciding what belongs in the space, and who may
 hand it over, is the caller's job.
+
+## Core, lore and scratch
+
+- **Core and personal lore** (`spaces/core`, `spaces/lore`) are private,
+  single-writer spaces with the `mesh` header profile, filed by the mesh
+  librarian like any other space it is assigned. Their records may name
+  agents, hosts and paths, so the profile check is not run there. A new id
+  may keep the per-day counter form `<prefix>-<YYYYMMDD>-<NNNN>`. A bare id
+  cited in one also resolves in the other, when the bus mounts both. The
+  operator writes `best-practices.user.md` in core and commits it by hand;
+  this skill does not file it.
+- **Scratch** (`spaces/tmp`, `kind: scratch`) is listed `librarian: none`:
+  it has no librarian, and any agent of the mesh writes it, through the
+  `mesh-scratch` skill. This skill never files into a `librarian: none`
+  space, and the listing above never shows one. Scratch is not library:
+  what a spike yields reaches a space as a new record, filed through this
+  skill like any other, and a shareable space refuses a record that cites
+  scratch (section 1, reference).
 
 ## Inputs
 
@@ -82,21 +100,33 @@ The three checks, as the check script `check.sh` runs them:
   matches as a whole word. A hostname or credential key name inside a longer
   name joined by `-` or `_` passes. An agent id, agent name or task id joined
   that way does not, as in the bus's own `<task id>-<slug>` file names.
+  The profile check is not run in a space whose `space.yaml` has
+  `header_profile: mesh`, such as core and personal lore.
 - **reference** (Markdown records). Every citation must resolve. A citation
   is a value of a front-matter reference field (`related`, `supersedes`,
   `superseded_by`, `discovered_in`), or a qualified cross-space id
   `<space id>/<record id>` in the body outside inline code and fenced blocks,
-  where a space id is `core`, `lore`, `lore:<name>` or `proj:<name>`. A
-  trailing `@<commit>` pin is ignored. It resolves when it is:
+  where a space id is `core`, `lore`, `tmp`, `lore:<name>` or `proj:<name>`.
+  A trailing `@<commit>` pin is ignored. It resolves when it is:
   - a URL;
   - a record id held by a record in the space (in its `id:` line, or as the
-    start of its file name);
+    start of its file name). In core and in lore, a bare record id also
+    resolves when the other of the two holds it and the bus mounts it beside
+    this space: at its `spaces.yaml` path, else `spaces/<id>`;
   - a qualified id whose space is listed in `may_reference` in `space.yaml`,
     or is this space (then the rest must resolve here);
   - a change id with a folder `changes/<id>/` or
     `changes/archive/<date>-<id>/`;
   - `<change>/T<n>`, where that change's `plan.md` has task `T<n>` as a
     heading or a table row.
+
+  In a space with `header_profile: shareable`, a citation of scratch never
+  resolves. That is, outside inline code and fenced blocks, or in a
+  reference field or `source_path`: a path holding `spaces/tmp/<name>` or
+  `agent-tmp/<name>`; a qualified id `tmp/<...>`; or the scratch repo's URL,
+  with or without `.git`, as the bus's `.gitmodules` entry for `spaces/tmp`
+  gives it. The line reported is the first line that holds a failing
+  citation of either kind.
 - **id** (Markdown records). The id is the front-matter `id:`; under
   `decisions/` and `handoffs/` with no `id:` line it is the file name. A
   record with no id passes. An id already at this same path on `origin/main`
@@ -105,10 +135,14 @@ The three checks, as the check script `check.sh` runs them:
   `<category>-<YYYYMMDDTHHMMZ>-<4 hex>`, or the UTC-named form: `ev-<UTC>`,
   or `ev-<UTC>-<shard id>` for a shard (a task id and one lowercase letter),
   such as `ev-<UTC>-T19a`, under `changes/<id>/evidence/`; `<UTC>-<slug>`
-  under `decisions/` and `handoffs/`. It must not be already present: no
-  other file in the space holds it. Evidence, decisions and handoffs are one
-  file per event, so a record there whose path is already on `origin/main`
-  with other content is refused as `id`.
+  under `decisions/` and `handoffs/`. In a space with
+  `writer_model: single-writer`, it may also have the counter form
+  `<prefix>-<YYYYMMDD>-<NNNN>`, four digits, as `note-20261029-0003`. It
+  must not be already present: no other file in the space holds it. Under
+  `refs/`, a stored artifact `<id>-<slug>.<ext>` beside its companion
+  `<id>-<slug>.md` is not another holder of the companion's id. Evidence,
+  decisions and handoffs are one file per event, so a record there whose
+  path is already on `origin/main` with other content is refused as `id`.
 - **Test fixtures.** A file under `changes/*/tests/fixtures/` or
   `tests/*/fixtures/` gets the profile check only, in every mode. Fixture
   data may look like records, but it is a test's input, so its ids and
