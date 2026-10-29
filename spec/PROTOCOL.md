@@ -263,7 +263,8 @@ OLCF_PROJECT_ID=XXX123
 ### 4.3 Self-registration
 
 On every boot, before processing any task, the agent overwrites
-`agents/<AGENT_ID>.yaml`:
+`agents/<AGENT_ID>.yaml` (by script: `skills/mesh-on/mesh-register.sh <REPO>`,
+which commits that one file through `mesh-commit.sh`, §8):
 
 ```yaml
 schema_version: 1
@@ -280,11 +281,28 @@ poll_interval_sec: 300
 credentials_available: [GH_PAT_RESEARCH, OLCF_PROJECT_ID]
 registered_at: 2026-07-18T14:30:00Z
 session_started: 2026-07-18T14:30:00Z
+last_poll: 2026-07-18T14:30:00Z
 ```
 
 `credentials_available` lists key names only, derived mechanically from the
-credentials file. Rewriting on every boot doubles as a coarse liveness signal
-and catches hostname or capability drift between sessions.
+credentials file. Rewriting on every boot catches hostname or capability drift
+between sessions.
+
+Two fields carry the node's liveness:
+
+- `poll_interval_sec` is the node's poll interval in s, from
+  `POLL_INTERVAL_SEC` in its identity file.
+- `last_poll` is the UTC time, to the second, of the node's latest scan of its
+  queues. Registration writes it with the time it registers. While the node's
+  poller is live, the node rewrites it and pushes it at least once per poll
+  interval, an executor's run included, in a commit that holds only this file
+  (the scanner, `skills/mesh-on/mesh-scan-loop.sh`, does it on each scan).
+  Nothing writes it once the poller has stopped: no process that can outlive
+  the poller writes `last_poll`. A node whose `last_poll` is older than 3 poll
+  intervals has stopped polling, and any task it holds in `accepted` or
+  `running` is stuck; `mesh-check` names both
+  (`skills/mesh-check/mesh-stale.sh`). A `poll_interval_sec` that is absent is
+  read as 60 s.
 
 ### 4.4 Bootstrap guidance chain (well-known location)
 
@@ -499,9 +517,10 @@ Path: `status/<task-id>.json`. Overwritten in place by the executing agent.
 ```
 
 Status is written only at real state transitions (`accepted`, `running`,
-terminal). There is **no periodic heartbeat** — `updated` is just the timestamp
-of the last transition write, not a liveness ping. This keeps an executing node
-from churning the repo while work is in progress.
+terminal). A status file has **no periodic heartbeat** — `updated` is just the
+timestamp of the last transition write, not a liveness ping. This keeps an
+executing node from churning its status files while work is in progress. The
+node's liveness is the `last_poll` in its own `agents/<id>.yaml` (§4.3).
 
 **State machine:**
 
@@ -539,21 +558,26 @@ invariant §1.7 ("never resolve conflicts textually") applied to the claim: the
 re-derived intent against current state is "already taken, yield". A task on a
 direct inbox `tasks/<id>/` has a single consumer and never contends.
 
-**Liveness by ACK, not heartbeat.** A node proves it is alive by *acting* on its
-inbox: reading a message and writing status `accepted` is the acknowledgment. To
-check whether a specific node is still alive and listening, any participant drops a
-`query` (a ping) into that node's direct inbox (`tasks/<id>/`); the node ACKs by
-writing a `reply` into the sender's inbox within a few poll intervals, which the
-sender's own inbox scan then surfaces. Silence across several intervals implies the node
-is down. There is no timer-driven liveness signal and no idle-node writes — a
-node with an empty inbox only pulls, so mesh traffic is proportional to real
-work, not to node count. This is the design's answer to hosted-git rate limits.
+**Liveness: the `last_poll` heartbeat, and ACK.** Each live node rewrites the
+`last_poll` in its own `agents/<id>.yaml` once per poll interval and pushes it
+(§4.3): the one timer-driven write, one small commit per node per interval,
+which is what lets a node that has gone deaf be told from one that is working.
+`mesh-check` names every node whose `last_poll` is older than 3 poll intervals,
+with what it holds. A node also proves it is alive by *acting* on its inbox:
+reading a message and writing status `accepted` is the acknowledgment. To check
+whether a specific node is listening, any participant drops a `query` (a ping)
+into that node's direct inbox (`tasks/<id>/`); the node ACKs by writing a
+`reply` into the sender's inbox within a few poll intervals, which the sender's
+own inbox scan then surfaces. Claims, statuses and results stay proportional to
+real work, not to node count.
 
 **Orphan detection.** A task left in `accepted`/`running` with no terminal status
 past a generous bound (its `timeout_min`, or a multiple of the owner's
-`poll_interval_sec`) is presumed dead. Discerning this is a read-only ledger query
+`poll_interval_sec`) is presumed dead, and so is one whose owner's `last_poll` is
+older than 3 of its poll intervals. Discerning this is a read-only ledger query
 any node or operator can run — scan `status/**` for non-terminal states whose
-`updated` is stale, and report the owning `agent_id`. The mesh does not reap:
+`updated` is stale, or whose owner is not polling (`mesh-stale.sh`), and report
+the owning `agent_id`. The mesh does not reap:
 recovery is manual (restart the named node). Only the owning agent or the human may
 transition a task to `failed` — a dead agent cannot report its own death, so
 staleness is inferred, never asserted by a third party.
@@ -953,12 +977,14 @@ While it blocks, the poller is parked on that one tool call and spends zero
 inference tokens. Each re-park re-sends the poller's context, so the deadline
 sits under the 5-min prompt-cache TTL: the re-park is then a cache read, where a
 longer park would re-write the whole context at the cache-write price. An idle
-node therefore costs zero commits and near-zero tokens (one cache-read re-park
-per deadline window) — both repo traffic and token spend are
-proportional to real work, not to node-count × poll-frequency × uptime. The
-read-only `pull`/`submodule update` inside the script are ungated, so the git
-gate (which guards only add/commit/push, and only inside the Claude agent) is
-unaffected; every gated write still happens inside the poller when it wakes.
+node therefore costs near-zero tokens (one cache-read re-park per deadline
+window) and one heartbeat commit per poll interval: each scan rewrites
+`last_poll` in the node's own `agents/<id>.yaml` and pushes it through
+`mesh-commit.sh` (§4.3). Claims, statuses and results stay proportional to real
+work. The read-only `pull`/`submodule update` inside the script are ungated;
+the heartbeat is the scanner's only write, and `mesh-commit.sh` applies the git
+gate's rules to it itself (the gate guards only the commands an agent types).
+Every other bus write happens inside the poller when it wakes.
 
 ```
 boot (mesh-on, main session):
@@ -969,8 +995,10 @@ boot (mesh-on, main session):
   git -C /abs/repo pull --rebase
   git -C /abs/repo submodule update --init --recursive   (realize product/ pin)
   load guidance/CLAUDE.md chain          (base + user overlay + operating + perms)
-  write agents/<AGENT_ID>.yaml           (overwrite, includes registered_at)
-  sync                                   (add / commit / push -- see below)
+  skills/mesh-on/mesh-register.sh /abs/repo
+                                         (overwrite agents/<AGENT_ID>.yaml with
+                                         registered_at and last_poll; commit that
+                                         one file through mesh-commit.sh)
   spawn background poller subagent; return (session stays interactive)
 
 loop (poller subagent):
@@ -979,7 +1007,8 @@ loop (poller subagent):
        skills/mesh-on/mesh-scan-loop.sh /abs/repo <AGENT_ROLES> <AGENT_ID> <POLL>
      the script loops internally -- pull --rebase + submodule update --init
      --remote --recursive (a product bump on the bus takes effect here), scan
-     tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/, and
+     tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/,
+     rewrite and push last_poll in agents/<AGENT_ID>.yaml (the heartbeat), and
      sleep POLL between scans -- exiting on:
        STOP (exit 2): ~/.mesh-stop exists -> end cleanly
        WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
@@ -1004,7 +1033,7 @@ loop (poller subagent):
        and list it in the result's files: (§5.1);
        for a result-bearing task, ALSO submit a `runs` record (library.submit, §7)
        so the run's provenance outlives its swept scratch
-       (no periodic heartbeat -- status is written only at transitions)
+       (status is written only at transitions; last_poll is the heartbeat)
      query: write a reply into the SENDER'S inbox tasks/<sender-id>/ (type: reply,
        in_reply_to: <query id>); status -> done. Replies route to inboxes so the
        sender's own inbox scan senses them -- outboxes are never polled.
@@ -1020,16 +1049,42 @@ loop (poller subagent):
      the script while parked, not as an inline model-driven sleep
 ```
 
-**`sync`** is three separate commands, each with its own literal `-C /abs/repo`
-(a bare `commit`/`push` after `&&` is not a command and silently no-ops):
-`git -C /abs/repo add -A`; `git -C /abs/repo commit -m "..."`;
-`git -C /abs/repo push origin HEAD`. Skip commit/push when nothing was staged.
+**The commit rule (`sync`).** Mesh tooling commits to the bus one way:
 
-**Push conflict handling.** On rejection: `git -C /abs/repo pull --rebase`,
-re-read the current state of the file being written, re-apply intent, retry.
-Three attempts, then exponential backoff. Never `-X ours`, never `-X theirs`,
-never hand-resolve a textual conflict — the agent's job is to re-derive its
-intended write against current state.
+```
+skills/mesh-on/mesh-commit.sh <REPO> <message> <path> [<path> ...]
+```
+
+It stages exactly the paths named, each relative to `<REPO>`, and commits only
+them, so anything else modified or staged in the checkout, a submodule among
+them, stays out of the commit and stays as it was. It never records a
+submodule pin: it refuses a path that is, holds or lies inside a submodule (a
+gitlink, git mode 160000, or a `path` in `.gitmodules`), checks the commit's
+changed paths with gitlinks shown, and undoes the commit if any is not named or
+is a gitlink. It applies the git gate's allowlist and blob rule itself, failing
+closed, since the gate sees only the commands an agent types. It pushes
+`origin HEAD`, and on a rejected push runs `pull --rebase --autostash` and
+pushes again, 3 pushes at most, lifting any staged gitlink out of the index for
+the rebase; it never pushes while a commit not yet on origin changes a gitlink.
+It prints `COMMITTED <sha7>` then `PUSHED`, `NOTHING TO COMMIT`,
+`REFUSED <reason>`, or `COMMITTED <sha7>` then `PUSH FAILED` (exit 0, 0, 1, 3).
+Scripts that do their own git (`mesh-post.sh`, `email_monitor.py`) stage and
+commit only the files they wrote, by pathspec, the same way.
+
+Never stage the bus whole (a stage-all `git add`): in the bus it records each
+submodule's current checkout as its pin, and the `ignore = all` the bus sets on
+its submodules hides that from `git status` and `git show --stat`. Check a pin
+directly (`git -C /abs/repo rev-parse HEAD:<submodule>`), never through status.
+The operator's own commits that record a pin or a mount on purpose (the
+installer's first bus commit, `mesh-load`'s mount, a pin bump) are outside this
+rule.
+
+**Push conflict handling.** `mesh-commit.sh` retries a rejected push itself. If
+it still prints `PUSH FAILED`, the commit stays local and the next push from
+the checkout carries it; for a contested claim, the poller re-reads the
+upstream `status/<id>.json` and yields if another holder owns it. Never
+`-X ours`, never `-X theirs`, never hand-resolve a textual conflict — the
+agent's job is to re-derive its intended write against current state.
 
 **Role-specific duties (only if you hold the role):** the `librarian` holder drains
 the `library.submit` messages from its own role queue `tasks/roles/librarian/`,
