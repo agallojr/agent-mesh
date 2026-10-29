@@ -1,6 +1,6 @@
 ---
 name: mesh-ref
-description: Ingest one or more URLs into the mesh library as `refs` records, each with a companion summary. Research papers, slide decks, and images are RETRIEVED and stored in the bus (LFS) with a separate companion metadata/summary record; general web pages are kept as a pointer-only record with the summary in its body. If you hold the `librarian` role the records are written to `memory/refs/` directly; otherwise a `library.submit` is posted for the librarian to promote. Use when a human (operator or node) wants to file a web resource into durable memory with a summary. Each URL in a list is handled separately.
+description: Ingest one or more URLs into the mesh library as `refs` records, each with a companion summary. Research papers, slide decks, and images are RETRIEVED and stored in core (LFS) with a separate companion metadata/summary record; general web pages are kept as a pointer-only record with the summary in its body. If you hold the `librarian` role the records are written to `spaces/core/refs/` directly; otherwise a `library.submit` is posted for the librarian to promote. Use when a human (operator or node) wants to file a web resource into durable knowledge with a summary. Each URL in a list is handled separately.
 allowed-tools: Read, Write, Bash, Glob, Grep, WebFetch, Agent
 ---
 
@@ -10,7 +10,7 @@ Turn each URL into a durable `refs` record (PROTOCOL §7). Two shapes, chosen pe
 URL by whether the source is worth storing:
 
 - **Retrieve & store** — research papers (PDF), slide decks, images, and similar
-  fixed documents worth preserving. Download the artifact into `memory/refs/`
+  fixed documents worth preserving. Download the artifact into `spaces/core/refs/`
   (LFS-tracked) and write a **separate companion `.md`** record — metadata plus the
   summary — because the artifact itself is binary and cannot carry front-matter.
 - **Pointer-only** — a general web page (blog, docs site, news). Do NOT download it;
@@ -20,8 +20,8 @@ URL by whether the source is worth storing:
 Given several URLs, handle each independently — one record (or record + artifact)
 per URL, its own id and summary; a failure on one does not abort the rest.
 
-`memory/**` has a single writer, the `librarian` role, so there are two execution
-paths (Step 1): hold `librarian` → write to `memory/refs/` directly; otherwise →
+Core (`spaces/core/**`) has a single writer, the `librarian` role, so there are two execution
+paths (Step 1): hold `librarian` → write to `spaces/core/refs/` directly; otherwise →
 post a `library.submit` and let the librarian promote it.
 
 ## Inputs
@@ -41,7 +41,7 @@ test -f ~/.agent-identity.env && cat ~/.agent-identity.env || echo "NO_IDENTITY"
   submit path.
 - **Operator interface** (no identity): `discovered_by` is the reserved operator id
   (`op-main`/`op-phone`); repo is the bus clone in this session. An operator never
-  holds `librarian`, so always the submit path (operators may not write `memory/`).
+  holds `librarian`, so always the submit path (operators may not write core).
 
 Confirm git-lfs is available if you will store an artifact: `git lfs version`. If it
 is missing, do not store raw — fall back to a pointer-only record and note it.
@@ -65,14 +65,14 @@ a match key and grep the `source_path:` lines of the existing companion records:
   path segment, and any `vN` suffix), then match that id anywhere in a stored
   `source_path` (records store the `…/pdf/<id>` download URL, so an `abs`/`html`
   URL you were handed still matches the same paper):
-  `grep -rniE "arxiv\.org/(abs|pdf|html)/<id>" /abs/repo/memory/refs/*.md`
+  `grep -rniE "arxiv\.org/(abs|pdf|html)/<id>" /abs/repo/spaces/core/refs/*.md`
 - **Everything else** — match the exact URL against `source_path`:
-  `grep -rnF "source_path: <url>" /abs/repo/memory/refs/*.md`
+  `grep -rnF "source_path: <url>" /abs/repo/spaces/core/refs/*.md`
 
 A hit means it is already stored: read that record, then SKIP this URL — do not
 fetch, summarize, assign an id, or write anything. Record it as "already stored:
 `<id>`" for the Step 7 report and move on to the next URL. This runs on BOTH paths;
-even a non-librarian operator can read `memory/refs/` (the session bus clone is a
+even a non-librarian operator can read `spaces/core/refs/` (the session bus clone is a
 full clone), so the grep works before deciding to submit. On the submit path also
 scan `tasks/roles/librarian/` for an unpromoted `library.submit` naming the same
 URL and treat that as already-handled too. No hit → proceed to Step 3.
@@ -114,7 +114,7 @@ minting a duplicate.
    `facet:value` tags for any pertinent orthogonal dimension — `org:` (institution
    behind the source, e.g. `org:ornl`, `org:ibm`) and `geo:` (geographic context,
    `place-CC`, e.g. `geo:oak-ridge-us`). Normalize every tag against
-   `memory/refs/TAGS.md` before writing: lowercase kebab-case, American `-ize`
+   `spaces/core/refs/TAGS.md` before writing: lowercase kebab-case, American `-ize`
    spelling, prefer the canonical token over a listed alias, and resolve org/geo
    values through that file's tables so `ORNL`/`Oak Ridge` land on one token. Add a
    new org/geo/topic to `TAGS.md` when the source introduces one not yet listed
@@ -189,8 +189,8 @@ commit) can stay with you. If no Opus model is reachable, write the prose yourse
 to this spec and set `authored_by` truthfully so the record can be redone later.
 
 **Retrieve case** — two files, shared `id` and `slug`:
-- artifact `memory/refs/<id>-<slug>.<ext>` (the downloaded file)
-- companion `memory/refs/<id>-<slug>.md` with front-matter:
+- artifact `spaces/core/refs/<id>-<slug>.<ext>` (the downloaded file)
+- companion `spaces/core/refs/<id>-<slug>.md` with front-matter:
 
 ```markdown
 ---
@@ -200,7 +200,7 @@ title: <title>
 category: refs
 provenance: human
 contexts: []
-tags: [<topical keywords>, <org:… geo:… facets when pertinent>]  # normalize vs memory/refs/TAGS.md
+tags: [<topical keywords>, <org:… geo:… facets when pertinent>]  # normalize vs spaces/core/refs/TAGS.md
 discovered_by: <AGENT_ID or operator id>
 authored_by: <exact model id that wrote the summary, e.g. claude-opus-5-5>
 discovered_on: <UTC date>
@@ -212,7 +212,7 @@ retention: permanent-until-superseded
 ---
 ```
 
-**Pointer-only case** — one file `memory/refs/<id>-<slug>.md`, same header minus
+**Pointer-only case** — one file `spaces/core/refs/<id>-<slug>.md`, same header minus
 `artifact` and `source_sha256`, `source_path` = the URL.
 
 **`authored_by` — record which model wrote the prose.** `discovered_by` names the
@@ -230,10 +230,10 @@ the authoring model is unknown (a legacy record), omit the field.
 
 **Direct-write (you hold `librarian`):**
 - Assign `id` = `ref-<UTC-YYYYMMDD>-<NNNN>` — next unused 4-digit seq for that date;
-  list `memory/refs/` and scan `ref-<date>-*` filenames (id is the filename prefix,
+  list `spaces/core/refs/` and scan `ref-<date>-*` filenames (id is the filename prefix,
   §7), max + 1 (`0001` if none today).
 - Retrieve case: download the artifact from the **download URL** resolved in Step 3
-  (`curl -L -o memory/refs/<id>-<slug>.<ext> <download-url>` — for arXiv this is
+  (`curl -L -o spaces/core/refs/<id>-<slug>.<ext> <download-url>` — for arXiv this is
   `https://arxiv.org/pdf/<id>`, never the abs page), `sha256sum` it into
   `source_sha256`, then read the stored file to write the deep summary and the
   companion `.md`. Set `source_path` to the download URL actually fetched.
@@ -243,24 +243,26 @@ the authoring model is unknown (a legacy record), omit the field.
 - Write `tasks/roles/librarian/<UTC-YYYYMMDDTHHMM>-<seq>-ref-<slug>.md` as a
   `library.submit`, `category: refs`, with the record header + summary inline and,
   for a retrieve case, `source_path` plus a `retrieve: true` flag so the librarian
-  fetches and stores the artifact on promotion (it, not you, writes `memory/`).
+  fetches and stores the artifact on promotion (it, not you, writes core).
   Leave `id` unset (the librarian assigns it). Write no `status/` file.
 
 ## Step 6 — commit (plain text) and push
 
-Commit through the mesh's commit script, `mesh-commit.sh` in the `mesh-on`
-skill (in the bus, `/abs/repo/product/skills/mesh-on/mesh-commit.sh`), with
-the literal repo path, a plain-text message, and every file this run wrote,
-each relative to the repo: the artifact and its companion together, and
-`memory/refs/TAGS.md` if you added a tag to it.
+**Direct-write path (you hold `librarian`):** file the records through
+`space-librarian` in the core space's repo, `/abs/repo/spaces/core`, with
+record paths relative to that repo (`refs/<file>`): the artifact and its
+companion together, and `refs/TAGS.md` if you added a tag to it. It commits
+each record in core and pushes core's `main`.
+
+**Submit path:** commit the queue message through the mesh's commit script,
+`mesh-commit.sh` in the `mesh-on` skill (in the bus,
+`/abs/repo/product/skills/mesh-on/mesh-commit.sh`), with the literal repo
+path, a plain-text message, and the message file, relative to the bus:
 
 ```bash
 /abs/repo/product/skills/mesh-on/mesh-commit.sh /abs/repo \
-  "ingest refs <n> url(s) into library" memory/refs/<file> [memory/refs/<file> ...]
+  "submit refs library.submit <n> url(s)" tasks/roles/librarian/<file>
 ```
-
-(Submit path: name the queue message, `tasks/roles/librarian/<file>`; message
-e.g. `submit refs library.submit <n> url(s)`.)
 
 It stages and commits only the files named, never a submodule pin, applies the
 git gate's rules itself, and pushes, retrying a rejected push on its own. Its

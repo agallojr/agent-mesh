@@ -1,5 +1,7 @@
 # Upgrade bus layout 0 -> 1
 
+> Historical: written before the memory split; its memory/ paths are not current.
+
 An agent executes this note to bring an **unstamped** bus (layout 0: no
 `BUS_LAYOUT` file) up to layout 1. It is idempotent — every step checks before
 it writes, so re-running it is safe and a no-op once the bus is already at 1.

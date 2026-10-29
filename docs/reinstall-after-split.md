@@ -1,5 +1,7 @@
 # Reinstall a Node After the Bus/Product Split
 
+> Historical: written before the memory split; its memory/ paths are not current.
+
 For operators (or a node's own Claude agent) migrating an EXISTING worker
 node that was cloned before the mesh was split into two repos. Use this when
 `git pull` on an old clone conflicts, `product/` is missing, or the top-level

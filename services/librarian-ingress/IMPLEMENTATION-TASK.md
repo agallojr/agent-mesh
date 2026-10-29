@@ -6,14 +6,14 @@ so the Android phone (personal account) can hand notes to the librarian.
 ## Deliverable
 A deployed Cloudflare Worker at a stable HTTPS URL whose `/mcp` endpoint answers
 MCP over Streamable HTTP and, on `note_to_librarian`, commits a `library.submit`
-addressed `role:librarian` into `agent-mesh-bus` (in `tasks/roles/librarian/`, the
+addressed `role:librarian` into `agent-mesh-<mesh>` (in `tasks/roles/librarian/`, the
 librarian's role queue — the librarian drains it, it is not claimed as a task).
 
 ## Steps
 1. Land these files into the repo (recommended: a new `services/librarian-ingress/`
    directory in `agent-mesh`, or its own repo under the same owner). Do not put
    the Worker in a place that mixes it with the node skills.
-2. Create a **fine-grained GitHub PAT**: repo access = **agent-mesh-bus only**,
+2. Create a **fine-grained GitHub PAT**: repo access = **agent-mesh-<mesh> only**,
    Contents: Read and write. No other permissions.
 3. Generate a connector token: `openssl rand -hex 32`.
 4. `npm install` then set secrets:

@@ -61,7 +61,7 @@ convention.
 
 ## Node checklist to launch (including an extra test agent)
 
-1. Clone the **bus** (`agent-mesh-bus`); note its absolute path as `REPO_PATH`.
+1. Clone the **bus** (`agent-mesh-<mesh>`); note its absolute path as `REPO_PATH`.
    Then `git -C "$REPO_PATH" submodule update --init --recursive` to check out
    the pinned `product/` code.
 2. Install the git gate on this node: copy `product/hooks/git-gate.py` to

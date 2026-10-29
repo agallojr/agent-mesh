@@ -20,7 +20,9 @@ restate it.
   `<REPO_PATH>/lenses/` (overlay wins on name). `all` means every one.
   Unknown name: list the available ones and stop.
 - Targets to absolute paths; confirm each exists.
-- Output dir: `<REPO_PATH>/agent-tmp/lens/<YYYYMMDDTHHMMZ>-<target-slug>/`.
+- Output dir: `<REPO_PATH>/spaces/tmp/lens/<YYYYMMDDTHHMMZ>-<target-slug>/`, under
+  the `lens` spike of the mesh's scratch space. Save or end the spike through the
+  `mesh-scratch` skill; write nothing else into `spaces/tmp`.
 
 ## 2. Fan out
 

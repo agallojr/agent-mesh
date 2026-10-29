@@ -103,7 +103,8 @@ unparseable. Keep commit messages to plain words and simple punctuation:
   direct inboxes `tasks/<their-id>/` (to send work).
 - You must NEVER write another agent's `agents/*.yaml`, a status file for a task
   you did not claim, or your own direct inbox `tasks/«AGENT_ID»/`.
-- `memory/lore/**` is writable only if you hold the `librarian` role; `_archive/**`
+- `spaces/core/**` and `spaces/lore/**` are writable only if you hold the `librarian`
+  role (filed through `space-librarian`); `_archive/**`
   only if you hold `archiver`; a `workflows/<id>.yaml` record only for a workflow
   YOU originated. Hold none of those roles and you write none of those paths.
 - `spaces.yaml`, `.gitmodules` and the gitlinks under `spaces/` are the
@@ -189,7 +190,7 @@ until stop (see "Stopping" below):
      now emits these as a wake trigger (once per submit) so a queue holding only
      submits still wakes you; do NOT claim it or write a status file — just run
      your librarian drain in the role-duties step below, which folds it (and any
-     other pending submits) into `memory/`. If you do NOT hold `librarian`, the
+     other pending submits) into core and lore. If you do NOT hold `librarian`, the
      scanner never emits these to you; ignore any that appear.
 
    The scanner already filtered to claimable tasks, fresh replies, and undrained
@@ -230,9 +231,9 @@ commit rule"). The paths to name, step by step:
 | claim, `running`, `blocked`, terminal status | `status/<id>.json` |
 | query reply (4a) | the reply file `tasks/<sender-id>/<file>` and `status/<id>.json` |
 | result (4e) | `status/<id>.json`, `outbox/«AGENT_ID»/<id>-result.md`, and `outbox/«AGENT_ID»/<id>-files` when files were published |
-| runs record, library submission (4e2, 4f) | the new `tasks/roles/librarian/<file>`, or, as librarian, the new `memory/<category>/<file>` |
+| runs record, library submission (4e2, 4f) | the new `tasks/roles/librarian/<file>`, or, as librarian, the new `spaces/core/<category>/<file>` or `spaces/lore/lore/<file>` |
 | workflow step (4¾) | the task file it originates and `workflows/<id>.yaml` |
-| librarian drain | each `memory/<category>/<file>` written, with any stored artifact |
+| librarian drain | each `spaces/core/<category>/<file>` or `spaces/lore/lore/<file>` written, with any stored artifact |
 | archiver sweep | each path moved, at its old place and its new one under `_archive/` |
 | layout upgrade | each path the note's bus steps wrote or removed, and `BUS_LAYOUT` |
 
@@ -381,13 +382,13 @@ commit rule"). The paths to name, step by step:
       UTC, `outcome`, a one-line result (numbers with units), artifact pointers
       (with `sha256` for fixed blobs). Status and outbox are scratch and get swept;
       the `runs` record is the durable audit trail, so make it stand alone. If YOU
-      hold `librarian`, write it into `memory/runs/` directly instead of submitting.
+      hold `librarian`, write it into `spaces/core/runs/` directly instead of submitting.
    f. If the executor surfaced a durable learning, drop a `library.submit` message
       into `tasks/roles/librarian/`, tagged with its `category` (`lore`, `notes`,
       `refs`, `workflows`, `runs`) and the common record header (the `librarian`
-      holder drains and promotes it into `memory/<category>/`). It is a submission,
+      holder drains and promotes it into `spaces/core/<category>/`, or `spaces/lore/lore/` for lore). It is a submission,
       not a task: write no status file for it. If YOU hold `librarian`, write it
-      into `memory/` directly instead of self-submitting.
+      into core or lore directly instead of self-submitting.
 
 4½. **Surface any `reply` messages in your inbox — via SendMessage, not your
    transcript.** Under the synchronous-park model you never end your turn, so
@@ -459,11 +460,12 @@ your operating rules (autonomy, coding conventions, credential-name-only handlin
 you inherit nothing from the poller, so load them before doing anything. Then recall
 the library before executing (PROTOCOL §7, agent-operating step 4a): you get no
 SessionStart lore catalog because you are a sub-subagent, so grep
-`«REPO»/memory/lore/*.md` front-matter yourself for records whose `contexts` include
+`«REPO»/spaces/lore/lore/*.md` front-matter yourself for records whose `contexts` include
 `«AGENT_CONTEXT»` OR are empty (universal), and whose `tags` intersect this task's
 subject; read the matches before acting and cite any lore id you relied on in your
 result. Then: you are executing one mesh task. Do the work. Do NOT touch git or
-status files — the poller owns those. When you wait on a long-running command or
+status files — the poller owns those — and write no scratch (`spaces/tmp`): an
+executor returns its work in its result. When you wait on a long-running command or
 job, wait in synchronous calls of at most 4 min each (a loop that checks the
 job and gives up after 240 s), never one long blocking call: after 5 min with no
 turn the prompt cache expires, and your next turn re-writes your whole context
@@ -512,11 +514,12 @@ conflict.
 
 If you hold **`librarian`**: each cycle drain the `library.submit` messages from your
 own role queue `tasks/roles/librarian/` — for each, dedupe, validate its `category`
-header, assign the id, and write `memory/<category>/<id>-<slug>.md` under one of the
+header, assign the id, and write `spaces/core/<category>/<id>-<slug>.md` (lore: `spaces/lore/lore/<id>-<slug>.md`),
+filing each record through `space-librarian` in that space's repo, under one of the
 §7 categories (`lore`, `notes`, `refs`, `workflows`, `runs`). The library keeps NO index
 file — do not create one; the records are self-describing. Write NO status file for a submission (it is
-drained, never claimed); the `memory/` record is its only outcome. You are the sole
-writer of ALL of `memory/**`. Records are small text; heavy payloads
+drained, never claimed); the core or lore record is its only outcome. You are the sole
+writer of ALL of `spaces/core/**` and `spaces/lore/**`. Records are small text; heavy payloads
 stay outside and are referenced by pointer. Re-verify stale lore. An empty queue is
 normal, not a fault. If you hold **`archiver`**: run the retention sweep per
 PROTOCOL.md §9 — sweep each aged task as a unit (message + terminal
@@ -529,7 +532,7 @@ roles and you skip that duty entirely.
 
 If you hold **`email-monitor`** (single-holder): watch the ingress mailbox and
 turn authenticated mail into `library.submit` messages for the librarian. You
-NEVER write `memory/` — you are an ordinary producer, like any node submitting a
+NEVER write core or lore — you are an ordinary producer, like any node submitting a
 learning. Full design: `product/spec/librarian-email-ingress.md`.
 
 **Run the tested helper — do NOT hand-implement this duty.** The listener logic

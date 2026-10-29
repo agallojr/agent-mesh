@@ -1,5 +1,7 @@
 # Agent Mesh — Separating the Product from the Data
 
+> Historical: written before the memory split; its memory/ paths are not current.
+
 **Design document · draft v5 · 2026-07-20**
 
 > **Status: implemented.** The split described here has been executed. `agent-mesh`

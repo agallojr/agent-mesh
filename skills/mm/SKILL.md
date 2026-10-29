@@ -31,7 +31,7 @@ in), then Read both files in full and treat them as binding. They are the
 single source; do not restate rules here.
 
 - `<REPO_PATH>/product/guidance/best-practices.base.md`
-- `<REPO_PATH>/memory/best-practices.user.md` (may be absent — skip if so)
+- `<REPO_PATH>/spaces/core/best-practices.user.md` (may be absent — skip if so)
 
 ## 2. You are being watched — no bullshit
 
@@ -89,7 +89,7 @@ literal bus root resolved in step 1:
 > by the same guidance. First, reload the guidance stack by reading these two
 > files in full and treating them as binding:
 > - {REPO_PATH}/product/guidance/best-practices.base.md
-> - {REPO_PATH}/memory/best-practices.user.md (skip if absent)
+> - {REPO_PATH}/spaces/core/best-practices.user.md (skip if absent)
 >
 > You are given (a) the user's request and (b) the result the primary agent
 > produced. Judge whether the result actually satisfies the request, and grade

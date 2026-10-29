@@ -32,7 +32,7 @@ hardcode a machine name; read the ids.
 |---|---|
 | new files in `tasks/roles/<role>/` (requests to a role) | any `status/**` |
 | new files in a node's direct inbox `tasks/<id>/` (to ping it) | any `agents/*.yaml` |
-| (nothing else) | `memory/lore/**`, `_archive/**`, `workflows/**` |
+| (nothing else) | `spaces/core/**`, `spaces/lore/**`, `_archive/**`, `workflows/**` |
 |  | any existing file (messages are immutable once pushed) |
 
 You only ever ADD a new, uniquely-named file to a queue. Because every message is a
@@ -47,7 +47,7 @@ resolves. This is the same property that lets several writers share `main`.
    balks -- an interface has nothing local to lose).
 2. `git -C <repo> log --stat <since>..HEAD`, where `<since>` is a SHA you paste
    or a time window (`--since=2.hours`).
-3. Read the changed files under `status/ outbox/ tasks/ agents/ memory/lore/`
+3. Read the changed files under `status/ outbox/ tasks/ agents/` and the new records in `spaces/lore/lore/`
    and summarize what happened: task outcomes, replies, new nodes, lore, sweeps.
 
 The ledger is the source of truth. You reconstruct status from git history, not
@@ -86,9 +86,9 @@ and never write status for it.
 
 To capture a web resource as durable memory, the `mesh-ref` skill takes one or more
 URLs, fetches and summarizes each, and files each as a `refs` record. A research
-paper, deck, or image is retrieved and stored in the bus (LFS) with a companion
+paper, deck, or image is retrieved and stored in core (LFS) with a companion
 metadata/summary record; a general web page is kept pointer-only with the summary
-in its body. Because an operator may not write `memory/`, the skill posts a
+in its body. Because an operator may not write core, the skill posts a
 `library.submit` of `category: refs` into `tasks/roles/librarian/` (with a
 `retrieve: true` flag for artifacts to store); the `librarian` holder promotes it —
 fetching and storing the artifact for a retrieve case — on its next cycle, and you

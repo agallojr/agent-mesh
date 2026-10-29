@@ -120,8 +120,14 @@ judgment is why this is a skill and not a grep. Buckets, in order:
    is a node's heartbeat, not news: do not report it (check with
    `git -C /abs/repo diff <BASE>..HEAD -- agents/<id>.yaml`). Liveness is
    covered by `Nodes not polling` above.
-6. **Library / lore** — `memory/**`. New or updated durable knowledge (the librarian's
-   output); name the record and its category.
+6. **Library / lore** — `spaces/core/**` and `spaces/lore/**`. The bus does not
+   track them (they are space checkouts), so read each one's own history: pull it
+   (`git -C /abs/repo/spaces/core pull --ff-only -q`, likewise `spaces/lore`), then
+   list the records added or changed since the watermark's commit time with
+   `git -C /abs/repo/spaces/core log --name-status --after=<BASE commit time>`
+   (likewise `spaces/lore`). New or updated durable knowledge (the librarian's
+   output); name the record and its category. A space that is not mounted is
+   skipped.
 
 An empty bucket is normal — say "none" and move on. If the whole window is empty, say so
 plainly: the mesh pushes nothing to you, so silence means no activity, not a fault.

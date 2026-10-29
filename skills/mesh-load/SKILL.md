@@ -135,7 +135,7 @@ done
 ```
 
 From now on the space is in this session's search scope: "consult the
-library" covers its records as well as `memory/`, by the same grep over
+library" covers its records as well as core and lore, by the same grep over
 front-matter. Tell the user the space is loaded, and that it is read-only
 here. Anything to file in it goes to the space's librarian.
 

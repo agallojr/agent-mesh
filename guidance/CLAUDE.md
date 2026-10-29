@@ -11,7 +11,7 @@ the bus's own `guidance/CLAUDE.md` (at the bus root, generated at install time)
 
 ```
 @product/guidance/best-practices.base.md
-@memory/best-practices.user.md            <- the bus's private overlay (may be absent)
+@../spaces/core/best-practices.user.md   <- the bus's private overlay, in core (may be absent)
 @product/guidance/agent-operating.md
 @product/guidance/permissions.md
 ```

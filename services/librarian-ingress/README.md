@@ -3,17 +3,17 @@
 A remote **MCP server** (Cloudflare Worker) that lets the **Android phone on the
 personal Claude account** hand a small document to the mesh **librarian**. It
 exposes one tool, `note_to_librarian`, and writes a `library.submit` addressed to
-`role:librarian` into the **agent-mesh-bus** ledger via the GitHub contents API.
+`role:librarian` into the **agent-mesh-<mesh>** ledger via the GitHub contents API.
 The submission rides the librarian's ordinary role queue (`tasks/roles/librarian/`);
 the librarian drains it — it is never claimed as a task — and files it into
-`memory/<category>/` on its next poll (see `product/spec/PROTOCOL.md` §5, §7).
+`spaces/core/<category>/` (or `spaces/lore/lore/` for lore) on its next poll (see `product/spec/PROTOCOL.md` §5, §7).
 
 It is the single privileged writer. The phone holds no git credential and is not
 a mesh node — it only calls a tool. Curation into Research Notes stays behind the
 librarian; this server only fills the librarian's queue.
 
 ```
-phone ──note_to_librarian()──▶ this Worker ──GitHub API──▶ agent-mesh-bus:
+phone ──note_to_librarian()──▶ this Worker ──GitHub API──▶ agent-mesh-<mesh>:
                                                             tasks/roles/librarian/<id>-<slug>.md
                                                                     │ polled
                                                             librarian node ──▶ Research Notes
@@ -22,7 +22,7 @@ phone ──note_to_librarian()──▶ this Worker ──GitHub API──▶ a
 ## Prerequisites
 
 - A Cloudflare account with Workers, and `wrangler` (`npm i`).
-- A **fine-grained GitHub PAT**: repository access = **agent-mesh-bus only**,
+- A **fine-grained GitHub PAT**: repository access = **agent-mesh-<mesh> only**,
   permission **Contents: Read and write**. Nothing else.
 - A long random **connector token** (e.g. `openssl rand -hex 32`).
 - A **personal Claude plan that supports custom connectors** (Pro/Max). If your
@@ -62,7 +62,7 @@ curl -s $URL -H "authorization: Bearer $TOK" -H 'content-type: application/json'
 curl -s $URL -H "authorization: Bearer $TOK" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 
-# post a real note (creates a commit in agent-mesh-bus)
+# post a real note (creates a commit in agent-mesh-<mesh>)
 curl -s $URL -H "authorization: Bearer $TOK" -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"note_to_librarian","arguments":{"title":"Smoke test","body":"hello from curl","tags":["test"]}}}'
 ```
@@ -90,11 +90,11 @@ like *"librarian, keep this: …"* and Claude calls `note_to_librarian`.
 | `CONNECTOR_TOKEN` | secret | — | Bearer token the phone presents. |
 | `GITHUB_TOKEN` | secret | — | Fine-grained PAT, bus repo, contents:write. |
 | `BUS_OWNER` | var | — (required) | Owner of the bus repo; set in `wrangler.toml` before deploy. |
-| `BUS_REPO` | var | — (required) | Bus repo name (e.g. `agent-mesh-bus-<mesh>`); set before deploy. |
+| `BUS_REPO` | var | — (required) | Bus repo name (e.g. `agent-mesh-<mesh>`); set before deploy. |
 | `BUS_BRANCH` | var | `main` | Branch to commit to. |
 | `LIBRARIAN_ROLE` | var | `librarian` | Role queue: `tasks/roles/<role>/`. |
 | `SENDER_ID` | var | `op-phone` | `from:` id on messages. |
-| `DEFAULT_CATEGORY` | var | `lore` | `memory/<category>/` used when a call omits `category`. |
+| `DEFAULT_CATEGORY` | var | `lore` | `spaces/core/<category>/` (lore: `spaces/lore/lore/`) used when a call omits `category`. |
 | `MAX_BODY_BYTES` | var | `65536` | Reject bodies larger than this. |
 | `IDEMPOTENCY` | KV (optional) | — | Enables `idempotency_key` dedupe. |
 
@@ -109,7 +109,7 @@ like *"librarian, keep this: …"* and Claude calls `note_to_librarian`.
 - **Writes only the bus**, never Research Notes — the librarian is the gate.
 - **`library.submit`, not `task.request`.** The message rides the librarian's role
   queue but is drained, not claimed: the Worker writes no `status/` file and the
-  librarian produces no outbox result — the `memory/<category>/` record is the
+  librarian produces no outbox result — the core or lore record is the
   outcome. `category` is a tool argument (default `DEFAULT_CATEGORY`); the library
   category set is open.
 - The librarian's task-completion/ack convention is unchanged and lives on the

@@ -3,10 +3,10 @@
  *
  * A remote MCP server (Cloudflare Worker) exposing a single tool,
  * `note_to_librarian`, that writes a `library.submit` message addressed to
- * `role:librarian` into the agent-mesh-bus ledger via the GitHub contents API.
+ * `role:librarian` into the agent-mesh-<mesh> ledger via the GitHub contents API.
  * The message lands in the librarian's ordinary role queue
  * (`tasks/roles/librarian/`); the librarian drains it (it is never claimed) and
- * files it into `memory/<category>/` on its next poll. See product/spec/PROTOCOL.md
+ * files it into `spaces/core/<category>/` (lore: `spaces/lore/lore/`) on its next poll. See product/spec/PROTOCOL.md
  * §5 and §7 (one queue per role; the `type` field distinguishes a claimable task
  * from a drain-and-curate submission).
  *

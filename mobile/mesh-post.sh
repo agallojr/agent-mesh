@@ -6,7 +6,7 @@
 # operator-specific defaults). BRANCH defaults to main.
 #
 # usage:
-#   GH_BUS_OWNER=you GH_BUS_REPO=agent-mesh-bus-mymesh \
+#   GH_BUS_OWNER=you GH_BUS_REPO=agent-mesh-mymesh \
 #   mesh-post --to role:<role>|<node-id> [--type task.request|query] \
 #             [--slug kebab-summary] [--priority low|normal|high] [--from op-phone] < body.md
 #

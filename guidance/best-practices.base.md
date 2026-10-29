@@ -2,7 +2,7 @@
 
 Universal agent + coding conventions that ship with the mesh product.
 Deployment-specific rules live in the bus overlay
-(`memory/best-practices.user.md`) and are layered on top by the bus's
+(`spaces/core/best-practices.user.md`) and are layered on top by the bus's
 `guidance/CLAUDE.md`. This file is the single source for the base rules — each
 is stated once; rely on it rather than looking for a reinforcing copy.
 
@@ -104,8 +104,8 @@ them. When in doubt on one of *these*, ask. For anything else, act.
 ## Mesh & library
 
 - **Consult the library before you act — not just when the poller tells you to.**
-  The mesh library (`memory/` — `lore/`, `runs/`, `notes/`, `refs/`) is written to
-  be read. Before a task, build, environment setup, or anything with a known
+  The mesh library (`spaces/lore/lore/`, `spaces/core/runs/`, `spaces/core/notes/`,
+  `spaces/core/refs/`) is written to be read. Before a task, build, environment setup, or anything with a known
   failure surface, grep it for what's already known: `lore/` for verified gotchas,
   `runs/` for whether this was already done and how it turned out, `notes/` for
   design context. Match on record front-matter — `contexts` (does it hold in your
@@ -119,15 +119,16 @@ them. When in doubt on one of *these*, ask. For anything else, act.
   start right away — spawn a subagent and begin now, rather than dropping a
   `library.submit` for the poller to drain on some later cycle. The batch queue +
   poller path is for unattended nodes. If this node holds the `librarian` role, the
-  subagent writes into `memory/<category>/` directly (no self-submission);
+  subagent writes into `spaces/core/<category>/` or `spaces/lore/lore/` directly, filing
+  through `space-librarian` (no self-submission);
   otherwise it posts the submission into `tasks/roles/librarian/` immediately.
 - **A configured mesh node obeys mesh conventions continuously.** If this machine
   is set up as a mesh node (it has `~/.agent-identity.env` and the mesh skills), the
   mesh best-practices govern its conduct at all times — interactive or unattended,
   whether or not the `mesh-on` poller is running. The poller only claims and
   dispatches queued work; it is not the source of the conventions. So a `librarian`
-  node behaves as librarian in a live session too (file promptly, write `memory/`
-  directly, keep the categories clean); an `archiver` respects the sweep boundary;
+  node behaves as librarian in a live session too (file promptly, write core
+  and lore directly, keep the categories clean); an `archiver` respects the sweep boundary;
   every node consults the library and honors single-writer discipline. "The poller
   isn't on" is not license to drop mesh discipline — being a node is a standing
   property of the machine, not a mode you toggle.

@@ -23,7 +23,7 @@ that flag; the hook and the mm skill hold the actual protocol.
    root as `REPO_PATH` from `~/.agent-identity.env` (fall back to the bus clone
    this session is working in):
    - `<REPO_PATH>/product/guidance/best-practices.base.md`
-   - `<REPO_PATH>/memory/best-practices.user.md` (may be absent — skip if so)
+   - `<REPO_PATH>/spaces/core/best-practices.user.md` (may be absent — skip if so)
 
 2. Write the per-session flag keyed by the session id. The session id is in the
    `CLAUDE_CODE_SESSION_ID` env var (verified present to the Bash tool):

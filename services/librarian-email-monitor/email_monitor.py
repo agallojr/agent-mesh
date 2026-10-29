@@ -4,7 +4,7 @@ Runnable form of the email-monitor role duty (spec/librarian-email-ingress.md).
 Per cycle: list unread mail under the ingress label, validate each (DKIM/DMARC +
 sender allowlist + shared secret, constant-time), strip the secret, and either
 post a sanitized `library.submit` onto the bus (accept) or a metadata-only reject
-audit (reject) — then label + mark the mail read. It NEVER writes memory/; the
+audit (reject) — then label + mark the mail read. It NEVER writes core or lore; the
 librarian drains what it posts.
 
 Config comes from ~/.agent-identity.env (non-secret) and ~/.agent-credentials.env
