@@ -22,7 +22,8 @@ think.
 is cheap only while the prompt cache still holds it. The cache expires 5 min
 after its last use. A re-park inside that window is a cache read; one after it
 re-writes your whole context at the cache-write price, which is more than 10x a
-read. On genode a 9-min park cost about $1 per idle wake. Two things follow:
+read. A park longer than the cache's life therefore pays that write on every
+idle wake, and for a large context the cost adds up fast. Two things follow:
 never lengthen the deadline past ~4 min, and keep your context small, since
 every re-park pays for all of it (see "Keep your context small").
 
