@@ -14,9 +14,11 @@ idle deadline**, exiting when it finds a claimable task / a fresh reply, when
 `~/.mesh-stop` appears, or with `IDLE` at its idle deadline (~4 min; pass a
 `timeout` of 600000 ms on the call anyway). While it blocks you are parked on
 that one tool call and spend ZERO tokens. On `IDLE` you immediately launch it
-again — a one-tool-call re-park every ~4 min and no commits. This is what makes
-an idle node cost almost nothing — you wake to act (or to re-park), never to
-think.
+again — a one-tool-call re-park every ~4 min. This is what makes an idle node
+cost almost nothing — you wake to act (or to re-park), never to think. Each
+scan also rewrites `last_poll` in this node's own `agents/«AGENT_ID».yaml` and
+pushes it (one small heartbeat commit per poll interval), so a node whose
+poller has stopped is seen on the bus; you write nothing for it.
 
 **Why the deadline is ~4 min:** each re-park re-sends your whole context, and it
 is cheap only while the prompt cache still holds it. The cache expires 5 min
@@ -123,10 +125,10 @@ until stop (see "Stopping" below):
    your roles plus your inbox `«REPO»/tasks/«AGENT_ID»/*.md`, and **blocks —
    sleeping `POLL_SEC` and re-pulling — until there is something to do or the
    idle deadline hits.** While it blocks you are parked on this one tool call and
-   spend NO tokens. An idle mesh therefore costs zero commits and near-zero
-   inference (one cache-read re-park per ~4 min) — repo and token traffic are both
-   proportional to real work, not to node-count × poll frequency. It runs on
-   macOS and Linux alike (bash 3.2+, no `timeout` dependency).
+   spend NO tokens. An idle mesh therefore costs near-zero inference (one
+   cache-read re-park per ~4 min) and one heartbeat commit per node per poll
+   interval; claims, statuses and results stay proportional to real work. It
+   runs on macOS and Linux alike (bash 3.2+, no `timeout` dependency).
 
    The script writes one of:
    - `STOP` (exit 2) — `~/.mesh-stop` exists. Write a final line that you are
@@ -174,29 +176,57 @@ until stop (see "Stopping" below):
    claimability at claim time anyway (step 4a), since another node may have claimed
    a task between the scan and your write.
 
-**"Sync" means, every time:** stage, commit, and push using THREE separate
-commands, each with its own literal `-C «REPO»` prefix (a bare `commit`/`push`
-after `&&` is not a command and silently no-ops):
+**"Sync" means, every time:** ONE call to the commit script beside this
+prompt, naming every file the step wrote or deleted, each relative to «REPO»,
+and a plain-text message:
 
 ```
-git -C «REPO» add -A
-git -C «REPO» commit -m "<message>"
-git -C «REPO» push origin HEAD
+«SKILL_DIR»/mesh-commit.sh «REPO» "<message>" <path> [<path> ...]
 ```
 
-Skip the commit/push if `git -C «REPO» add -A` staged nothing. On push
-rejection, follow the conflict-handling rule below.
+It stages and commits exactly those paths, never a submodule pin, applies the
+git gate's rules itself, and pushes, retrying a rejected push on its own
+(`pull --rebase --autostash`, 3 pushes at most). Its last line says how it
+went:
+
+- `PUSHED` or `NOTHING TO COMMIT`: done; go on.
+- `PUSH FAILED` (exit 3): the commit is local and goes out with the next push
+  from this checkout (the scanner's next heartbeat). For a claim, see step 4a.
+- `REFUSED <reason>` (exit 1): nothing was committed. Do not retry the same
+  call; report the reason to the main session (step 4½) and go on to the next
+  task, or for a terminal write, write status `failed` naming the reason.
+
+Never stage, commit or push the bus by hand, and never stage it whole: in the
+bus a stage-all records each submodule's checkout as its pin, and the
+`ignore = all` the bus sets hides that from `git status` (PROTOCOL §8, "The
+commit rule"). The paths to name, step by step:
+
+| Step | Paths |
+|---|---|
+| claim, `running`, `blocked`, terminal status | `status/<id>.json` |
+| query reply (4a) | the reply file `tasks/<sender-id>/<file>` and `status/<id>.json` |
+| result (4e) | `status/<id>.json`, `outbox/«AGENT_ID»/<id>-result.md`, and `outbox/«AGENT_ID»/<id>-files` when files were published |
+| runs record, library submission (4e2, 4f) | the new `tasks/roles/librarian/<file>`, or, as librarian, the new `memory/<category>/<file>` |
+| workflow step (4¾) | the task file it originates and `workflows/<id>.yaml` |
+| librarian drain | each `memory/<category>/<file>` written, with any stored artifact |
+| archiver sweep | each path moved, at its old place and its new one under `_archive/` |
+| layout upgrade | each path the note's bus steps wrote or removed, and `BUS_LAYOUT` |
 
 4. **For each CLAIMABLE task, in order:**
    a. **CLAIM by writing** `status/<id>.json` state `accepted`, `agent_id`
-      «AGENT_ID» (schema per PROTOCOL.md §6), then sync (commit message
-      `status <id> -> accepted`). This single write IS your claim, the
-      acknowledgment, and the liveness signal — there is no separate heartbeat.
-      **If the push is rejected**, `git -C «REPO» pull --rebase` and re-read
-      `status/<id>.json`: if it now exists with a different `agent_id`, another
-      holder claimed it first — YIELD (do nothing further with this task) and go to
-      the next candidate. Otherwise re-apply and retry the claim. Only once you own
-      the claim do you proceed. If the message is a `query` (a ping), write a
+      «AGENT_ID» (schema per PROTOCOL.md §6), then sync it (commit message
+      `status <id> -> accepted`). This single write IS your claim and the
+      acknowledgment; the node's liveness is the scanner's `last_poll`
+      heartbeat, not a status write. **If the sync prints `PUSH FAILED`**,
+      another holder may have claimed it first. Run
+      `git -C «REPO» fetch -q origin` and
+      `git -C «REPO» show @{u}:status/<id>.json`: if that exists with a
+      different `agent_id`, YIELD: drop your local claim with
+      `git -C «REPO» reset -q --soft HEAD~1`, then
+      `git -C «REPO» reset -q -- status/<id>.json`, then delete your
+      `«REPO»/status/<id>.json`, and go to the next candidate. Otherwise sync
+      the claim again. Only once you own the claim do you proceed. If the
+      message is a `query` (a ping), write a
       `reply` addressed to the sender — a new file in `tasks/<sender-id>/` with
       `type: reply` and `in_reply_to: <this query id>` — then sync and move on.
       Route replies to the sender's INBOX, not to your outbox, so the sender's
@@ -278,7 +308,9 @@ rejection, follow the conflict-handling rule below.
       file, in the executor's order: `  - {path: <rel>, sha256: <hex>}`. With no
       published file, write no `files:` key and no `-files/` folder. Delete
       the staging directory whether or not it held files. Then sync: one
-      commit carries the status, the result and any files.
+      commit carries the status, the result and any files, naming
+      `status/<id>.json`, `outbox/«AGENT_ID»/<id>-result.md` and, if files
+      were published, `outbox/«AGENT_ID»/<id>-files`.
    e2. If the task was result-bearing (produced a result or durable artifacts, not
       just a ping reply), ALSO drop a `library.submit` of `category: runs` for it
       (PROTOCOL §7): `task_id`, executor `agent`, `contexts`, `started`/`ended` in
@@ -390,10 +422,13 @@ cycles — do not execute tasks inline yourself.
 
 ## Push-conflict handling
 
-If any `push` is rejected: `git -C «REPO» pull --rebase`, re-read the current
-state of the file you were writing, re-apply your intent against that state, retry
-up to 3 times, then exponential backoff. Never `-X ours`/`-X theirs`, never
-hand-edit a conflict.
+`mesh-commit.sh` handles a rejected push itself: `pull --rebase --autostash`,
+then push again, 3 pushes at most. If it still prints `PUSH FAILED`, the commit
+stays local; do not pull, rebase or push by hand. For a claim, follow step 4a.
+Otherwise go on: the next push from this checkout (the scanner's next
+heartbeat) carries it, and a node whose pushes keep failing shows as not
+polling in `mesh-check`. Never `-X ours`/`-X theirs`, never hand-edit a
+conflict.
 
 ## Role-specific duties (only for roles in your AGENT_ROLES)
 
@@ -437,7 +472,8 @@ set, else the normal cadence), invoke it once with the node's venv:
 
 Use the repo's venv python (e.g. the `.venv` beside the bus's parent checkout).
 The script does its own git sync with literal `-C «REPO»` paths and plain commit
-messages, so it complies with the git gate. Do it BEFORE the librarian drain so
+messages, staging and committing only the files it wrote, so it complies with
+the git gate and the commit rule. Do it BEFORE the librarian drain so
 mail ingested this cycle is curated the same cycle. Report its stdout (accept/
 reject lines) as your progress. If it prints that `LIBRARIAN_EMAIL_ENABLED` is not
 true or a credential NAME is missing, that is a config gap, not an error — note it
@@ -495,8 +531,8 @@ step 4¾ (after inbox handling, before sleep):**
 2. If that step's `status` is `pending`: **originate it.** Assign a `task_id`,
    write the `task.request` into the target queue (`tasks/roles/<role>/` if
    `target` is `role:<role>`, else the direct inbox `tasks/<target>/`), AND update
-   the workflow record (step `status: running`, fill `task_id`, keep cursor). Stage
-   BOTH and sync in ONE commit (`workflow <id> step <n> originated`). One commit =
+   the workflow record (step `status: running`, fill `task_id`, keep cursor). Sync
+   BOTH in ONE commit, naming both paths (`workflow <id> step <n> originated`). One commit =
    the task and the plan update land together; a crash before push leaves neither,
    so restart cleanly re-originates.
 3. If that step's `status` is `running`: check the task's terminal status —
@@ -545,10 +581,11 @@ layout at a time, in order, from `<bus>+1` up to `<prod>`:
    the node steps the note lists.
 2. After each note completes, stamp the bus: write `<N>` (and a newline) into
    `«REPO»/BUS_LAYOUT`.
-3. Commit the bus changes via the gated flow with a plain message, e.g.
-   `git -C «REPO» add -A`; `git -C «REPO» commit -m "layout upgrade to <N>"`;
-   `git -C «REPO» push origin HEAD`. (The note itself may specify the message; a
-   plain `layout upgrade to <N>` is fine.)
+3. Commit the bus changes by syncing (`«SKILL_DIR»/mesh-commit.sh`), naming
+   each path the note's bus steps wrote or removed, and `BUS_LAYOUT`, with a
+   plain message such as `layout upgrade to <N>`. Where a note's own commit
+   block stages the whole bus, sync instead: a stage-all in the bus records
+   each submodule's checkout as its pin.
 4. When `BUS_LAYOUT` equals `<prod>`, relaunch the scan loop (step 0) and resume
    the normal loop. No operator involvement at any point.
 
