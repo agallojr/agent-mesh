@@ -56,7 +56,7 @@ access=$(printf '%s\n' "$entry" |
   sed -n 's/.*access:[[:space:]]*\([a-z]*\).*/\1/p')
 if [ -n "$path" ] &&
    git config -f "$B/.gitmodules" --get-regexp '^submodule\..*\.path$' \
-     2>/dev/null | awk '{print $2}' | grep -qxF "$path"; then
+     2>/dev/null | cut -d' ' -f2- | grep -qxF "$path"; then
   echo "MOUNTED $P $path ${access:-?}"
 else
   echo "NOT MOUNTED $P"
