@@ -27,16 +27,16 @@ Inputs (env var or flag; flag wins):
   --product-url URL   PRODUCT_URL   git URL of the agent-mesh product repo.
   --product-tag TAG   PRODUCT_TAG   product tag to pin (optional; if unset,
                                     pins whatever HEAD the clone lands on).
-  --bus-url URL       BUS_URL       git URL of the agent-mesh-bus remote.
-                                    Naming convention: agent-mesh-bus-<mesh>.
+  --bus-url URL       BUS_URL       git URL of the bus remote.
+                                    Naming convention: agent-mesh-<mesh>.
   --bus-path PATH     BUS_PATH      absolute path for the bus clone
-                                    (e.g. $HOME/agent-mesh-bus-mymesh).
+                                    (e.g. $HOME/agent-mesh-mymesh).
   -h, --help                        show this help.
 
 Example:
   PRODUCT_URL=git@github.com:you/agent-mesh.git \
-  BUS_URL=git@github.com:you/agent-mesh-bus-mymesh.git \
-  BUS_PATH="$HOME/agent-mesh-bus-mymesh" \
+  BUS_URL=git@github.com:you/agent-mesh-mymesh.git \
+  BUS_PATH="$HOME/agent-mesh-mymesh" \
   ./install/install.sh --product-tag v0.1.0
 
 Network-mutating steps (bus first commit + push) are printed for you to run,
@@ -133,12 +133,14 @@ fi
 say "staging .gitmodules and product pointer"
 git -C "${BUS_PATH}" add .gitmodules product
 
-# --- 4. bus entry point + user overlay (fallback; skeleton normally ships these)
-# The layout-1 bus-skeleton already provides guidance/CLAUDE.md, the overlay
-# stub, and BUS_LAYOUT, so the copy in step 2 normally puts them in place. These
-# if-missing blocks are an idempotent fallback for an older skeleton or a bus
-# path that pre-existed without them.
-step "Step 4: ensure guidance/CLAUDE.md and memory/best-practices.user.md exist"
+# --- 4. bus entry point (fallback; skeleton normally ships it) ---------------
+# The layout-1 bus-skeleton already provides guidance/CLAUDE.md and BUS_LAYOUT,
+# so the copy in step 2 normally puts them in place. These if-missing blocks
+# are an idempotent fallback for an older skeleton or a bus path that
+# pre-existed without them. The installer writes no file under the old library
+# folder: the overlay lives in the core space, which the operator creates in
+# step 7.
+step "Step 4: ensure guidance/CLAUDE.md exists"
 BUS_CLAUDE="${BUS_PATH}/guidance/CLAUDE.md"
 if [ -f "${BUS_CLAUDE}" ]; then
   say "guidance/CLAUDE.md present (from skeleton); leaving it untouched."
@@ -149,21 +151,9 @@ else
 # Mesh agent guidance -- bus entry point (composes product base + user overlay)
 
 @../product/guidance/best-practices.base.md
-@../memory/best-practices.user.md
+@../spaces/core/best-practices.user.md
 @../product/guidance/agent-operating.md
 @../product/guidance/permissions.md
-EOF
-fi
-
-USER_OVERLAY="${BUS_PATH}/memory/best-practices.user.md"
-if [ -f "${USER_OVERLAY}" ]; then
-  say "memory/best-practices.user.md present (from skeleton); leaving it untouched."
-else
-  say "memory/best-practices.user.md missing; writing fallback placeholder"
-  mkdir -p "${BUS_PATH}/memory"
-  cat > "${USER_OVERLAY}" <<'EOF'
-<!-- Add this deployment's specific rules here. This user overlay is composed
-     after the product base by guidance/CLAUDE.md. -->
 EOF
 fi
 
@@ -249,12 +239,29 @@ cat <<EOF
      REPO_PATH MUST be the literal path ${BUS_PATH} (no \$HOME / ~ expansion),
      matching the allowlist line added in step 5.
 
-  2. Commit and push the fresh bus (NETWORK-MUTATING -- run these yourself):
+  2. Create the three spaces from the product templates, each as its own
+     private repo (core and lore are portable, scratch belongs to this mesh):
+       core     <owner>-core            from ${BUS_PATH}/product/templates/spaces/core
+       lore     <owner>-lore            from ${BUS_PATH}/product/templates/spaces/lore
+       scratch  agent-mesh-<mesh>-tmp   from ${BUS_PATH}/product/templates/spaces/tmp
+     For each: create the empty remote, copy the template's files to the repo
+     root, fill in <owner> and <mesh> in space.yaml, commit and push main.
+     Then mount them in the bus (NETWORK-MUTATING -- run these yourself):
+       git -C ${BUS_PATH} submodule add -b main <core url> spaces/core
+       git -C ${BUS_PATH} submodule add -b main <lore url> spaces/lore
+       git -C ${BUS_PATH} submodule add -b main <tmp url> spaces/tmp
+     Set "ignore = all" for each in ${BUS_PATH}/.gitmodules, check out main in
+     each space, and add the three entries to ${BUS_PATH}/spaces.yaml:
+       - {id: core, path: spaces/core, access: rw, librarian: librarian}
+       - {id: lore, path: spaces/lore, access: rw, librarian: librarian}
+       - {id: tmp, path: spaces/tmp, access: rw, librarian: none}
+
+  3. Commit and push the fresh bus (NETWORK-MUTATING -- run these yourself):
        git -C ${BUS_PATH} add -A
        git -C ${BUS_PATH} commit -m "scaffold bus"
        git -C ${BUS_PATH} push -u origin HEAD
 
-  3. Register the git-gate hook in ~/.claude/settings.json (see step 5), then
+  4. Register the git-gate hook in ~/.claude/settings.json (see step 5), then
      start the worker loop with:  /mesh-on
 
 EOF

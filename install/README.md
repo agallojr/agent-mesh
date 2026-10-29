@@ -12,11 +12,11 @@ you already own; it does not create the remote for you. Before running it:
 
 1. Create an **empty, private** repository on your Git host — no README, no
    `.gitignore`, no license (the installer fills it). This is your bus; the
-   recommended naming convention is `agent-mesh-bus-<mesh>` (one bus per mesh,
+   recommended naming convention is `agent-mesh-<mesh>` (one bus per mesh,
    named for the mesh). Its clone/SSH URL is the `BUS_URL` below.
 2. Keep it **private**. The bus holds your runtime coordination ledger,
-   credential *names*, and deployment-specific rules (`best-practices.user.md`).
-   The product repo is public; your bus should not be. A private bus can still
+   credential *names*, and deployment-specific mounts. The overlay `best-practices.user.md` lives
+   in the core space, not in the bus. The product repo is public; your bus should not be. A private bus can still
    reference the public product submodule with no extra configuration.
 
 You do not create a separate product remote — `PRODUCT_URL` points at the
@@ -35,10 +35,11 @@ existing (public) product repo you cloned this from.
    the submodule clone landed on. Then stages `.gitmodules` and the `product`
    pointer.
 4. Ensures the bus-owned entry point `guidance/CLAUDE.md` (composing the product
-   base and the user overlay), the `memory/best-practices.user.md` placeholder,
-   and the `BUS_LAYOUT` stamp exist. The layout-1 `bus-skeleton/` normally ships
-   all three, so these steps are an idempotent fallback that only writes what a
-   pre-existing bus path is missing.
+   base and the user overlay from `spaces/core/best-practices.user.md`) and the
+   `BUS_LAYOUT` stamp exist. The layout-1 `bus-skeleton/` normally ships both,
+   so these steps are an idempotent fallback that only writes what a
+   pre-existing bus path is missing. The installer writes no file under
+   `memory/`: the skeleton has no such folder.
 5. Wires the git gate on this node: **symlinks** `git-gate.py` from the pinned
    `product/hooks/` into `~/.claude/hooks/` (so it upgrades with the pin, not a
    stale copy), appends `BUS_PATH` to `~/.claude/mesh-git-allowlist.txt` (created
@@ -48,8 +49,27 @@ existing (public) product repo you cloned this from.
 6. Symlinks the skills into `~/.claude/skills/`: every product skill first, then
    any bus overlay skill under `<bus>/skills/` — so a same-named bus skill
    overwrites the product link (the instance override wins).
-7. Prints next steps: plant the identity/credentials env files, run the bus's
+7. Prints next steps: plant the identity/credentials env files, create the
+   three spaces from `templates/spaces/` and mount them (below), run the bus's
    first commit and push, register the hook, then `/mesh-on`.
+
+## Spaces: core, lore and scratch
+
+The bus holds coordination and mounts only. Stored knowledge lives in three
+spaces, each its own private repo, which you create from the product's
+`templates/spaces/` and mount under `spaces/`:
+
+| Space | Repo name | Template | Mount |
+| ----- | --------- | -------- | ----- |
+| core | `<owner>-core` | `templates/spaces/core` | `spaces/core` |
+| lore | `<owner>-lore` | `templates/spaces/lore` | `spaces/lore` |
+| scratch | `agent-mesh-<mesh>-tmp` | `templates/spaces/tmp` | `spaces/tmp` |
+
+For each: create the empty remote, copy the template's files to the repo root,
+fill in `<owner>` and `<mesh>` in `space.yaml`, commit and push `main`. Then
+`git submodule add -b main <url> spaces/<x>` in the bus, set `ignore = all` in
+`.gitmodules`, check out `main` in each space, and add the three entries to
+`spaces.yaml` (the installer prints them). `BUS_LAYOUT` stays `1`.
 
 ## Inputs
 
@@ -59,15 +79,15 @@ Set as environment variables or pass the matching flag (the flag wins):
 | ------------- | --------------- | ----------------------------------------- |
 | `PRODUCT_URL` | `--product-url` | git URL of the agent-mesh product repo.   |
 | `PRODUCT_TAG` | `--product-tag` | product tag to pin (optional; unset pins clone `HEAD`). |
-| `BUS_URL`     | `--bus-url`     | git URL of your bus remote (`agent-mesh-bus-<mesh>`). |
+| `BUS_URL`     | `--bus-url`     | git URL of your bus remote (`agent-mesh-<mesh>`). |
 | `BUS_PATH`    | `--bus-path`    | absolute path for the bus clone.          |
 
 ## Example
 
 ```sh
 PRODUCT_URL=git@github.com:you/agent-mesh.git \
-BUS_URL=git@github.com:you/agent-mesh-bus-mymesh.git \
-BUS_PATH="$HOME/agent-mesh-bus-mymesh" \
+BUS_URL=git@github.com:you/agent-mesh-mymesh.git \
+BUS_PATH="$HOME/agent-mesh-mymesh" \
 ./install/install.sh --product-tag v0.1.0
 ```
 

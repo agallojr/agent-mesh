@@ -13,4 +13,5 @@ empty (just a `.gitkeep`); add a skill only to deviate from a product default.
 - **Descriptions say WHEN, never a standing directive.** A skill description is
   effectively always-on prompt text, so it must only say *when* to invoke the
   skill. Standing behavioral rules ("always do X") belong in the guidance
-  overlay (`memory/best-practices.user.md`), not in a skill description.
+  overlay (`best-practices.user.md` in the core space, at
+  `spaces/core/best-practices.user.md`), not in a skill description.

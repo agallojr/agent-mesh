@@ -1,7 +1,12 @@
 # Memory spaces this bus mounts (product/spec/memory-spaces.md section 4.3).
 # The operator writes this file; no agent edits it. An empty list, or no file
 # at all, means no spaces are mounted. To mount a space, add its submodule by
-# hand under spaces/ (memory-spaces section 8), then one entry per space:
+# hand under spaces/ (memory-spaces section 8), then one entry per space.
+# The three entry forms:
+#   - {id: core, path: spaces/core, access: rw, librarian: librarian}
+#   - {id: lore, path: spaces/lore, access: rw, librarian: librarian}
+#   - {id: tmp, path: spaces/tmp, access: rw, librarian: none}
 #   - {id: proj:<name>, path: spaces/proj-<name>, access: rw, librarian: librarian}
-# access is ro or rw; librarian is the role that files records into the space.
+# access is ro or rw; librarian is the role that files records into the space,
+# or none for a scratch space (kind: scratch), which any agent of the mesh writes.
 spaces: []
