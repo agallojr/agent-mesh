@@ -87,10 +87,20 @@ copy. Run them on each node as it upgrades.
 
 ## Commit
 
-Commit the bus changes via the gated flow (literal `-C` path, plain message):
+Commit the bus changes through `mesh-commit.sh` (literal `<bus>` path, plain
+message), naming each path the bus steps above wrote or removed, and
+`BUS_LAYOUT`. Name only the paths that exist or were removed on this bus, for
+instance:
 
 ```
-git -C <bus> add -A
-git -C <bus> commit -m "layout upgrade to 1"
-git -C <bus> push origin HEAD
+<bus>/product/skills/mesh-on/mesh-commit.sh <bus> "layout upgrade to 1" \
+  guidance/CLAUDE.md guidance/.gitkeep \
+  memory/lore/.gitkeep memory/notes/.gitkeep memory/refs/.gitkeep \
+  memory/workflows/.gitkeep memory/runs/.gitkeep \
+  memory/best-practices.user.md skills/.gitkeep skills/README.md BUS_LAYOUT
 ```
+
+It stages and commits only those paths, never a submodule pin, and pushes. Do
+not stage the bus whole: in the bus a stage-all records each submodule's
+checkout as its pin (PROTOCOL §8, "The commit rule"). If it prints
+`NOTHING TO COMMIT`, the bus was already at layout 1.

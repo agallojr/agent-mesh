@@ -248,16 +248,27 @@ the authoring model is unknown (a legacy record), omit the field.
 
 ## Step 6 — commit (plain text) and push
 
-Three separate commands, literal repo path; on rejection `pull --rebase` then push,
-up to 3 attempts then back off. Stage the artifact and its companion together.
+Commit through the mesh's commit script, `mesh-commit.sh` in the `mesh-on`
+skill (in the bus, `/abs/repo/product/skills/mesh-on/mesh-commit.sh`), with
+the literal repo path, a plain-text message, and every file this run wrote,
+each relative to the repo: the artifact and its companion together, and
+`memory/refs/TAGS.md` if you added a tag to it.
 
 ```bash
-git -C /abs/repo add /abs/repo/memory/refs/<files>
-git -C /abs/repo commit -m "ingest refs <n> url(s) into library"
-git -C /abs/repo push origin HEAD
+/abs/repo/product/skills/mesh-on/mesh-commit.sh /abs/repo \
+  "ingest refs <n> url(s) into library" memory/refs/<file> [memory/refs/<file> ...]
 ```
 
-(Submit path: stage the queue message; message e.g. `submit refs library.submit <n> url(s)`.)
+(Submit path: name the queue message, `tasks/roles/librarian/<file>`; message
+e.g. `submit refs library.submit <n> url(s)`.)
+
+It stages and commits only the files named, never a submodule pin, applies the
+git gate's rules itself, and pushes, retrying a rejected push on its own. Its
+last line is `PUSHED` or `NOTHING TO COMMIT` (done), `PUSH FAILED` (the commit
+is local; report it), or `REFUSED <reason>` (nothing committed; report the
+reason: on a machine whose git-gate allowlist lacks this bus, add the bus path
+to `~/.claude/mesh-git-allowlist.txt`). Never stage the bus whole: a stage-all
+there records each submodule's checkout as its pin.
 
 ## Step 7 — report
 

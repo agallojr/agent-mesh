@@ -92,14 +92,19 @@ opt-in per node via `MESH_PRODUCT_TRACK=tip` — for the maintainer's own mesh; 
 bus from `bus-skeleton/`, adds this product as the `product/` submodule at a chosen
 pin, and wires the git gate and skill symlinks.
 
-## Idle costs nothing
+## Idle costs almost nothing
 
 A node's poller does not poll with inference. It parks on a portable shell
 scanner (`skills/mesh-on/mesh-scan-loop.sh`) that pulls, scans the node's
 queues, and sleeps in a loop, exiting only when there is claimable work (or a
-stop/upgrade signal). While parked the agent spends **zero inference tokens**,
-and an idle node makes **zero commits** — token and repo traffic are
-proportional to real work, not to node-count × poll-frequency × uptime.
+stop/upgrade signal). While parked the agent spends **zero inference tokens**.
+An idle node's only commit is its heartbeat: each scan rewrites `last_poll` in
+the node's own `agents/<id>.yaml` and pushes it, one small commit per poll
+interval, so `mesh-check` can name a node that has stopped polling. Claims,
+statuses and results stay proportional to real work.
+
+Every commit the mesh tooling makes goes through `skills/mesh-on/mesh-commit.sh`,
+which stages only the paths it is given and never records a submodule pin.
 
 ## The library — what the mesh remembers
 

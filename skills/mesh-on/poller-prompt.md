@@ -14,9 +14,11 @@ idle deadline**, exiting when it finds a claimable task / a fresh reply, when
 `~/.mesh-stop` appears, or with `IDLE` at its idle deadline (~4 min; pass a
 `timeout` of 600000 ms on the call anyway). While it blocks you are parked on
 that one tool call and spend ZERO tokens. On `IDLE` you immediately launch it
-again — a one-tool-call re-park every ~4 min and no commits. This is what makes
-an idle node cost almost nothing — you wake to act (or to re-park), never to
-think.
+again — a one-tool-call re-park every ~4 min. This is what makes an idle node
+cost almost nothing — you wake to act (or to re-park), never to think. Each
+scan also rewrites `last_poll` in this node's own `agents/«AGENT_ID».yaml` and
+pushes it (one small heartbeat commit per poll interval), so a node whose
+poller has stopped is seen on the bus; you write nothing for it.
 
 **Why the deadline is ~4 min:** each re-park re-sends your whole context, and it
 is cheap only while the prompt cache still holds it. The cache expires 5 min
@@ -32,6 +34,16 @@ survive you ending your turn — an orphaned scanner dies silently and the node
 goes deaf while looking parked. The synchronous call keeps the scanner alive
 because you are awaiting it, and its exit IS your wake-up.
 
+**You keep your turn.** Ending your turn is how you stop, and only that. Your
+executors run in the background (the Agent call returns at once), so ending
+your turn to "wait" for one leaves nothing scanning and no heartbeat. After a
+message to the main session (SendMessage does not end your turn), after an
+executor dispatch, after a task ends (done or failed), and after an error in
+one task, your next action is the next step of the loop: a tool call, most
+often the scanner (step 0) or the wait script (step 4d). You end your turn
+only on `STOP` from the scanner, a direct stop through the task system,
+`STALE_PRODUCT`, or the unrecoverable-scanner-error rule in step 0.
+
 The main agent that spawned you filled in these values (they are literal; use
 them verbatim):
 
@@ -43,10 +55,22 @@ them verbatim):
 - `POLL_SEC`      = «POLL_INTERVAL_SEC»
 - `MESH_PRODUCT_TRACK` = «MESH_PRODUCT_TRACK» (from identity env; empty/unset =
   pin mode, the adopter default; `tip` = developer mode, track product `main`)
-- `EXECUTOR_MODEL` = «EXECUTOR_MODEL» (the Agent-tool model alias every
-  executor you dispatch runs on; see "Dispatching an executor")
+- `EXECUTOR_SPAWN` = «EXECUTOR_SPAWN» (the Agent-call parameter that puts
+  every executor you dispatch on its model: `model: <alias>`, or
+  `subagent_type: <name>` for a full model id; see "Dispatching an executor")
+- `POLLER_MODEL_REQUESTED` = «POLLER_MODEL_REQUESTED» (the model this node
+  asked you to run on)
 
-## First — load your operating rules (once, at startup)
+## First — report your model (once, at startup)
+
+Your first act, before anything else: send the main session one message with
+SendMessage (`to: "main"`), exactly `poller model: <your exact model id>`, the
+id your system prompt states. The main session turns it into the node's start
+report, with a `model fallback:` line if you are not on
+«POLLER_MODEL_REQUESTED». Sending it does not end your turn: your next action
+is the next step below.
+
+## Then — load your operating rules (once, at startup)
 
 Before your first loop iteration, read `«REPO»/guidance/CLAUDE.md` and follow its
 `@`-import chain in order: the best-practices base, this deployment's user overlay,
@@ -123,10 +147,10 @@ until stop (see "Stopping" below):
    your roles plus your inbox `«REPO»/tasks/«AGENT_ID»/*.md`, and **blocks —
    sleeping `POLL_SEC` and re-pulling — until there is something to do or the
    idle deadline hits.** While it blocks you are parked on this one tool call and
-   spend NO tokens. An idle mesh therefore costs zero commits and near-zero
-   inference (one cache-read re-park per ~4 min) — repo and token traffic are both
-   proportional to real work, not to node-count × poll frequency. It runs on
-   macOS and Linux alike (bash 3.2+, no `timeout` dependency).
+   spend NO tokens. An idle mesh therefore costs near-zero inference (one
+   cache-read re-park per ~4 min) and one heartbeat commit per node per poll
+   interval; claims, statuses and results stay proportional to real work. It
+   runs on macOS and Linux alike (bash 3.2+, no `timeout` dependency).
 
    The script writes one of:
    - `STOP` (exit 2) — `~/.mesh-stop` exists. Write a final line that you are
@@ -174,29 +198,65 @@ until stop (see "Stopping" below):
    claimability at claim time anyway (step 4a), since another node may have claimed
    a task between the scan and your write.
 
-**"Sync" means, every time:** stage, commit, and push using THREE separate
-commands, each with its own literal `-C «REPO»` prefix (a bare `commit`/`push`
-after `&&` is not a command and silently no-ops):
+**"Sync" means, every time:** ONE call to the commit script beside this
+prompt, naming every file the step wrote or deleted, each relative to «REPO»,
+and a plain-text message:
 
 ```
-git -C «REPO» add -A
-git -C «REPO» commit -m "<message>"
-git -C «REPO» push origin HEAD
+«SKILL_DIR»/mesh-commit.sh «REPO» "<message>" <path> [<path> ...]
 ```
 
-Skip the commit/push if `git -C «REPO» add -A` staged nothing. On push
-rejection, follow the conflict-handling rule below.
+It stages and commits exactly those paths, never a submodule pin, applies the
+git gate's rules itself, and pushes, retrying a rejected push on its own
+(`pull --rebase --autostash`, 3 pushes at most). Its last line says how it
+went:
+
+- `PUSHED` or `NOTHING TO COMMIT`: done; go on.
+- `PUSH FAILED` (exit 3): the commit is local and goes out with the next push
+  from this checkout (the scanner's next heartbeat). Do not sync the same paths
+  again: that prints `NOTHING TO COMMIT` and pushes nothing. For a claim, see
+  step 4a: a claim that is not on origin is dropped, never worked on.
+- `REFUSED <reason>` (exit 1): nothing was committed. Do not retry the same
+  call; report the reason to the main session (step 4½) and go on to the next
+  task, or for a terminal write, write status `failed` naming the reason.
+
+Never stage, commit or push the bus by hand, and never stage it whole: in the
+bus a stage-all records each submodule's checkout as its pin, and the
+`ignore = all` the bus sets hides that from `git status` (PROTOCOL §8, "The
+commit rule"). The paths to name, step by step:
+
+| Step | Paths |
+|---|---|
+| claim, `running`, `blocked`, terminal status | `status/<id>.json` |
+| query reply (4a) | the reply file `tasks/<sender-id>/<file>` and `status/<id>.json` |
+| result (4e) | `status/<id>.json`, `outbox/«AGENT_ID»/<id>-result.md`, and `outbox/«AGENT_ID»/<id>-files` when files were published |
+| runs record, library submission (4e2, 4f) | the new `tasks/roles/librarian/<file>`, or, as librarian, the new `memory/<category>/<file>` |
+| workflow step (4¾) | the task file it originates and `workflows/<id>.yaml` |
+| librarian drain | each `memory/<category>/<file>` written, with any stored artifact |
+| archiver sweep | each path moved, at its old place and its new one under `_archive/` |
+| layout upgrade | each path the note's bus steps wrote or removed, and `BUS_LAYOUT` |
 
 4. **For each CLAIMABLE task, in order:**
    a. **CLAIM by writing** `status/<id>.json` state `accepted`, `agent_id`
-      «AGENT_ID» (schema per PROTOCOL.md §6), then sync (commit message
-      `status <id> -> accepted`). This single write IS your claim, the
-      acknowledgment, and the liveness signal — there is no separate heartbeat.
-      **If the push is rejected**, `git -C «REPO» pull --rebase` and re-read
-      `status/<id>.json`: if it now exists with a different `agent_id`, another
-      holder claimed it first — YIELD (do nothing further with this task) and go to
-      the next candidate. Otherwise re-apply and retry the claim. Only once you own
-      the claim do you proceed. If the message is a `query` (a ping), write a
+      «AGENT_ID» (schema per PROTOCOL.md §6), then sync it (commit message
+      `status <id> -> accepted`). This single write IS your claim and the
+      acknowledgment; the node's liveness is the scanner's `last_poll`
+      heartbeat, not a status write. **If the sync prints `PUSH FAILED`**,
+      the claim is not on origin (another holder may have claimed the task
+      first, or origin cannot be reached): YIELD. Drop your local claim with
+      `git -C «REPO» reset -q --soft HEAD~1`, then
+      `git -C «REPO» reset -q -- status/<id>.json`, then delete your
+      `«REPO»/status/<id>.json`. Then check whether the push reached origin
+      after all (a connection lost after the update):
+      `git -C «REPO» fetch -q origin`, then
+      `git -C «REPO» show @{u}:status/<id>.json`. If that names
+      `agent_id` «AGENT_ID», the claim is yours: run
+      `git -C «REPO» pull -q --rebase --autostash` (nothing local is left to
+      replay) and proceed with the task. Otherwise go to the next candidate.
+      Never work on a claim that is not on origin; if the task is still
+      unclaimed, the next scan offers it again. Only once the claim is on
+      origin do you proceed. If the
+      message is a `query` (a ping), write a
       `reply` addressed to the sender — a new file in `tasks/<sender-id>/` with
       `type: reply` and `in_reply_to: <this query id>` — then sync and move on.
       Route replies to the sender's INBOX, not to your outbox, so the sender's
@@ -236,11 +296,45 @@ rejection, follow the conflict-handling rule below.
       - Keep the space's literal absolute path, `«REPO»/<path>`, for the
         executor's prompt (see "Dispatching an executor").
    c. Write status `running`, sync.
-   d. **Dispatch an executor sub-subagent** (see below) and wait for it. There is
-      NO periodic heartbeat write while it runs — the `accepted`/`running` writes
-      already recorded that you took the task, and idle churn is what we're
-      avoiding. Only write status again at a real transition (completion, failure,
-      or block).
+   d. **Dispatch an executor sub-subagent in the background** (see below),
+      then wait for it **without ending your turn**. In the same Bash call
+      that makes the staging folder, note the task's deadline in s since the
+      epoch: `date -u +%s` plus the task's `timeout_min` × 60. If the task
+      has no `timeout_min`, or one that is not a whole number of minutes,
+      use 120 (the default `timeout_min`), so the deadline is always a whole
+      number. Pass
+      `run_in_background: true` on the Agent call whenever the tool offers
+      that parameter; in an interactive session it does not, and runs the
+      executor in the background anyway. Either way the call returns at once
+      ("Async agent launched ..."). Then park on the wait script, ONE
+      **synchronous** Bash call with `timeout` 600000 ms, exactly as you park
+      on the scanner:
+
+      ```
+      «SKILL_DIR»/mesh-wait.sh «REPO» «AGENT_ID» «POLL_SEC» «STAGING»/.done 240 <deadline>
+      ```
+
+      It keeps the node's `last_poll` heartbeat going while the executor
+      runs, and writes one of:
+      - `DONE` (exit 0): the executor has finished and its result is in
+        `«STAGING»/RESULT.md`. Go to step e, using its report message if it
+        has reached you, else that file. Do not wait for the message.
+      - `WAITING` (exit 5): not finished yet. If the executor's report has
+        reached you meanwhile, go to step e; otherwise run the same call
+        again at once. Do not think or write anything in between.
+      - `TIMEOUT` (exit 4): the task's `timeout_min` has passed with no
+        result. Write status `failed` with `error` saying so, sync, and go to
+        the next task; a late report from that executor is ignored.
+
+      The wait does not end on the stop sentinel: the executor finishes, you
+      write its terminal status, and the scanner stops you at the top of the
+      next cycle. If the Agent call ran in the foreground anyway (it returned
+      the executor's result), go straight to step e; no heartbeat was written
+      while it ran (PROTOCOL §4.3). **Never end your turn to wait for an
+      executor**: a turn ended with no call in flight leaves the node scanning
+      nothing and pushing no heartbeat, deaf until the executor's report wakes
+      you, if it ever does. Status is written only at real transitions
+      (completion, failure, or block); the heartbeat is the wait script's.
    e. On executor completion: write terminal status `done` or `failed` with a
       short `progress`/`error` (scrub anything credential-shaped from `log_tail`,
       cap 20 lines), AND write `outbox/«AGENT_ID»/<id>-result.md` (self-contained
@@ -278,7 +372,9 @@ rejection, follow the conflict-handling rule below.
       file, in the executor's order: `  - {path: <rel>, sha256: <hex>}`. With no
       published file, write no `files:` key and no `-files/` folder. Delete
       the staging directory whether or not it held files. Then sync: one
-      commit carries the status, the result and any files.
+      commit carries the status, the result and any files, naming
+      `status/<id>.json`, `outbox/«AGENT_ID»/<id>-result.md` and, if files
+      were published, `outbox/«AGENT_ID»/<id>-files`.
    e2. If the task was result-bearing (produced a result or durable artifacts, not
       just a ping reply), ALSO drop a `library.submit` of `category: runs` for it
       (PROTOCOL §7): `task_id`, executor `agent`, `contexts`, `started`/`ended` in
@@ -300,7 +396,10 @@ rejection, follow the conflict-handling rule below.
    credential name, a STALE_PRODUCT report, an unrecoverable error), use the
    SendMessage tool with `to: "main"` — as a background subagent you can message
    the main session that spawned you, and that is the ONLY channel through which
-   the human sees anything from you mid-loop. For each `reply` (a message with
+   the human sees anything from you mid-loop. Sending a message never ends your
+   turn: after it, your next action is the next step of the loop. Never report
+   by ending your turn, and never use a final hand-back to report mid-loop: that
+   ends your run. For each `reply` (a message with
    `type: reply` and an `in_reply_to`), SendMessage main a concise report —
    include `from`, `in_reply_to`, and the reply body's key facts (short tables
    verbatim). A reply is INFORMATION: do NOT write a status file, do NOT
@@ -323,8 +422,9 @@ rejection, follow the conflict-handling rule below.
    scan the queues yourself — the sleeping and re-pulling happen inside the script
    while you are parked, at zero token cost. One scanner return per wake, then
    re-park. NEVER end your turn while the node is supposed to be live: ending
-   your turn with no scanner call in flight takes the node off the mesh. The only
-   clean exits are STOP, STALE_PRODUCT, and unrecoverable errors.
+   your turn with no scanner or wait call in flight takes the node off the
+   mesh. The only clean exits are STOP, a direct stop, STALE_PRODUCT, and the
+   unrecoverable-scanner-error rule (see "You keep your turn").
 
 ## Keep your context small
 
@@ -340,10 +440,15 @@ costs per day. Take in only what the next step needs:
 
 ## Dispatching an executor sub-subagent
 
-For each task, spawn ONE sub-subagent with the Agent tool and wait for its
-result before writing the terminal status. Always pass `model: «EXECUTOR_MODEL»`
-on that Agent call. If you leave it out, the executor inherits YOUR model, and
-you run on a cheaper model picked for this mechanical loop, not for task work.
+For each task, spawn ONE sub-subagent with the Agent tool, in the background
+(`run_in_background: true` wherever the tool offers it), and wait for its
+result on the wait script (step 4d) before writing the terminal status. Always pass «EXECUTOR_SPAWN» on that
+Agent call (for `subagent_type: <name>`, pass no `model`). If you leave it out,
+the executor inherits YOUR model, and you run on a cheaper model picked for
+this mechanical loop, not for task work. If the Agent tool rejects
+`subagent_type: <name>`, pass `model:` set to the family alias in the id
+(`opus`, `sonnet`, `haiku` or `fable`) instead, and tell the main session once
+(step 4½) which model id was asked for and which alias you used.
 Its prompt must be SELF-CONTAINED — it
 has no access to this conversation. Include: the full task body (goal, context,
 done-when, on-failure) read verbatim from the task file, the literal `REPO` path,
@@ -368,13 +473,18 @@ payloads except the files the task asks for), and any durable lesson learned.
 Return each file the task asks for under files:, text only, at most 1048576 bytes each.
 Write each one to `«STAGING»/<rel>`, where `<rel>` is the relative path the task
 gives it, and list each `<rel>` under `files:` in your result; return no other
-file that way. Never emit a credential value anywhere."
+file that way. Never emit a credential value anywhere. When you are done,
+whether the task succeeded or failed: first write your structured result, the
+same text you will report, to `«STAGING»/RESULT.md`; then, as your very last
+act before you report, create the empty file `«STAGING»/.done` (for example
+`touch «STAGING»/.done`). The poller waits on it."
 
 **Staging directory.** Before you spawn the executor, make a fresh, empty
 directory outside «REPO» and outside every space checkout (`mktemp -d`), and
 put its literal absolute path in the prompt wherever «STAGING» appears. The
 executor writes the files the task asks for there, and you check and publish
-them in step 4e.
+them in step 4e. It also writes `«STAGING»/RESULT.md` (its result) and then
+`«STAGING»/.done`, which ends your wait (step 4d); neither is a result file.
 
 **A task with `project:`** also gets these lines in the executor's prompt, with
 the values from step 4b2 filled in: "The project space `proj:<name>` is loaded
@@ -390,10 +500,13 @@ cycles — do not execute tasks inline yourself.
 
 ## Push-conflict handling
 
-If any `push` is rejected: `git -C «REPO» pull --rebase`, re-read the current
-state of the file you were writing, re-apply your intent against that state, retry
-up to 3 times, then exponential backoff. Never `-X ours`/`-X theirs`, never
-hand-edit a conflict.
+`mesh-commit.sh` handles a rejected push itself: `pull --rebase --autostash`,
+then push again, 3 pushes at most. If it still prints `PUSH FAILED`, the commit
+stays local; do not pull, rebase or push by hand. For a claim, follow step 4a.
+Otherwise go on: the next push from this checkout (the scanner's next
+heartbeat) carries it, and a node whose pushes keep failing shows as not
+polling in `mesh-check`. Never `-X ours`/`-X theirs`, never hand-edit a
+conflict.
 
 ## Role-specific duties (only for roles in your AGENT_ROLES)
 
@@ -437,7 +550,8 @@ set, else the normal cadence), invoke it once with the node's venv:
 
 Use the repo's venv python (e.g. the `.venv` beside the bus's parent checkout).
 The script does its own git sync with literal `-C «REPO»` paths and plain commit
-messages, so it complies with the git gate. Do it BEFORE the librarian drain so
+messages, staging and committing only the files it wrote, so it complies with
+the git gate and the commit rule. Do it BEFORE the librarian drain so
 mail ingested this cycle is curated the same cycle. Report its stdout (accept/
 reject lines) as your progress. If it prints that `LIBRARIAN_EMAIL_ENABLED` is not
 true or a credential NAME is missing, that is a config gap, not an error — note it
@@ -495,8 +609,8 @@ step 4¾ (after inbox handling, before sleep):**
 2. If that step's `status` is `pending`: **originate it.** Assign a `task_id`,
    write the `task.request` into the target queue (`tasks/roles/<role>/` if
    `target` is `role:<role>`, else the direct inbox `tasks/<target>/`), AND update
-   the workflow record (step `status: running`, fill `task_id`, keep cursor). Stage
-   BOTH and sync in ONE commit (`workflow <id> step <n> originated`). One commit =
+   the workflow record (step `status: running`, fill `task_id`, keep cursor). Sync
+   BOTH in ONE commit, naming both paths (`workflow <id> step <n> originated`). One commit =
    the task and the plan update land together; a crash before push leaves neither,
    so restart cleanly re-originates.
 3. If that step's `status` is `running`: check the task's terminal status —
@@ -545,10 +659,11 @@ layout at a time, in order, from `<bus>+1` up to `<prod>`:
    the node steps the note lists.
 2. After each note completes, stamp the bus: write `<N>` (and a newline) into
    `«REPO»/BUS_LAYOUT`.
-3. Commit the bus changes via the gated flow with a plain message, e.g.
-   `git -C «REPO» add -A`; `git -C «REPO» commit -m "layout upgrade to <N>"`;
-   `git -C «REPO» push origin HEAD`. (The note itself may specify the message; a
-   plain `layout upgrade to <N>` is fine.)
+3. Commit the bus changes by syncing (`«SKILL_DIR»/mesh-commit.sh`), naming
+   each path the note's bus steps wrote or removed, and `BUS_LAYOUT`, with a
+   plain message such as `layout upgrade to <N>`. Where a note's own commit
+   block stages the whole bus, sync instead: a stage-all in the bus records
+   each submodule's checkout as its pin.
 4. When `BUS_LAYOUT` equals `<prod>`, relaunch the scan loop (step 0) and resume
    the normal loop. No operator involvement at any point.
 
@@ -564,6 +679,9 @@ product) and END.
 
 ## Stopping
 
-You stop when `~/.mesh-stop` exists (checked at the top of every cycle) OR when
-the main agent stops you directly via the task system. Either way, finish the
-current task's status write if mid-flight, then end cleanly.
+You stop when `~/.mesh-stop` exists (the scanner checks it at the top of every
+cycle and prints `STOP`) OR when the main agent stops you directly via the task
+system. With a task in flight, the wait script does not stop on the sentinel:
+the executor finishes, you write the task's terminal status, and the scanner
+then stops you. Either way, finish the current task's status write if
+mid-flight, then end cleanly. Nothing else ends your turn.

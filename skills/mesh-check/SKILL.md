@@ -1,6 +1,6 @@
 ---
 name: mesh-check
-description: Check the agent mesh for what's new — pull the coordination repo and summarize replies to you, task results, status changes, new tasks, node registrations, and lore since your last check. This is the operator's READ verb, the counterpart to mesh-post's SEND. The mesh never pushes to you; you learn every outcome by pulling the ledger. Use when you (operator or node) want to see responses to what you posted, or catch up on mesh activity. Read-only — never writes the ledger.
+description: Check the agent mesh for what's new — pull the coordination repo, name any node that has stopped polling, and summarize replies to you, task results, status changes, new tasks, node registrations, and lore since your last check. This is the operator's READ verb, the counterpart to mesh-post's SEND. The mesh never pushes to you; you learn every outcome by pulling the ledger. Use when you (operator or node) want to see responses to what you posted, or catch up on mesh activity. Read-only — never writes the ledger.
 allowed-tools: Read, Bash, Glob, Grep
 ---
 
@@ -47,6 +47,31 @@ operator escape hatch. **Never** `reset --hard` on a clone that is also a node o
 uncommitted work — reset only a throwaway operator clone. If a running poller is
 mid-commit, a transient balk is fine: report against local HEAD and move on.
 
+## Step 2½ — name the nodes that stopped polling
+
+Every live node rewrites `last_poll` in its own `agents/<id>.yaml` once per poll
+interval, while an executor runs too (PROTOCOL §4.3). Run the script beside this
+skill, with the literal path of this skill directory and the literal repo path:
+
+```bash
+/abs/path/to/this/skill/mesh-stale.sh /abs/repo
+```
+
+It is read-only. It prints one line per node whose last poll is older than 3
+of its poll intervals, `NOT POLLING <agent_id> <agent_name>: last poll <age> s
+ago at <last_poll>, interval <interval> s; holds <held>`, and one line per node
+with no `last_poll`, `NO LAST POLL <agent_id> <agent_name>; holds <held>`.
+`<held>` names each task the node holds in `accepted` or `running`, or says
+`nothing`. A held task on a node that is not polling is stuck: no executor is
+working on it. Two exceptions (PROTOCOL §4.3): a node whose client runs an
+executor in the foreground writes no heartbeat while that executor runs, and
+poller-side work over many turns (many result files, a librarian drain, an
+archiver sweep) writes none either; such a node can be flagged while working.
+
+Report these lines **verbatim and first**, under the heading
+`Nodes not polling`, before the buckets of Step 4. If the script prints
+nothing, write `none` under the heading. Do not reword, merge or drop a line.
+
 ## Step 3 — pick the window (what "new" means)
 
 Report the range `BASE..HEAD`. Choose `BASE` in this order:
@@ -61,8 +86,9 @@ Report the range `BASE..HEAD`. Choose `BASE` in this order:
 
 If `BASE` resolves empty (window predates the repo) or the user asks for everything,
 use the empty-tree sha (`git -C /abs/repo hash-object -t tree /dev/null`) as `BASE` to
-show all history. If `BASE == HEAD`, report "nothing new since last check" and stop —
-still advance the watermark (Step 5) so the timestamp of the check is current.
+show all history. If `BASE == HEAD`, report the `Nodes not polling` lines of Step 2½,
+then "nothing new since last check", and stop — still advance the watermark (Step 5)
+so the timestamp of the check is current.
 
 Get the changed paths once:
 
@@ -72,7 +98,8 @@ git -C /abs/repo diff --name-status <BASE>..HEAD
 
 ## Step 4 — bucket and summarize, most-useful-first
 
-Group the changed paths and report each bucket with a count and a short human summary.
+After the `Nodes not polling` lines of Step 2½, group the changed paths and report each
+bucket with a count and a short human summary.
 **Read the bodies and summarize in your own words** — do not dump raw files; that
 judgment is why this is a skill and not a grep. Buckets, in order:
 
@@ -89,7 +116,10 @@ judgment is why this is a skill and not a grep. Buckets, in order:
    inboxes (excluding the replies already covered). Shows work entering the mesh:
    id, `from`, `to`, `type`.
 5. **Node registrations** — `agents/*.yaml`. New nodes joining, or a node's
-   `repo_commit`/roles drifting between sessions.
+   `repo_commit`/roles drifting between sessions. A change to `last_poll` alone
+   is a node's heartbeat, not news: do not report it (check with
+   `git -C /abs/repo diff <BASE>..HEAD -- agents/<id>.yaml`). Liveness is
+   covered by `Nodes not polling` above.
 6. **Library / lore** — `memory/**`. New or updated durable knowledge (the librarian's
    output); name the record and its category.
 

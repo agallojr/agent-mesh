@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
-# mesh-scan-loop.sh — read-only mesh poll loop. The Claude poller parks on this
+# mesh-scan-loop.sh — mesh poll loop, read-only but for its last_poll heartbeat
+# (below). The Claude poller parks on this
 # script as ONE SYNCHRONOUS Bash call and acts on its exit. It exits when there
 # is real work (or a stop/layout signal), or with IDLE at MAX_WAIT_SEC — the
-# poller re-launches immediately on IDLE (a token-trivial re-park, no commits).
+# poller re-launches immediately on IDLE (a token-trivial re-park).
 # The deadline sits under the 5-min prompt-cache TTL, so each re-park reads the
 # poller's context from cache; a longer park lets the cache expire and the
 # re-park re-writes the whole context at the cache-write price. Never
 # launch it as a background call: a background child is not guaranteed to
-# survive the poller ending its turn, which orphans the node. Does NO gated
-# git — add/commit/push stay inside Claude; the read-only pull/submodule-update
-# here were never gated, so a variable REPO path is fine (the literal-path rule
-# only guards the gate).
+# survive the poller ending its turn, which orphans the node.
+#
+# Heartbeat (PROTOCOL 4.3): each scan iteration rewrites last_poll (UTC, to
+# the second) in the node's own agents/<AGENT_ID>.yaml and pushes it through
+# mesh-commit.sh, in a commit that holds only that file, so a node whose
+# poller has stopped shows an old last_poll (mesh-check's mesh-stale.sh). A
+# scan within half a poll interval of the last heartbeat writes none, so a
+# re-park does not double it. A failed push neither stops nor delays the
+# scan: the next nap is cut by the time the heartbeat took. Nothing here runs
+# after the scanner exits, so nothing writes last_poll once the poller stops.
+# A node with no agents/<AGENT_ID>.yaml gets no heartbeat. These heartbeats
+# are the scanner's only git writes; mesh-commit.sh applies the git gate's
+# rules to them itself. The pull and submodule updates stay read-only and
+# ungated; a gitlink staged in the index is lifted out around the pull, so
+# the rebase of an unpushed heartbeat cannot record it as a pin.
 #
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
 #        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 240 (4 min). A call
@@ -41,6 +53,7 @@
 set -uo pipefail
 
 REPO="${1:?repo path}"
+SCAN_DIR=$(cd "$(dirname "$0")" && pwd)
 
 update_paths() {  # submodule paths a cycle updates, one per line, file order
   git config -f "$REPO/.gitmodules" --get-regexp '^submodule\..*\.path$' \
@@ -71,6 +84,12 @@ touch "$SEEN" 2>/dev/null || true
 # disables the deadline (old block-forever behavior, for non-harness callers).
 SECONDS=0
 
+# mesh-commit.sh's functions (sourcing runs nothing): the gitlink lift
+# and the heartbeat (mc_heartbeat, with REPO, AGENT_ID and POLL set).
+. "$SCAN_DIR/mesh-commit.sh"
+MC_PARENT=$PPID  # a heartbeat is never written once this caller is orphaned
+MC_HEARTBEAT_PUSHES=1  # one push per heartbeat: the next scan's pull carries it
+
 fm() {  # fm <key> <file> -> first frontmatter value for key
   sed -n "s/^$1:[[:space:]]*//p" "$2" | head -1
 }
@@ -85,9 +104,19 @@ claimable() {  # exit 0 iff task file is claimable now (actionable + no status)
 
 while :; do
   [ -f "$HOME/.mesh-stop" ] && { echo STOP; exit 2; }
+  iter_start=$SECONDS
 
-  # read-only, ungated; failures are transient -> keep looping
-  git -C "$REPO" pull --rebase --quiet 2>/dev/null || true
+  # read-only, ungated; failures are transient -> keep looping. A staged
+  # gitlink is lifted out around the pull and put back (mesh-commit.sh). A
+  # rebase this pull starts and that stops on a conflict is aborted, so the
+  # checkout is never left mid-rebase; the local commit stays as it was. A
+  # rebase or merge already in progress (by hand, say) is left alone: no pull.
+  if ! mc_in_progress; then
+    mc_lift_gitlinks
+    git -C "$REPO" pull --rebase --quiet >/dev/null 2>&1 || \
+      git -C "$REPO" rebase --abort >/dev/null 2>&1 || true
+    mc_restore_gitlinks
+  fi
   # One submodule per call, so one bad path never blocks the rest. stdin is
   # /dev/null so git cannot read the path list the loop is iterating.
   while IFS= read -r p; do
@@ -146,6 +175,10 @@ EOF
     fi
   done
 
+  # The scan is done: record it (the heartbeat), then act on what it found.
+  # An orphaned scanner (its caller gone) writes none and ends.
+  mc_heartbeat || { [ $? -eq 3 ] && { echo IDLE; exit 5; }; }
+
   if [ "${#hits[@]}" -gt 0 ]; then
     printf 'WORK\n'; printf '%s\n' "${hits[@]}"; exit 0
   fi
@@ -153,12 +186,14 @@ EOF
   # IDLE deadline: return before the cache TTL so the poller re-parks on a
   # cache read. The last sleep is cut to the time left, then one final scan
   # runs, so a POLL at or above MAX_WAIT still sleeps before IDLE instead of
-  # returning at once and making the poller re-park every few seconds.
-  nap="$POLL"
+  # returning at once and making the poller re-park every few seconds. The
+  # nap is also cut by the time this iteration took, so a slow heartbeat
+  # push does not delay the next scan.
+  nap=$(( POLL - (SECONDS - iter_start) ))
   if [ "$MAX_WAIT" -gt 0 ] 2>/dev/null; then
     left=$(( MAX_WAIT - SECONDS ))
     [ "$left" -gt 0 ] || { echo IDLE; exit 5; }
     [ "$left" -lt "$nap" ] && nap="$left"
   fi
-  sleep "$nap"
+  [ "$nap" -gt 0 ] 2>/dev/null && sleep "$nap"
 done
