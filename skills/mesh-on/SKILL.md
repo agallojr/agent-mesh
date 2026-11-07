@@ -1,6 +1,6 @@
 ---
 name: mesh-on
-description: Enter the agent-mesh node loop. Spawns a background poller subagent that watches this node's role queues in the coordination repo, claims each task (accept-as-claim), dispatches it to an executor subagent, and syncs status/results via git. The main session stays interactive; stop with /mesh-off. Use when the user wants this machine to join or resume the mesh.
+description: Enter the agent-mesh node loop. Spawns a background poller subagent that watches this node's role queues in the coordination repo, claims each task (accept-as-claim), dispatches it to a background executor subagent (up to the node's worker cap at once), and syncs status/results via git. The main session stays interactive; stop with /mesh-off. Use when the user wants this machine to join or resume the mesh.
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, TaskList
 ---
 
@@ -40,7 +40,8 @@ cat ~/.agent-identity.env
 Extract `AGENT_ID`, `AGENT_NAME`, `AGENT_CONTEXT`, `POLL_INTERVAL_SEC`,
 the optional `MESH_HEARTBEAT_SEC` (default 900), `AGENT_ROLES` (comma-separated; becomes the registration `roles` list and the set
 of `tasks/roles/<role>/` queues this node monitors), `REPO_PATH`, and the optional
-`MESH_PRODUCT_TRACK`, `MESH_POLLER_MODEL` and `MESH_EXECUTOR_MODEL`. A lone legacy
+`MESH_PRODUCT_TRACK`, `MESH_POLLER_MODEL`, `MESH_EXECUTOR_MODEL` and
+`MESH_MAX_WORKERS`. A lone legacy
 `AGENT_ROLE` is read as a one-role list. If `~/.agent-identity.env`
 is missing, STOP and tell the user to create it from
 `product/templates/agent-identity.env.template` in the bus. `REPO_PATH` must be a
@@ -76,6 +77,23 @@ prints `NEW DEFINITION <path>`, tell the user once, in one line, that
 Claude Code loads agent definitions at session start: this session may run
 that agent on the id's family alias (the start report then shows a fallback)
 until they restart it and run `/mesh-on` again.
+
+Read the worker cap with the script beside this skill, passing the value of
+`MESH_MAX_WORKERS` as the shell reads the identity file (empty when it is
+absent):
+
+```bash
+/abs/path/to/this/skill/mesh-workers.sh cap \
+  "$(. ~/.agent-identity.env >/dev/null 2>&1; printf '%s' "${MESH_MAX_WORKERS-}")"
+```
+
+It prints exactly one line: `max workers: <n>`, or
+`max workers: 3 (MESH_MAX_WORKERS=<value> is not usable)` when the value is
+not a whole number of at least 1 written with no sign, space or leading zero.
+Keep the line for the start report (Step 5), and fill the poller prompt's
+«MAX_WORKERS» with its number `<n>` (3 in the second form). The cap is the
+most tasks the poller runs at once; it counts every task alike, so a serial
+solver budget stays the executor's to honor.
 
 ## Step 2 — clear any stale stop sentinel
 
@@ -204,17 +222,26 @@ runs on the poller's model.
   "<the id it sent>" "<any notice Claude Code showed you when you spawned it>"
 ```
 
-and show the user its output, verbatim and nothing else: one line
-`poller model: <model id>`, and exactly one more line
+and show the user its output, verbatim, then the `max workers:` line from
+Step 1, verbatim, and nothing else: one line `poller model: <model id>`,
+exactly one more line
 `model fallback: requested <value>, running <model id>` when the poller is not
 on the model asked for (an alias the organization's settings restrict, whose
 notice reads `Model "<value>" is restricted by your organization's settings.
-Using <id> instead.`, or a full id it could not run on). With no fallback there
-is no second line. Polling goes on either way.
+Using <id> instead.`, or a full id it could not run on), and last the
+`max workers:` line. With no fallback there is no fallback line. Polling goes
+on either way.
 
-While an executor runs (in the background, in an interactive session), the
-poller parks the same way on `mesh-wait.sh`, which keeps the heartbeat going
-until the executor is done, and never ends its turn to wait.
+**Workers.** The poller does not wait on an executor. At its start it makes a
+workers folder (`mktemp -d`, outside the bus and every space checkout, its own
+for that session), and it runs each task's executor in the background as a
+worker, in that task's subfolder there, and goes on polling: up to its cap
+(«MAX_WORKERS») at once, with cancels, queries, replies and the role duties
+acted on at any load. It passes `MESH_WORKERS_DIR` and `MESH_MAX_WORKERS` on
+every scanner call; the scanner counts the workers, holds back new
+`task.request`s at the cap, and reports each worker's end (`FINISHED`) or
+deadline (`TIMEOUT`). A `task.cancel` naming a running task stops its worker
+and the processes it recorded. `mesh-wait.sh` is not used by this poller.
 
 The poller does NOT burn inference polling. It parks on ONE **synchronous** Bash
 call to the shell scanner (`mesh-scan-loop.sh`) — never a background call: a
@@ -232,8 +259,8 @@ a scan past that interval rewrites `last_poll` in this node's
 The scanner runs on macOS and Linux (bash 3.2+, no external `timeout`).
 
 Pass `MESH_HEARTBEAT_SEC` (from the identity file; 900 when unset) to the
-poller the same way: it goes on the scanner and wait command lines, which read
-it from their environment.
+poller the same way: it goes on the scanner command line, which reads it from
+its environment.
 
 Pass `MESH_PRODUCT_TRACK` through to the poller so it reaches the scanner. You
 sourced `~/.agent-identity.env`, so the value (if any) is in your environment;
@@ -251,11 +278,14 @@ checkout — report and stop, never guess forward. Both are agent-driven with no
 operator involvement.
 
 Record the returned poller handle (agent id) in your own context and also note it
-for the user, so `/mesh-off` in THIS session can stop it directly. Cross-session,
-`/mesh-off` stops it via the `~/.mesh-stop` sentinel regardless.
+for the user, so `/mesh-off` in THIS session can stop it directly (at once).
+Cross-session, `/mesh-off` stops it via the `~/.mesh-stop` sentinel regardless:
+the poller then claims no new task, lets its running workers finish, writes
+their terminal statuses, and stops once none is left.
 
 ## Step 6 — report and return
 
 Tell the user, in one or two lines: node name/id, role, context, poll interval,
-that the poller is running in the background, and that `/mesh-off` stops it. Then
+the worker cap, that the poller is running in the background, and that
+`/mesh-off` stops it. Then
 return control — do NOT block or loop in the main session.

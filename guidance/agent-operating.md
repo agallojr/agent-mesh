@@ -105,8 +105,10 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    a cycle updates and exits before any pull. Then it scans
    `tasks/roles/<role>/` for each role in `AGENT_ROLES` plus your inbox
    `tasks/<your-id>/`, sleeps, and repeats — and exits ONLY
-   when it finds a claimable task / fresh reply (`WORK` + paths), `~/.mesh-stop`
-   exists (`STOP`), the idle deadline hits (`IDLE`, ~4 min — re-park immediately),
+   when it finds a claimable task / fresh reply (`WORK` + paths), one of your
+   workers has finished or passed its deadline (`WORK` + `FINISHED <id>` or
+   `TIMEOUT <id>`, step 5), `~/.mesh-stop` exists and no worker is left
+   (`STOP`), the idle deadline hits (`IDLE`, ~4 min — re-park immediately),
    or the bus layout drifts from the product's expected layout
    (`UPGRADE` / `STALE_PRODUCT`). While it blocks you are parked at zero token cost;
    the harness re-invokes you on exit. **An idle node spends no inference, and its
@@ -118,10 +120,13 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    On `UPGRADE` the poller applies the product's
    `upgrades/to-<N>.md` notes in order, stamps `BUS_LAYOUT`, commits, and resumes;
    on `STALE_PRODUCT` it reports and stops (the `mesh-on` skill carries the detail).
-2. Classify what the scanner returned. It lists only claimable messages (a
-   `task.request`/`task.cancel`/`query` with no `status/<id>.json` yet) and each
-   fresh reply once. Re-check claimability at claim time, since another node may
-   have claimed a task between the scan and your write.
+2. Classify what the scanner returned. It lists the worker lines first, then
+   only claimable messages (a `task.request`/`task.cancel`/`query` with no
+   `status/<id>.json` yet) and each fresh reply once. Cancels and queries come
+   at any load; `task.request`s only up to your free worker slots
+   (`MESH_MAX_WORKERS`, 3 by default), and none once `~/.mesh-stop` is up.
+   Re-check claimability at claim time, since another node may have claimed a
+   task between the scan and your write.
 3. **Claim each candidate before doing any work:** write status `accepted` with
    `agent_id` = you, then sync it through `mesh-commit.sh`, naming
    `status/<id>.json` (the commit rule, above). **If it prints `PUSH FAILED`**,
@@ -150,14 +155,22 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    mistake instead of repeating it. Discovery is a grep over each record's
    front-matter — there is no index, by design (PROTOCOL §7). Cite any lore id
    you relied on in the result you return.
-5. Write status `running`, sync, then execute: dispatch an executor
-   sub-subagent, and while it runs park on `skills/mesh-on/mesh-wait.sh` as ONE
-   synchronous call, re-parking until it prints `DONE` or `TIMEOUT` (it keeps
-   the heartbeat going). The executor runs in the background, so never end your turn to wait
-   for it: that leaves the node deaf. Do NOT rewrite status on a timer while it runs — write
-   status only at real transitions. The node's timer-driven write is its
-   `last_poll` heartbeat, never a status file.
-6. On finish: for a `task.request`, status `done` or `failed`, and write
+5. Write status `running`, sync, then execute: make the task's worker
+   subfolder in your workers folder (one per poller session, made with
+   `mktemp -d` at its start), write its `deadline`, dispatch an executor
+   sub-subagent in the background with that subfolder as its staging folder,
+   and go straight back to the scanner: you never wait on an executor
+   (`skills/mesh-on/mesh-wait.sh` is not used). The scanner reports its end as
+   `FINISHED <id>`, or `TIMEOUT <id>` once its `timeout_min` has passed; on a
+   timeout, or a `task.cancel` naming it, you stop its worker and the
+   processes it recorded (`skills/mesh-on/mesh-workers.sh stop`) and write
+   `failed` or `cancelled`, publishing no result. Never end your turn to wait
+   for an executor: that leaves the node deaf. Do NOT rewrite status on a timer
+   while it runs — write status only at real transitions. The node's
+   timer-driven write is its `last_poll` heartbeat, never a status file.
+6. On finish (`FINISHED`, while the task's status is still yours and
+   `running`; a task cancelled or timed out meanwhile publishes nothing): for
+   a `task.request`, status `done` or `failed`, and write
    `outbox/<your-id>/<task-id>-result.md`. The result holds pointers, never
    payloads, except the files the task asks for (PROTOCOL §5.1). The executor
    stages those outside the bus. You check each one: a regular file, never a

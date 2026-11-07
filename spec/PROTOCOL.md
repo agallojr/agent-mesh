@@ -296,6 +296,7 @@ AGENT_NAME=frontier-login       # human-readable, mutable, display only
 AGENT_CONTEXT=frontier-login    # scopes lore relevance
 POLL_INTERVAL_SEC=300
 MESH_HEARTBEAT_SEC=900          # optional; heartbeat interval in s, default 900
+MESH_MAX_WORKERS=3              # optional; most tasks run at once, default 3
 AGENT_ROLES=build,slurm.submit,results.groom,install   # comma-separated roles
 REPO_PATH=/ccs/home/agallojr/agent-mesh   # literal absolute path; no $HOME/~
 ```
@@ -318,6 +319,16 @@ monitors (`tasks/roles/<role>/`) and the unit senders address. A lone legacy
 literal absolute path (no `$HOME`, `~`, or other expansion) and must appear
 verbatim in the node's `~/.claude/mesh-git-allowlist.txt`, or the git gate denies
 the mesh's own syncs.
+
+`MESH_MAX_WORKERS` is the node's worker cap: the most `task.request`s its
+poller runs at once (§8). A usable value is a whole number of at least 1,
+written with no sign, space or leading zero (`^[1-9][0-9]*$`), and the cap is
+that number. Unset or empty, the cap is 3. Any other value (`0`, `two`, `-1`,
+`07`, ` 2`) also gives 3, and `mesh-on`'s start report says so in one line,
+`max workers: 3 (MESH_MAX_WORKERS=<value> is not usable)`
+(`skills/mesh-on/mesh-workers.sh cap`). The cap counts every task alike; a
+serial budget for heavy runs stays the executor's to honor. Cancels, queries,
+replies and the role duties take no slot and run at any load.
 
 ### 4.2 `~/.agent-credentials.env` (mode 600)
 
@@ -389,9 +400,11 @@ Three fields carry the node's liveness:
   `running` is stuck; `mesh-check` names both
   (`skills/mesh-check/mesh-stale.sh`). A `heartbeat_sec` that is absent or not a
   whole number is read as 900 s.
-- While an executor runs, the poller parks on `skills/mesh-on/mesh-wait.sh`,
-  which writes the heartbeat. Two gaps remain, in which a working node writes
-  no heartbeat and, past 3 heartbeat intervals, is flagged:
+- While its workers run, the poller goes on parking on the scanner, which
+  writes the heartbeat (§8). (`skills/mesh-on/mesh-wait.sh`, the wait an
+  earlier poller prompt parked on, is not used by the current one.) Two gaps
+  remain, in which a working node writes no heartbeat and, past 3 heartbeat
+  intervals, is flagged:
   - an executor that the client runs in the foreground, with no way to run
     it in the background (the poller asks for the background wherever the
     Agent tool offers it): no heartbeat is written while it runs;
@@ -544,6 +557,21 @@ and the space's librarian files them (memory-spaces §6.3).
 `mesh-post --project <value>` writes the field as the line after
 `timeout_min:` and refuses a value that does not match.
 
+**Cancels:** a `task.cancel` names the task it cancels in its front-matter,
+`cancels: <task id>`, and is posted to the node that claimed that task
+(normally its direct inbox). The claiming node acts on it at any load (§8):
+a task it is running has its worker and each process the worker recorded
+stopped and ends `cancelled`, with no result published, then or later; a task
+it holds `accepted` or `blocked`, or `running` with no worker (one an earlier
+poller session started), ends `cancelled`; a task that has ended (`done`,
+`failed`, `cancelled`) is left as it is. In each of those cases the cancel
+ends `done`, its `progress` naming what it did. A cancel with no `cancels:`
+line, or naming a task with no status or one another node holds, ends
+`failed` with an `error` saying which. `mesh-post --cancels <task id>` writes
+the field after `timeout_min:` (and after `project:` when given); it is
+allowed only with `--type task.cancel`, and the value must match
+`^[0-9]{8}T[0-9]{4}-[0-9]{4}$`, or it exits 1 and writes nothing.
+
 **Replies route to the sender's inbox.** A `reply` (and its `in_reply_to`) is
 written as a new file in `tasks/<original-sender-id>/`, not into the responder's
 outbox. This lets every node sense the responses to messages it sent using the
@@ -579,8 +607,10 @@ files:
   committed with the result. Like the rest of the outbox it is new files only,
   written by that agent only (§3.1).
 - **Limits.** Files are text only (UTF-8 with no NUL byte), at most 1048576
-  bytes (1 MiB) each. A file that breaks a rule here is neither written nor
-  listed; the result's body names its path and the rule it broke.
+  bytes (1 MiB) each. A `path` equal to `deadline`, `executor`, `pids`,
+  `RESULT.md` or `.done` is a worker's control file (§8), never a result file.
+  A file that breaks a rule here is neither written nor listed; the result's
+  body names its path and the rule it broke.
 - **No files, no key.** A result that returns no files has no `files:` key and
   no `-files/` folder.
 - **Retention.** The folder is swept with its task (§9).
@@ -626,8 +656,14 @@ node's liveness is the `last_poll` in its own `agents/<id>.yaml` (§4.3).
 accepted -> running -> done
                     -> failed
                     -> blocked   (missing credential or dependency)
+                    -> cancelled (a task.cancel, §5)
          -> cancelled
+blocked  -> cancelled
 ```
+
+A task's own node writes `cancelled` when it acts on a `task.cancel` naming
+the task (§5, §8): from `accepted`, `blocked` or `running`. A timeout is
+`failed`, with an `error` naming it.
 
 `log_tail` is capped at 20 lines and MUST be scrubbed of anything
 credential-shaped before writing.
@@ -1100,9 +1136,11 @@ Linux, no external `timeout`) that the poller runs as ONE **synchronous** call
 and blocks on. Synchronous is load-bearing: a background child is not guaranteed
 to survive the poller ending its turn, and an orphaned scanner silently takes
 the node off the mesh while it appears parked. The script exits when it finds a
-claimable task or a fresh reply (prints `WORK` + the file paths), when
-`~/.mesh-stop` exists (prints `STOP`), or at its idle deadline (prints `IDLE`,
-default 240 s), on which the poller immediately re-parks with no other action.
+claimable task or a fresh reply (prints `WORK` + the file paths), when one of
+the poller's workers has finished or passed its deadline (`WORK` +
+`FINISHED <id>` or `TIMEOUT <id>`), when `~/.mesh-stop` exists and no worker
+is left (prints `STOP`), or at its idle deadline (prints `IDLE`, default
+240 s), on which the poller immediately re-parks with no other action.
 While it blocks, the poller is parked on that one tool call and spends zero
 inference tokens. Each re-park re-sends the poller's context, so the deadline
 sits under the 5-min prompt-cache TTL: the re-park is then a cache read, where a
@@ -1116,6 +1154,55 @@ work. The read-only `pull`/`submodule update` inside the script are ungated;
 the heartbeat is the scanner's only write, and `mesh-commit.sh` applies the git
 gate's rules to it itself (the gate guards only the commands an agent types).
 Every other bus write happens inside the poller when it wakes.
+
+**Workers.** The poller never waits on an executor. It runs each claimed
+`task.request` as a **worker**: an executor sub-subagent in the background,
+whose staging folder is one subfolder, `<WORKERS_DIR>/<task id>/`, of a
+workers folder the poller makes once at its start (`mktemp -d`, outside the
+bus and every space checkout). The folder belongs to that poller session
+alone, so a restarted poller starts with no workers; a task an earlier session
+left `running` stays as it is. A subfolder counts against the node's cap
+(`MESH_MAX_WORKERS`, §4.1) from its creation until the poller removes it,
+after the task's terminal status is synced; names beginning with `.` are not
+workers. Its control files are `deadline` (whole s since the epoch: the
+dispatch time plus `timeout_min` × 60 s, 120 min when `timeout_min` is absent
+or not a whole number), `executor` (the executor's agent id), `pids` (one pid
+per line, appended by the executor right after it starts each process that
+can outlive one tool call), and `RESULT.md` then `.done`, the executor's
+result and end marker. None of these names is ever published as a result
+file (§5.1). The poller passes `MESH_WORKERS_DIR` and `MESH_MAX_WORKERS` on
+every scanner call, and the scanner then:
+
+- counts the subfolders as `running` (0 for a folder that does not exist);
+- lists first the worker lines, in task id order: `FINISHED <id>` for each
+  subfolder holding `.done`, and `TIMEOUT <id>` for each without `.done` whose
+  `deadline` is a whole number at or before now, repeated on every call until
+  the subfolder is removed;
+- then lists each claimable `task.cancel` and `query`, each fresh `reply`
+  and, on a librarian node, each undrained `library.submit`, at any load;
+- then the claimable `task.request`s, oldest first by `id:`, at most
+  `cap - running` of them, and none while the stop sentinel is up;
+- pulls, scans and writes its heartbeat once per poll interval as before, and
+  between scans checks the workers folder every 2 s (every poll interval when
+  that is less), returning at once with a worker line, or with `STOP`;
+- on the stop sentinel with workers running, goes on scanning, lists no
+  `task.request`, and prints `STOP` at its first check after the last
+  subfolder is removed; with none running it prints `STOP` at once;
+- prints `IDLE` at its deadline with nothing to list, workers running or not,
+  and writes nothing in the workers folder.
+
+With `MESH_WORKERS_DIR` unset or empty the scanner behaves as before workers
+(no cap, no worker lines, `STOP` at once on the sentinel), so a poller started
+on an earlier prompt keeps working. `skills/mesh-on/mesh-wait.sh`, the wait
+that earlier prompt parked on while one executor ran, is not used by the
+current prompt.
+
+To stop a worker (a timeout, or a cancel of a running task) the poller runs
+`skills/mesh-on/mesh-workers.sh stop <WORKERS_DIR> <task id>`, which sends
+TERM to each process listed in `pids` and to each of its descendants, then
+KILL 10 s later to any still running, and never signals pid 1 or its own
+ancestors; and it stops the executor through the task system where the tool
+is offered. A process the worker never recorded is not tracked.
 
 ```
 boot (mesh-on, main session):
@@ -1135,6 +1222,10 @@ boot (mesh-on, main session):
                                          on main; never --init a space here: a
                                          project space is cloned on first need)
   load guidance/CLAUDE.md chain          (base + user overlay + operating + perms)
+  skills/mesh-on/mesh-workers.sh cap "<MESH_MAX_WORKERS>"
+                                         (one line, max workers: <n>, shown in
+                                         the start report after the model
+                                         lines; <n> is the poller's cap)
   skills/mesh-on/mesh-register.sh /abs/repo
                                          (overwrite agents/<AGENT_ID>.yaml with
                                          registered_at and last_poll; commit that
@@ -1142,9 +1233,11 @@ boot (mesh-on, main session):
   spawn background poller subagent; return (session stays interactive)
 
 loop (poller subagent):
+  start: WORKERS_DIR = mktemp -d, once (this session's workers folder)
   0. PARK on the scanner -- ONE SYNCHRONOUS call (zero tokens while it blocks;
      never a background call, which can be orphaned by end-of-turn):
-       skills/mesh-on/mesh-scan-loop.sh /abs/repo <AGENT_ROLES> <AGENT_ID> <POLL>
+       MESH_WORKERS_DIR=<WORKERS_DIR> MESH_MAX_WORKERS=<cap> \
+         skills/mesh-on/mesh-scan-loop.sh /abs/repo <AGENT_ROLES> <AGENT_ID> <POLL>
      the script loops internally -- pull --rebase, then the boot block's
      per-path submodule updates (a code submodule --init --recursive, with
      --remote only in developer mode; a cloned space --remote --merge; a
@@ -1152,13 +1245,24 @@ loop (poller subagent):
      tasks/roles/<role>/ for each role plus the inbox tasks/<AGENT_ID>/,
      when last_poll is HEARTBEAT_SEC old, rewrite and push it in
      agents/<AGENT_ID>.yaml (the heartbeat), push any commit not on origin,
-     and sleep POLL between scans -- exiting on:
-       STOP (exit 2): ~/.mesh-stop exists -> end cleanly
-       WORK (exit 0) + file paths: claimable tasks and/or fresh replies found
+     and sleep POLL between scans, checking the workers folder every 2 s --
+     exiting on:
+       STOP (exit 2): ~/.mesh-stop exists and no worker is left -> end cleanly
+       WORK (exit 0) + lines: worker lines (FINISHED <id>, TIMEOUT <id>), then
+         claimable cancels and queries, fresh replies, undrained submits, then
+         claimable task.requests up to the free slots (none on the sentinel)
        IDLE (exit 5): idle deadline (240 s, under the cache TTL) -> re-park
          immediately, no other action
      an idle node cycles park -> IDLE -> re-park until work arrives.
-  1-2. classify each returned path by message type:
+  1-2. classify each returned line: worker lines first --
+       FINISHED <id>: if status/<id>.json is this node's and running ->
+         step 4's terminal write (result, files, status, one sync); otherwise
+         (cancelled or timed out meanwhile) publish nothing; then remove
+         <WORKERS_DIR>/<id>
+       TIMEOUT <id>: mesh-workers.sh stop <WORKERS_DIR> <id>; stop the executor
+         through the task system; status -> failed, error naming the timeout
+         and its timeout_min; sync; remove <WORKERS_DIR>/<id>; no result
+     then each path by message type:
        task.request/task.cancel/query (scanner lists only those with no status
          file) -> claimable work (step 3)
        reply (has in_reply_to; scanner surfaces each once) -> surface it (step 4½)
@@ -1170,20 +1274,34 @@ loop (poller subagent):
        retry the claim. The winning accepted write is both the claim and the
        liveness ACK. (A direct-inbox task has one consumer; the claim never contends.)
   4. task.request: verify creds; status blocked if missing names, else
-       status -> running; sync; dispatch executor sub-subagent; while it runs
-       (in the background), PARK on skills/mesh-on/mesh-wait.sh -- ONE
-       SYNCHRONOUS call, re-parked until DONE (TIMEOUT at the task's
-       timeout_min -> failed), heartbeat going; never end the turn to wait;
-       the stop sentinel takes effect at the next scan, after the task
+       status -> running; sync; make <WORKERS_DIR>/<id>/ and write its deadline;
+       dispatch the executor sub-subagent in the background with that folder
+       as its staging folder; write its agent id to executor; go on to the
+       next line without waiting (never end the turn to wait; its end comes
+       back as FINISHED <id>)
+     on FINISHED for a task still this node's and running:
        terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md;
        write each file the task asked for under outbox/<AGENT_ID>/<task-id>-files/
        and list it in the result's files: (§5.1);
        for a result-bearing task, ALSO submit a `runs` record (library.submit, §7)
        so the run's provenance outlives its swept scratch
-       (status is written only at transitions; last_poll is the heartbeat)
+       (status is written only at transitions; last_poll is the heartbeat);
+       sync, then remove <WORKERS_DIR>/<id>
+     task.cancel (claimed): read cancels: <T> and status/<T>.json --
+       <T> this node's and running, with <WORKERS_DIR>/<T>/: stop it as for a
+         timeout, <T> -> cancelled, remove the subfolder, publish no result
+       <T> this node's and accepted, blocked, or running with no subfolder:
+         <T> -> cancelled
+       <T> this node's and terminal (done, failed, cancelled): change nothing;
+         the cancel's progress says <T> had already ended, naming its state
+       in those three cases the cancel -> done, and its status and <T>'s are
+         synced in one commit naming both
+       no cancels: line, no status for <T>, or <T> another node's: the cancel
+         -> failed, error saying which
      query: write a reply into the SENDER'S inbox tasks/<sender-id>/ (type: reply,
        in_reply_to: <query id>); status -> done. Replies route to inboxes so the
-       sender's own inbox scan senses them -- outboxes are never polled.
+       sender's own inbox scan senses them -- outboxes are never polled. A query
+       takes no worker slot and is answered at any load.
   4½. for each reply in your inbox: surface it to the human (from, in_reply_to,
        body) via an out-of-band channel -- a parked poller never ends its turn,
        so transcript output is never delivered; a background poller messages its

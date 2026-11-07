@@ -113,7 +113,11 @@ An idle node's only commit is its heartbeat: `last_poll` in the node's own
 `agents/<id>.yaml` is rewritten and pushed once per heartbeat interval (900 s
 by default, `MESH_HEARTBEAT_SEC`; about 96 small commits per node per day),
 not on every scan, so `mesh-check` can name a node that has stopped polling. Claims,
-statuses and results stay proportional to real work.
+statuses and results stay proportional to real work. A busy node keeps
+parking on the same scanner while its tasks run in the background, up to its
+worker cap (`MESH_MAX_WORKERS`, 3 by default), so it still answers queries and
+acts on cancels (`mesh-post --type task.cancel --cancels <task id>`) at any
+load.
 
 Every commit the mesh tooling makes goes through `skills/mesh-on/mesh-commit.sh`,
 which stages only the paths it is given and never records a submodule pin.

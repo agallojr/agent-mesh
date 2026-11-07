@@ -26,7 +26,8 @@ You supply (judgment the script can't do):
   `query`, Goal + Context is enough). Inline every path, commit, branch, prior
   result, and lore id the reader needs. This is the intelligence; write it well.
 - **target(s), type, title** — and optionally priority, timeout, credentials,
-  and the project memory space the task works in (`--project`).
+  the project memory space the task works in (`--project`), and for a
+  `task.cancel` the task it cancels (`--cancels`).
 
 The script does (every mechanical, error-prone part — do NOT do these by hand):
 - resolves `from` (AGENT_ID from `~/.agent-identity.env`, else `op-main`) and the
@@ -37,8 +38,9 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
   earlier in the same run — so fanning one task out to N targets yields N distinct
   ids (status files are keyed by id in one global namespace, so shared ids collide);
 - emits the §5 frontmatter (with `project:` as the line after `timeout_min:`
-  when `--project` is given, and no `project:` line otherwise) and places each
-  file in the right queue;
+  when `--project` is given, and no `project:` line otherwise; then
+  `cancels: <task id>` when `--cancels` is given) and places each file in the
+  right queue;
 - **scope-commits only the files it wrote**, naming each on the add and the
   commit and never staging the bus whole, so it never records a submodule pin
   (PROTOCOL §8, "The commit rule"), with a plain-text message, and pushes with
@@ -65,7 +67,8 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
    `task.request` | `query` | `reply` | `task.cancel` | `library.submit` | …;
    `--title` is a kebab-case slug; optional `--priority low|normal|high` (default
    normal), `--timeout-min N` (default 120), `--credentials K1,K2` (KEY NAMES only,
-   never values), `--depends-on id1,id2`, `--project proj:<name>`, `--from <id>`,
+   never values), `--depends-on id1,id2`, `--project proj:<name>`,
+   `--cancels <task id>` (with `--type task.cancel` only), `--from <id>`,
    `--repo <path>`. Add `--dry-run` to write + stage without commit/push when you
    want to inspect first.
 
@@ -86,6 +89,16 @@ The script does (every mechanical, error-prone part — do NOT do these by hand)
   writes no message. The space must be mounted on the bus (`spaces.yaml`);
   posting does not check that, and a claiming node that cannot find it blocks
   the task.
+- **`--cancels` names the task a `task.cancel` stops.** Post the cancel to
+  the node that claimed the task (the `agent_id` in its `status/<id>.json`),
+  in its direct inbox: `--to <agent_id> --type task.cancel --cancels <task id>`.
+  The value must be a message id, `<YYYYMMDD>T<HHMM>-<NNNN>`
+  (`^[0-9]{8}T[0-9]{4}-[0-9]{4}$`). The script checks it while it reads its
+  arguments, and refuses `--cancels` with any other `--type`: either way it
+  exits 1 and writes no message. The claiming node stops a running task's
+  worker and the processes it recorded and sets the task `cancelled`; a task
+  not yet running (`accepted`, `blocked`) is set `cancelled`; a task that has
+  already ended is left as it is, and the cancel says so (PROTOCOL §8).
 - **Type tells the consumer what it is.** `task.request`/`query`/`task.cancel` are
   claimable work (get a `status/<id>.json`); `library.submit` is drained by the
   librarian and gets no status; `reply` is information the recipient just surfaces.

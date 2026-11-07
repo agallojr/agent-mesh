@@ -101,6 +101,30 @@ it and does the real work.
 Any node holding `build` claims it (accept-as-claim, so exactly one runs it even if
 several hold the role) and you track it via `status/<task-id>.json`.
 
+A node runs several tasks at once, up to its worker cap (`MESH_MAX_WORKERS` in
+its identity file, 3 by default; `/mesh-on` shows it as `max workers: <n>`).
+A task beyond the cap waits unclaimed in its queue until a running one ends,
+oldest first. A busy node still answers queries and acts on cancels at once,
+the cap included.
+
+**Cancel a task.** Post a `task.cancel` that names it, to the node that
+claimed it (the `agent_id` in `status/<task-id>.json`), in its direct inbox:
+
+```bash
+<repo>/product/skills/mesh-post/mesh-post.sh --to <agent_id> \
+  --type task.cancel --cancels <task id> --title cancel-<task id> \
+  --body-file <file saying why>
+```
+
+If the task is running, the node stops its worker and each process the worker
+recorded starting (TERM, then KILL after 10 s), sets it `cancelled`, and
+publishes no result for it; a task not yet running (`accepted`, `blocked`) is
+set `cancelled` too. A task that has already ended is left as it is, and the
+cancel's status says so. The cancel's own status ends `done`, or `failed` when
+it names no task, a task no node has claimed, or one another node holds. A
+running task also stops on its own at its `timeout_min`, ending `failed` with
+an error naming the timeout.
+
 **Launch a workflow** (an autonomous multi-step chain, recorded as
 `workflows/<id>.yaml` and driven by the node that owns it): post a request to a role
 whose holder drives workflows, e.g.:
@@ -178,6 +202,8 @@ information to surface, not as a new task.
   (`mesh-check`, `Nodes not polling`). Its `agent_id` in the status file is the
   claimant.
 - **running** — Work is actively in progress.
+- **cancelled** — A `task.cancel` stopped it (section 3, "Cancel a task"). No
+  result is published for it.
 - **done** — Completed; look for the result in the claimant's `outbox/`.
 - **failed** — The node tried and could not finish. Read the status/result for
   the reason; may need a nudge or a real-machine fix.
