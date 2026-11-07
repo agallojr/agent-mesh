@@ -30,28 +30,13 @@
 # ungated; a gitlink staged in the index is lifted out around the pull, so
 # the rebase of an unpushed heartbeat cannot record it as a pin.
 #
-# Worker mode (PROTOCOL 8): the poller runs each task's executor in the
-# background, in a worker subfolder <MESH_WORKERS_DIR>/<task id>/ (its staging
-# folder), and keeps parking here. With MESH_WORKERS_DIR set, each scan counts
-# the worker subfolders (names not beginning with `.`; a folder that does not
-# exist counts 0) as `running`, against the cap MESH_MAX_WORKERS (read as
-# mesh-workers.sh reads it: a whole number of at least 1 with no sign, space
-# or leading zero, else 3). It lists, after the worker lines, every claimable
-# task.cancel and query, each fresh reply and each undrained library.submit,
-# at any load; then claimable task.requests, oldest first by their id: value,
-# at most cap - running of them, and none while the stop sentinel is up. The
-# worker lines, in task id order, are `FINISHED <id>` for a subfolder holding
-# .done and `TIMEOUT <id>` for one without .done whose `deadline` file holds a
-# whole number of s since the epoch at or before now; they repeat on every
-# call until the poller removes the subfolder. The pull, the queue scan and
-# the heartbeat stay once per POLL_SEC; between them the folder is checked
-# every 2 s (every POLL_SEC when that is less), and a worker line, or the stop
-# sentinel with no worker left, ends the call at once. On the sentinel with a
-# worker running it goes on scanning, lists no task.request, and prints STOP
-# at its first check after the last subfolder is removed. It writes nothing in
-# the workers folder. With MESH_WORKERS_DIR unset or empty it behaves exactly
-# as before worker mode (no cap, no worker lines, STOP at once on the
-# sentinel), so a poller started on the older prompt keeps working.
+# Worker mode (PROTOCOL 8, "Workers"): with MESH_WORKERS_DIR set (the
+# poller's workers folder, one subfolder per running task) and
+# MESH_MAX_WORKERS (the cap, read as mesh-workers.sh cap reads it), WORK lists
+# the worker lines FINISHED <id> and TIMEOUT <id> first, then cancels,
+# queries, replies and submissions at any load, then the oldest task.requests
+# up to the free slots; STOP comes only once no worker is left. With
+# MESH_WORKERS_DIR unset or empty it behaves exactly as before worker mode.
 #
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
 #        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 240 (4 min). A call

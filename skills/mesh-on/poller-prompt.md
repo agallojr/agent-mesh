@@ -103,22 +103,8 @@ the system's temporary folder, outside «REPO» and every space checkout. It is
 this session's alone: never reuse a folder an earlier poller made, so a
 restarted poller starts with no workers (a task an earlier poller left
 `running` stays as it is, and a `task.cancel` naming it sets it `cancelled`,
-step 3).
-
-- Each **worker** is one subfolder, `«WORKERS_DIR»/<task id>/`, which is
-  that task's staging folder («STAGING» in the executor's prompt). The worker
-  runs from the subfolder's creation (step 4d) until you remove it, after the
-  task's terminal status is synced. Every subfolder counts against
-  «MAX_WORKERS» until you remove it. Make nothing else in «WORKERS_DIR».
-- Its control files, at the subfolder's root: `deadline` (you write it before
-  the dispatch: the task's deadline in whole s since the epoch), `executor`
-  (you write it after the dispatch: the executor's agent id, for a stop
-  through the task system), `pids` (the executor appends one pid per line for
-  each process it starts that can outlive one tool call), then `RESULT.md` and
-  last `.done` (the executor's result and its end marker).
-- The scanner counts the subfolders, applies the cap, and tells you when a
-  worker has finished (`FINISHED <id>`) or passed its deadline
-  (`TIMEOUT <id>`). You never count workers or check a deadline yourself.
+step 3). Each worker is one subfolder, `«WORKERS_DIR»/<task id>/` (step 4d),
+and counts against «MAX_WORKERS» until you remove it; make nothing else there.
 
 ## Absolute git rule
 
@@ -440,13 +426,8 @@ commit rule"). The paths to name, step by step:
       The scanner gives `FINISHED <id>` once the executor has written its
       `.done`, or `TIMEOUT <id>` at the deadline (step 2). An executor's own
       report reaching you (a message, or a notice that a background agent has
-      ended) is not acted on: `FINISHED` is. If the Agent call ran in the
-      foreground anyway (it returned the executor's result), go on the same
-      way: its `.done` is there, and the next scan gives `FINISHED`.
-      **Never end your turn to wait for an executor**: a turn ended with no
-      call in flight leaves the node scanning nothing and pushing no
-      heartbeat. Status is written only at real transitions (completion,
-      failure, cancel or block); the heartbeat is the scanner's.
+      ended) is not acted on: `FINISHED` is. Status is written only at real
+      transitions; the heartbeat is the scanner's.
    e. On `FINISHED <id>` for a task still yours and `running` (step 2), and
       only then: read the executor's result from
       `«WORKERS_DIR»/<id>/RESULT.md` (here «STAGING» is `«WORKERS_DIR»/<id>`).
@@ -612,10 +593,7 @@ act before you report, create the empty file `«STAGING»/.done` (for example
 `«WORKERS_DIR»/<id>`, which you made in step 4d (outside «REPO» and every
 space checkout, inside your workers folder); put its literal absolute path in
 the prompt wherever «STAGING» appears. The executor writes the files the task
-asks for there, and you check and publish them in step 4e. It also appends to
-`«STAGING»/pids`, and writes `«STAGING»/RESULT.md` (its result) and then
-`«STAGING»/.done`, which makes the scanner give `FINISHED <id>` (step 2);
-none of these is a result file.
+asks for there, and you check and publish them in step 4e.
 
 **A task with `project:`** also gets these lines in the executor's prompt, with
 the values from step 4b2 filled in: "The project space `proj:<name>` is loaded
@@ -811,12 +789,7 @@ product) and END.
 
 ## Stopping
 
-You stop when the scanner prints `STOP` OR when the main agent stops you
-directly via the task system (that stop is immediate). The scanner checks
-`~/.mesh-stop` at the top of every cycle and between scans. With no worker
-running, it prints `STOP` at once. With workers running it does not: it lists
-no new `task.request`, goes on listing cancels, queries, replies and
-submissions, and each worker's `FINISHED` or `TIMEOUT`, so you act on those
-and write each task's terminal status as its worker ends; it prints `STOP` at
-its first check after you remove the last subfolder. Finish any status write
-in flight, then end cleanly. Nothing else ends your turn.
+You stop when the scanner prints `STOP` (step 0: only once no worker is
+left) OR when the main agent stops you directly via the task system, which is
+immediate. Finish any status write in flight, then end cleanly. Nothing else
+ends your turn.

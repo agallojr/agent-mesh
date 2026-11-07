@@ -320,15 +320,10 @@ literal absolute path (no `$HOME`, `~`, or other expansion) and must appear
 verbatim in the node's `~/.claude/mesh-git-allowlist.txt`, or the git gate denies
 the mesh's own syncs.
 
-`MESH_MAX_WORKERS` is the node's worker cap: the most `task.request`s its
-poller runs at once (§8). A usable value is a whole number of at least 1,
-written with no sign, space or leading zero (`^[1-9][0-9]*$`), and the cap is
-that number. Unset or empty, the cap is 3. Any other value (`0`, `two`, `-1`,
-`07`, ` 2`) also gives 3, and `mesh-on`'s start report says so in one line,
-`max workers: 3 (MESH_MAX_WORKERS=<value> is not usable)`
-(`skills/mesh-on/mesh-workers.sh cap`). The cap counts every task alike; a
-serial budget for heavy runs stays the executor's to honor. Cancels, queries,
-replies and the role duties take no slot and run at any load.
+`MESH_MAX_WORKERS` is the node's worker cap, the most `task.request`s its
+poller runs at once (§8): a whole number of at least 1 written with no sign,
+space or leading zero (`^[1-9][0-9]*$`). Unset or empty it is 3; any other
+value is also 3, and `mesh-on`'s start report says the value was not usable.
 
 ### 4.2 `~/.agent-credentials.env` (mode 600)
 
@@ -560,8 +555,8 @@ and the space's librarian files them (memory-spaces §6.3).
 **Cancels:** a `task.cancel` names the task it cancels in its front-matter,
 `cancels: <task id>`, and is posted to the node that claimed that task
 (normally its direct inbox). The claiming node acts on it at any load (§8):
-a task it is running has its worker and each process the worker recorded
-stopped and ends `cancelled`, with no result published, then or later; a task
+a task it is running has its worker stopped (§8) and ends `cancelled`, with
+no result published, then or later; a task
 it holds `accepted` or `blocked`, or `running` with no worker (one an earlier
 poller session started), ends `cancelled`; a task that has ended (`done`,
 `failed`, `cancelled`) is left as it is. In each of those cases the cancel
@@ -1197,12 +1192,16 @@ on an earlier prompt keeps working. `skills/mesh-on/mesh-wait.sh`, the wait
 that earlier prompt parked on while one executor ran, is not used by the
 current prompt.
 
-To stop a worker (a timeout, or a cancel of a running task) the poller runs
-`skills/mesh-on/mesh-workers.sh stop <WORKERS_DIR> <task id>`, which sends
-TERM to each process listed in `pids` and to each of its descendants, then
-KILL 10 s later to any still running, and never signals pid 1 or its own
-ancestors; and it stops the executor through the task system where the tool
-is offered. A process the worker never recorded is not tracked.
+On `FINISHED` the poller publishes the result only while the task's status is
+its own and `running`; a task cancelled or timed out meanwhile publishes
+nothing. On `TIMEOUT` it stops the worker (below) and writes `failed`, with an
+`error` naming the timeout and its `timeout_min`, and publishes no result.
+Either way it removes the subfolder after the status sync. To stop a worker
+(a timeout, or a cancel of a running task), the poller runs
+`skills/mesh-on/mesh-workers.sh stop <WORKERS_DIR> <task id>` (TERM to each
+process in `pids` and its descendants, KILL 10 s later, never pid 1 or the
+helper's own ancestors) and stops the executor through the task system where
+the tool is offered. A process the worker never recorded is not tracked.
 
 ```
 boot (mesh-on, main session):
@@ -1248,21 +1247,12 @@ loop (poller subagent):
      and sleep POLL between scans, checking the workers folder every 2 s --
      exiting on:
        STOP (exit 2): ~/.mesh-stop exists and no worker is left -> end cleanly
-       WORK (exit 0) + lines: worker lines (FINISHED <id>, TIMEOUT <id>), then
-         claimable cancels and queries, fresh replies, undrained submits, then
-         claimable task.requests up to the free slots (none on the sentinel)
+       WORK (exit 0) + lines: as in "Workers" above
        IDLE (exit 5): idle deadline (240 s, under the cache TTL) -> re-park
          immediately, no other action
      an idle node cycles park -> IDLE -> re-park until work arrives.
-  1-2. classify each returned line: worker lines first --
-       FINISHED <id>: if status/<id>.json is this node's and running ->
-         step 4's terminal write (result, files, status, one sync); otherwise
-         (cancelled or timed out meanwhile) publish nothing; then remove
-         <WORKERS_DIR>/<id>
-       TIMEOUT <id>: mesh-workers.sh stop <WORKERS_DIR> <id>; stop the executor
-         through the task system; status -> failed, error naming the timeout
-         and its timeout_min; sync; remove <WORKERS_DIR>/<id>; no result
-     then each path by message type:
+  1-2. classify each returned line: worker lines first (FINISHED, TIMEOUT:
+       "Workers" above), then each path by message type:
        task.request/task.cancel/query (scanner lists only those with no status
          file) -> claimable work (step 3)
        reply (has in_reply_to; scanner surfaces each once) -> surface it (step 4½)
@@ -1277,27 +1267,16 @@ loop (poller subagent):
        status -> running; sync; make <WORKERS_DIR>/<id>/ and write its deadline;
        dispatch the executor sub-subagent in the background with that folder
        as its staging folder; write its agent id to executor; go on to the
-       next line without waiting (never end the turn to wait; its end comes
-       back as FINISHED <id>)
-     on FINISHED for a task still this node's and running:
+       next line without waiting
+     on FINISHED, for a task it may publish ("Workers" above):
        terminal: status -> done | failed; write outbox/<AGENT_ID>/<task-id>-result.md;
        write each file the task asked for under outbox/<AGENT_ID>/<task-id>-files/
        and list it in the result's files: (§5.1);
        for a result-bearing task, ALSO submit a `runs` record (library.submit, §7)
        so the run's provenance outlives its swept scratch
-       (status is written only at transitions; last_poll is the heartbeat);
-       sync, then remove <WORKERS_DIR>/<id>
-     task.cancel (claimed): read cancels: <T> and status/<T>.json --
-       <T> this node's and running, with <WORKERS_DIR>/<T>/: stop it as for a
-         timeout, <T> -> cancelled, remove the subfolder, publish no result
-       <T> this node's and accepted, blocked, or running with no subfolder:
-         <T> -> cancelled
-       <T> this node's and terminal (done, failed, cancelled): change nothing;
-         the cancel's progress says <T> had already ended, naming its state
-       in those three cases the cancel -> done, and its status and <T>'s are
-         synced in one commit naming both
-       no cancels: line, no status for <T>, or <T> another node's: the cancel
-         -> failed, error saying which
+       (status is written only at transitions; last_poll is the heartbeat)
+     task.cancel: act on its cancels: <T> as §5 "Cancels" says; the cancel's
+       status and <T>'s are synced in one commit naming both
      query: write a reply into the SENDER'S inbox tasks/<sender-id>/ (type: reply,
        in_reply_to: <query id>); status -> done. Replies route to inboxes so the
        sender's own inbox scan senses them -- outboxes are never polled. A query
