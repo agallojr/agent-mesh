@@ -73,4 +73,53 @@ check "a dry run stages its file and the stale gitlink only" \
   eq "$(g -C "$BUS" diff --cached --ignore-submodules=none --name-only | sed 's#^tasks/roles/build/.*-dry-run\.md$#MSG#' | tr '\n' ' ')" \
   "product MSG "
 
+# --cancels (poll-while-workers-run plan 2.5): a task.cancel names the task it
+# cancels as cancels: <id>, the line after timeout_min: (and after project:);
+# with another --type, or an id that is not <YYYYMMDD>T<HHMM>-<NNNN>, it exits
+# 1 and writes nothing.
+written() { printf '%s\n' "$1" | sed -n 's/^  .*  id=[^ ]*  //p'; }
+fmblock() { sed -n '2,/^---$/p' "$1" | sed '$d' | tr '\n' '|'; }
+msgs() { find "$BUS/tasks" -name '*.md' | wc -l | tr -d ' '; }
+TID=20261107T1500-0001
+out=$(bash "$MP" --type task.cancel --cancels "$TID" --title "stop it" \
+  --body-file "$T/body.md" --to n1 --repo "$BUS" --from op-main 2>&1); rc=$?
+check "a task.cancel with --cancels exits 0" eq "$rc" 0
+f=$(written "$out")
+check "the cancels line follows timeout_min" \
+  test "$(fmblock "$f" | sed 's/.*|timeout_min: 120|/X|/')" = "X|cancels: $TID|"
+check "the post is on origin" eq "$(g -C "$BUS_ORIGIN" rev-parse main)" "$(g -C "$BUS" rev-parse HEAD)"
+out=$(bash "$MP" --cancels "$TID" --project proj:unit-space --type task.cancel \
+  --title "stop it too" --body-file "$T/body.md" --to n1 --repo "$BUS" --from op-main 2>&1); rc=$?
+check "--cancels before --type, with --project, exits 0" eq "$rc" 0
+f=$(written "$out")
+check "the cancels line follows project" \
+  test "$(fmblock "$f" | sed 's/.*|timeout_min: 120|/X|/')" = "X|project: proj:unit-space|cancels: $TID|"
+out=$(bash "$MP" --type task.cancel --title "no target" --body-file "$T/body.md" \
+  --to n1 --repo "$BUS" --from op-main 2>&1); rc=$?
+check "a task.cancel without --cancels still posts, with no cancels line" \
+  test "$rc:$(grep -c '^cancels:' "$(written "$out")")" = "0:0"
+before=$(g -C "$BUS" rev-parse HEAD); n0=$(msgs)
+for bad in "--type task.request --cancels $TID" "--type query --cancels $TID" \
+           "--cancels $TID" \
+           "--type task.cancel --cancels 2026-11-07" \
+           "--type task.cancel --cancels 20261107T1500-001" \
+           "--type task.cancel --cancels 20261107T1500-00011" \
+           "--type task.cancel --cancels x20261107T1500-0001" \
+           "--type task.cancel --cancels 20261107t1500-0001" \
+           "--type task.cancel --cancels ../20261107T1500-0001" \
+           "--type task.cancel --cancels"; do
+  # shellcheck disable=SC2086
+  err=$(bash "$MP" $bad --title "refused" --body-file "$T/body.md" --to n1 \
+    --repo "$BUS" --from op-main 2>&1 >/dev/null); rc=$?
+  check "refused [$bad]: exit 1 with a reason" test "$rc" = 1 -a -n "$err"
+done
+for bad in "$TID " " $TID" "$TID
+x"; do
+  err=$(bash "$MP" --type task.cancel --cancels "$bad" --title "refused" \
+    --body-file "$T/body.md" --to n1 --repo "$BUS" --from op-main 2>&1 >/dev/null); rc=$?
+  check "refused a cancels value with a space or a newline: exit 1" eq "$rc" 1
+done
+check "a refused --cancels writes no message" eq "$(msgs)" "$n0"
+check "and commits nothing" eq "$(g -C "$BUS" rev-parse HEAD)" "$before"
+
 unit_done

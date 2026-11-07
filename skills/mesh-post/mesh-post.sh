@@ -15,7 +15,7 @@
 #                --to <target> [--to <target> ...] \
 #                [--priority low|normal|high] [--timeout-min N] \
 #                [--credentials K1,K2] [--depends-on id1,id2] \
-#                [--project proj:<name>] \
+#                [--project proj:<name>] [--cancels <task id>] \
 #                [--from <id>] [--repo <path>] [--dry-run]
 #
 #   <target>  role:<role>  -> tasks/roles/<role>/   (any holder claims it)
@@ -26,6 +26,12 @@
 #             and the claiming node loads that space for the executor
 #             (PROTOCOL section 5, spec/memory-spaces.md). Checked in the
 #             argument loop; an invalid value exits 1 and writes nothing.
+#   --cancels the task a task.cancel cancels, an id matching
+#             ^[0-9]{8}T[0-9]{4}-[0-9]{4}$; written as cancels: <task id>, the
+#             line after timeout_min: (and after project: when given), and
+#             read by the claiming node (PROTOCOL section 5). Allowed only
+#             with --type task.cancel; otherwise, or with an invalid value, it
+#             exits 1 and writes nothing.
 #   --dry-run write files + stage, but do NOT commit or push (prints what it did)
 #
 # Identity: --from wins; else AGENT_ID from ~/.agent-identity.env; else op-main.
@@ -60,8 +66,19 @@ valid_project() {
   return 0
 }
 
+# True if $1 matches ^[0-9]{8}T[0-9]{4}-[0-9]{4}$, a message id. Explicit
+# digit lists, as above.
+valid_task_id() {
+  local d='[0123456789]'
+  # shellcheck disable=SC2254
+  case "$1" in
+    $d$d$d$d$d$d$d${d}T$d$d$d$d-$d$d$d$d) return 0 ;;
+  esac
+  return 1
+}
+
 TYPE=""; TITLE=""; BODY_FILE=""; PRIORITY="normal"; TIMEOUT_MIN="120"
-CREDS=""; DEPENDS=""; FROM=""; REPO=""; DRYRUN=0; PROJECT=""
+CREDS=""; DEPENDS=""; FROM=""; REPO=""; DRYRUN=0; PROJECT=""; CANCELS=""
 TARGETS=""   # newline-separated
 
 while [ $# -gt 0 ]; do
@@ -76,6 +93,8 @@ while [ $# -gt 0 ]; do
     --depends-on)  DEPENDS="$2"; shift 2 ;;
     --project)     valid_project "${2-}" || die "invalid --project value: ${2-}"
                    PROJECT="$2"; shift 2 ;;
+    --cancels)     valid_task_id "${2-}" || die "invalid --cancels value: ${2-}"
+                   CANCELS="$2"; shift 2 ;;
     --from)        FROM="$2"; shift 2 ;;
     --repo)        REPO="$2"; shift 2 ;;
     --dry-run)     DRYRUN=1; shift ;;
@@ -88,6 +107,8 @@ done
 [ -n "$BODY_FILE" ] || die "--body-file required"
 [ -f "$BODY_FILE" ] || die "body file not found: $BODY_FILE"
 [ -n "$TARGETS" ]   || die "at least one --to required"
+[ -z "$CANCELS" ] || [ "$TYPE" = task.cancel ] || \
+  die "--cancels is allowed only with --type task.cancel"
 
 # --- identity + repo ---
 IDENT="$HOME/.agent-identity.env"
@@ -212,6 +233,9 @@ while IFS= read -r TARGET; do
     echo "timeout_min: $TIMEOUT_MIN"
     if [ -n "$PROJECT" ]; then
       echo "project: $PROJECT"
+    fi
+    if [ -n "$CANCELS" ]; then
+      echo "cancels: $CANCELS"
     fi
     echo "---"
     echo ""

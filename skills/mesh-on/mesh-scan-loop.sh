@@ -30,6 +30,29 @@
 # ungated; a gitlink staged in the index is lifted out around the pull, so
 # the rebase of an unpushed heartbeat cannot record it as a pin.
 #
+# Worker mode (PROTOCOL 8): the poller runs each task's executor in the
+# background, in a worker subfolder <MESH_WORKERS_DIR>/<task id>/ (its staging
+# folder), and keeps parking here. With MESH_WORKERS_DIR set, each scan counts
+# the worker subfolders (names not beginning with `.`; a folder that does not
+# exist counts 0) as `running`, against the cap MESH_MAX_WORKERS (read as
+# mesh-workers.sh reads it: a whole number of at least 1 with no sign, space
+# or leading zero, else 3). It lists, after the worker lines, every claimable
+# task.cancel and query, each fresh reply and each undrained library.submit,
+# at any load; then claimable task.requests, oldest first by their id: value,
+# at most cap - running of them, and none while the stop sentinel is up. The
+# worker lines, in task id order, are `FINISHED <id>` for a subfolder holding
+# .done and `TIMEOUT <id>` for one without .done whose `deadline` file holds a
+# whole number of s since the epoch at or before now; they repeat on every
+# call until the poller removes the subfolder. The pull, the queue scan and
+# the heartbeat stay once per POLL_SEC; between them the folder is checked
+# every 2 s (every POLL_SEC when that is less), and a worker line, or the stop
+# sentinel with no worker left, ends the call at once. On the sentinel with a
+# worker running it goes on scanning, lists no task.request, and prints STOP
+# at its first check after the last subfolder is removed. It writes nothing in
+# the workers folder. With MESH_WORKERS_DIR unset or empty it behaves exactly
+# as before worker mode (no cap, no worker lines, STOP at once on the
+# sentinel), so a poller started on the older prompt keeps working.
+#
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
 #        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 240 (4 min). A call
 #        lasts at most MAX_WAIT_SEC plus one pull and scan, which must stay under
@@ -38,8 +61,11 @@
 #        MESH_SCAN_LIST=1 mesh-scan-loop.sh <REPO> prints the submodule paths a
 #        cycle would update, one per line, and exits 0 before any pull or write.
 # Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks, fresh replies, and/or
-#                                          undrained library.submits (librarian)
-#        2 + "STOP"                     -> ~/.mesh-stop present
+#                                          undrained library.submits (librarian);
+#                                          in worker mode FINISHED <id> and
+#                                          TIMEOUT <id> lines come first
+#        2 + "STOP"                     -> ~/.mesh-stop present (in worker mode,
+#                                          and no worker subfolder left)
 #        3 + "UPGRADE\n<bus> <prod>"    -> BUS_LAYOUT < product LAYOUT_VERSION
 #        4 + "STALE_PRODUCT\n<bus> <prod>" -> BUS_LAYOUT > product LAYOUT_VERSION
 #        5 + "IDLE"                     -> no work within MAX_WAIT_SEC; re-park
@@ -110,8 +136,96 @@ claimable() {  # exit 0 iff task file is claimable now (actionable + no status)
   [ ! -f "$REPO/status/$id.json" ]
 }
 
+# Worker mode only (see the header). mesh-workers.sh is sourced for its cap
+# rule; sourcing it runs nothing.
+WDIR="${MESH_WORKERS_DIR:-}"
+if [ -n "$WDIR" ]; then
+  . "$SCAN_DIR/mesh-workers.sh"
+  CAP=$(mw_cap "${MESH_MAX_WORKERS:-}")
+  [ "${#CAP}" -le 9 ] || CAP=999999999  # more than any node runs; no overflow
+  WSTEP=2
+  [ "$POLL" -lt 2 ] 2>/dev/null && WSTEP=$POLL
+  [ "$WSTEP" -ge 1 ] 2>/dev/null || WSTEP=1
+fi
+
+deadline_due() {  # deadline_due <file> <now>: 0 if it holds a whole number <= now
+  local v
+  [ -f "$1" ] || return 1
+  v=$(sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$1" 2>/dev/null)
+  case "$v" in ""|*[!0123456789]*) return 1 ;; esac
+  v=${v#"${v%%[!0]*}"}; [ -n "$v" ] || v=0  # leading zeros are decimal
+  [ "${#v}" -le 18 ] || return 1            # past any clock: not due
+  [ "$v" -le "$2" ]
+}
+
+worker_scan() {  # sets WRUN (worker subfolders) and WLINES (worker lines)
+  local d id now names
+  WRUN=0; WLINES=""
+  now=$(date -u +%s)
+  names=$(for d in "$WDIR"/*/; do
+            [ -d "$d" ] || continue
+            d=${d%/}; printf '%s\n' "${d##*/}"
+          done | LC_ALL=C sort)
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    WRUN=$((WRUN + 1))
+    if [ -e "$WDIR/$id/.done" ]; then
+      WLINES="${WLINES}FINISHED $id
+"
+    elif deadline_due "$WDIR/$id/deadline" "$now"; then
+      WLINES="${WLINES}TIMEOUT $id
+"
+    fi
+  done <<EOF
+$names
+EOF
+}
+
+worker_nap() {  # worker_nap <s>: sleep, checking the workers folder each step
+  local end=$((SECONDS + $1)) s
+  while [ "$SECONDS" -lt "$end" ]; do
+    s=$((end - SECONDS)); [ "$s" -gt "$WSTEP" ] && s=$WSTEP
+    sleep "$s"
+    worker_scan
+    if [ -f "$HOME/.mesh-stop" ] && [ "$WRUN" -eq 0 ]; then echo STOP; exit 2; fi
+    if [ -n "$WLINES" ]; then printf 'WORK\n%s' "$WLINES"; exit 0; fi
+  done
+}
+
+worker_lines() {  # the WORK lines in worker mode, from the scan's hits
+  local f type cq="" rp="" sub="" req="" room=0
+  worker_scan
+  if [ "${#hits[@]}" -gt 0 ]; then
+    for f in "${hits[@]}"; do
+      type=$(fm type "$f")
+      case "$type" in
+        task.request) req="$req$(fm id "$f")"$'\t'"$f
+" ;;  # sorted on the id before the tab
+        task.cancel|query) cq="$cq$f
+" ;;
+        reply) rp="$rp$f
+" ;;
+        *) sub="$sub$f
+" ;;
+      esac
+    done
+  fi
+  if [ ! -f "$HOME/.mesh-stop" ] && [ "$WRUN" -lt "$CAP" ]; then
+    room=$((CAP - WRUN))
+  fi
+  printf '%s%s%s%s' "$WLINES" "$cq" "$rp" "$sub"
+  if [ "$room" -gt 0 ] && [ -n "$req" ]; then
+    printf '%s' "$req" | LC_ALL=C sort | head -n "$room" | cut -f2-
+  fi
+}
+
 while :; do
-  [ -f "$HOME/.mesh-stop" ] && { echo STOP; exit 2; }
+  if [ -n "$WDIR" ]; then
+    worker_scan
+    [ -f "$HOME/.mesh-stop" ] && [ "$WRUN" -eq 0 ] && { echo STOP; exit 2; }
+  else
+    [ -f "$HOME/.mesh-stop" ] && { echo STOP; exit 2; }
+  fi
   iter_start=$SECONDS
 
   # read-only, ungated; failures are transient -> keep looping. A staged
@@ -183,11 +297,15 @@ EOF
     fi
   done
 
+  [ -n "$WDIR" ] && wlines=$(worker_lines)
+
   # The scan is done: record it (the heartbeat), then act on what it found.
   # An orphaned scanner (its caller gone) writes none and ends.
   mc_heartbeat || { [ $? -eq 3 ] && { echo IDLE; exit 5; }; }
 
-  if [ "${#hits[@]}" -gt 0 ]; then
+  if [ -n "$WDIR" ]; then
+    [ -n "$wlines" ] && { printf 'WORK\n%s\n' "$wlines"; exit 0; }
+  elif [ "${#hits[@]}" -gt 0 ]; then
     printf 'WORK\n'; printf '%s\n' "${hits[@]}"; exit 0
   fi
 
@@ -203,5 +321,9 @@ EOF
     [ "$left" -gt 0 ] || { echo IDLE; exit 5; }
     [ "$left" -lt "$nap" ] && nap="$left"
   fi
-  [ "$nap" -gt 0 ] 2>/dev/null && sleep "$nap"
+  if [ -n "$WDIR" ]; then
+    [ "$nap" -gt 0 ] 2>/dev/null && worker_nap "$nap"
+  else
+    [ "$nap" -gt 0 ] 2>/dev/null && sleep "$nap"
+  fi
 done
