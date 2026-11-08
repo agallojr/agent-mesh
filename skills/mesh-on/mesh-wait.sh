@@ -12,8 +12,9 @@
 #                  it has written its result (the poller puts both in the
 #                  task's staging folder)
 #   MAX_WAIT_SEC   this call's deadline: defaults to $MESH_MAX_WAIT_SEC, else
-#                  240 (4 min), under the 5-min prompt-cache TTL, as for the
-#                  scanner
+#                  150, under Claude Code's 180 s cap on a subagent's
+#                  foreground Bash call and the 5-min prompt-cache TTL, as for
+#                  the scanner
 #   TASK_DEADLINE  optional, UTC epoch in s: the task's own cap (its dispatch
 #                  time plus its timeout_min)
 # Exit:  0 + "DONE"     -> DONE_FILE exists: the executor has finished
@@ -39,7 +40,7 @@ usage() {
 }
 [ $# -ge 4 ] && [ $# -le 6 ] || usage
 REPO="$1"; AGENT_ID="$2"; POLL="$3"; DONE_FILE="$4"
-MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-240}}"
+MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-150}}"
 TASK_DEADLINE="${6:-}"
 case "$POLL" in ""|*[!0123456789]*) usage ;; esac
 case "$MAX_WAIT" in ""|*[!0123456789]*) usage ;; esac

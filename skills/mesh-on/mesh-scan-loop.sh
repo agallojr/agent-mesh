@@ -4,9 +4,12 @@
 # script as ONE SYNCHRONOUS Bash call and acts on its exit. It exits when there
 # is real work (or a stop/layout signal), or with IDLE at MAX_WAIT_SEC — the
 # poller re-launches immediately on IDLE (a token-trivial re-park).
-# The deadline sits under the 5-min prompt-cache TTL, so each re-park reads the
-# poller's context from cache; a longer park lets the cache expire and the
-# re-park re-writes the whole context at the cache-write price. Never
+# The deadline (150 s) sits under Claude Code's 180 s cap on a subagent's
+# foreground Bash call (2.1.319 moves a longer call to the background, and a
+# poller can then end its turn and go deaf) and under the 5-min prompt-cache
+# TTL, so each re-park reads the poller's context from cache; a longer park
+# lets the cache expire and the re-park re-writes the whole context at the
+# cache-write price. Never
 # launch it as a background call: a background child is not guaranteed to
 # survive the poller ending its turn, which orphans the node.
 #
@@ -39,10 +42,10 @@
 # MESH_WORKERS_DIR unset or empty it behaves exactly as before worker mode.
 #
 # Usage: mesh-scan-loop.sh <REPO> <ROLES_CSV> <AGENT_ID> [POLL_SEC] [MAX_WAIT_SEC]
-#        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 240 (4 min). A call
-#        lasts at most MAX_WAIT_SEC plus one pull and scan, which must stay under
-#        the 5-min cache TTL. Sleeps are cut to the time left, so any POLL_SEC
-#        works. 0 disables the IDLE deadline.
+#        MAX_WAIT_SEC defaults to $MESH_MAX_WAIT_SEC, else 150. The last nap
+#        leaves room for one more pull and scan, so a call ends by about
+#        MAX_WAIT_SEC, under the 180 s subagent Bash cap. Sleeps are cut to
+#        the time left, so any POLL_SEC works. 0 disables the IDLE deadline.
 #        MESH_SCAN_LIST=1 mesh-scan-loop.sh <REPO> prints the submodule paths a
 #        cycle would update, one per line, and exits 0 before any pull or write.
 # Exit:  0 + "WORK\n<file>\n..."        -> claimable tasks, fresh replies, and/or
@@ -90,7 +93,7 @@ fi
 
 ROLES="${2:?roles csv}"; AGENT_ID="${3:?agent id}"
 POLL="${4:-240}"
-MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-240}}"
+MAX_WAIT="${5:-${MESH_MAX_WAIT_SEC:-150}}"
 # Wake-once ledger: one path per line for edge-triggered items that never get a
 # status file (replies to our queries, and library.submits we must drain). Kept
 # the historical filename for continuity. Purely a dedupe set of paths.
@@ -294,15 +297,17 @@ EOF
     printf 'WORK\n'; printf '%s\n' "${hits[@]}"; exit 0
   fi
 
-  # IDLE deadline: return before the cache TTL so the poller re-parks on a
-  # cache read. The last sleep is cut to the time left, then one final scan
-  # runs, so a POLL at or above MAX_WAIT still sleeps before IDLE instead of
-  # returning at once and making the poller re-park every few seconds. The
-  # nap is also cut by the time this iteration took, so a slow heartbeat
-  # push does not delay the next scan.
-  nap=$(( POLL - (SECONDS - iter_start) ))
+  # IDLE deadline: return before the 180 s subagent Bash cap and the cache
+  # TTL so the poller re-parks on a cache read. The last sleep is cut to the
+  # time left less this iteration's length, then one final scan runs, so the
+  # call ends by about MAX_WAIT and a POLL at or above MAX_WAIT still sleeps
+  # before IDLE instead of returning at once and making the poller re-park
+  # every few seconds. The nap is also cut by the time this iteration took,
+  # so a slow heartbeat push does not delay the next scan.
+  cycle=$(( SECONDS - iter_start ))
+  nap=$(( POLL - cycle ))
   if [ "$MAX_WAIT" -gt 0 ] 2>/dev/null; then
-    left=$(( MAX_WAIT - SECONDS ))
+    left=$(( MAX_WAIT - SECONDS - cycle ))
     [ "$left" -gt 0 ] || { echo IDLE; exit 5; }
     [ "$left" -lt "$nap" ] && nap="$left"
   fi

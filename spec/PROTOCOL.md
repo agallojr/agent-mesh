@@ -1135,10 +1135,14 @@ claimable task or a fresh reply (prints `WORK` + the file paths), when one of
 the poller's workers has finished or passed its deadline (`WORK` +
 `FINISHED <id>` or `TIMEOUT <id>`), when `~/.mesh-stop` exists and no worker
 is left (prints `STOP`), or at its idle deadline (prints `IDLE`, default
-240 s), on which the poller immediately re-parks with no other action.
+150 s), on which the poller immediately re-parks with no other action.
 While it blocks, the poller is parked on that one tool call and spends zero
-inference tokens. Each re-park re-sends the poller's context, so the deadline
-sits under the 5-min prompt-cache TTL: the re-park is then a cache read, where a
+inference tokens. The deadline, counting the scanner's last pull, scan and
+heartbeat, sits under two limits. Claude Code (2.1.319) moves a subagent's
+foreground Bash call to the background after 180 s whatever its timeout, and a
+poller that then ends its turn leaves the node deaf. Each re-park re-sends the
+poller's context, so the deadline also sits under the 5-min prompt-cache TTL:
+the re-park is then a cache read, where a
 longer park would re-write the whole context at the cache-write price. An idle
 node therefore costs near-zero tokens (one cache-read re-park per deadline
 window) and one heartbeat commit per heartbeat interval (900 s by default): a scan
@@ -1248,7 +1252,8 @@ loop (poller subagent):
      exiting on:
        STOP (exit 2): ~/.mesh-stop exists and no worker is left -> end cleanly
        WORK (exit 0) + lines: as in "Workers" above
-       IDLE (exit 5): idle deadline (240 s, under the cache TTL) -> re-park
+       IDLE (exit 5): idle deadline (150 s, under the 180 s subagent Bash
+         cap and the cache TTL) -> re-park
          immediately, no other action
      an idle node cycles park -> IDLE -> re-park until work arrives.
   1-2. classify each returned line: worker lines first (FINISHED, TIMEOUT:

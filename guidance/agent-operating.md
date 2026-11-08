@@ -108,7 +108,7 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    when it finds a claimable task / fresh reply (`WORK` + paths), one of your
    workers has finished or passed its deadline (`WORK` + `FINISHED <id>` or
    `TIMEOUT <id>`, step 5), `~/.mesh-stop` exists and no worker is left
-   (`STOP`), the idle deadline hits (`IDLE`, ~4 min — re-park immediately),
+   (`STOP`), the idle deadline hits (`IDLE`, 150 s — re-park immediately),
    or the bus layout drifts from the product's expected layout
    (`UPGRADE` / `STALE_PRODUCT`). While it blocks you are parked at zero token cost;
    the harness re-invokes you on exit. **An idle node spends no inference, and its

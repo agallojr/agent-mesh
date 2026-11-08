@@ -248,10 +248,12 @@ call to the shell scanner (`mesh-scan-loop.sh`) — never a background call: a
 background child is not guaranteed to survive the poller ending its turn, and an
 orphaned scanner takes the node off the mesh while it looks parked. The scanner
 pulls and scans the queues and blocks until there is real work, a stop, or its
-idle deadline (~4 min), where it returns `IDLE` and the poller immediately
-re-parks. The deadline sits under the 5-min prompt-cache TTL, so each re-park
-reads the poller's context from cache instead of re-writing it. An idle node
-therefore costs near-zero tokens (one cache-read re-park per ~4 min) and one
+idle deadline (150 s), where it returns `IDLE` and the poller immediately
+re-parks. The deadline sits under Claude Code's 180 s cap on a subagent's
+foreground Bash call (2.1.319 moves a longer call to the background) and under
+the 5-min prompt-cache TTL, so each re-park reads the poller's context from
+cache instead of re-writing it. An idle node
+therefore costs near-zero tokens (one cache-read re-park per 150 s) and one
 heartbeat commit per heartbeat interval (900 s by default, about 96 a day):
 a scan past that interval rewrites `last_poll` in this node's
 `agents/<AGENT_ID>.yaml` and pushes it through `mesh-commit.sh`, so

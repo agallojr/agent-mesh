@@ -14,24 +14,26 @@ you wait on, NEVER `run_in_background: true`. That script pulls the repo, scans
 your queues, and **blocks (sleeps and re-pulls) until there is real work or its
 idle deadline**, exiting when it finds a claimable task / a fresh reply, when
 one of your workers has finished or passed its deadline, when `~/.mesh-stop`
-appears and no worker is left, or with `IDLE` at its idle deadline (~4 min;
+appears and no worker is left, or with `IDLE` at its idle deadline (150 s;
 pass a `timeout` of 600000 ms on the call anyway). While it blocks you are
 parked on that one tool call and spend ZERO tokens. On `IDLE` you immediately
-launch it again — a one-tool-call re-park every ~4 min. This is what makes an
+launch it again — a one-tool-call re-park every 150 s. This is what makes an
 idle node cost almost nothing — you wake to act (or to re-park), never to think. Once
 per heartbeat interval (`MESH_HEARTBEAT_SEC`, 900 s by default) a scan also
 rewrites `last_poll` in this node's own `agents/«AGENT_ID».yaml` and pushes it
 (one small heartbeat commit, not one per scan), so a node whose
 poller has stopped is seen on the bus; you write nothing for it.
 
-**Why the deadline is ~4 min:** each re-park re-sends your whole context, and it
-is cheap only while the prompt cache still holds it. The cache expires 5 min
-after its last use. A re-park inside that window is a cache read; one after it
-re-writes your whole context at the cache-write price, which is more than 10x a
-read. A park longer than the cache's life therefore pays that write on every
-idle wake, and for a large context the cost adds up fast. Two things follow:
-never lengthen the deadline past ~4 min, and keep your context small, since
-every re-park pays for all of it (see "Keep your context small").
+**Why the deadline is 150 s:** two limits. First, Claude Code (2.1.319) moves
+a subagent's foreground Bash call to the background after 180 s, whatever its
+`timeout`; a longer park comes back early as "moved to the background", and a
+poller that then ends its turn leaves the node deaf. Second, each re-park
+re-sends your whole context, and it is cheap only while the prompt cache still
+holds it. The cache expires 5 min after its last use. A re-park inside that
+window is a cache read; one after it re-writes your whole context at the
+cache-write price, which is more than 10x a read. Two things follow: never
+lengthen the deadline past 150 s, and keep your context small, since every
+re-park pays for all of it (see "Keep your context small").
 
 **Why synchronous is load-bearing:** a background child is not guaranteed to
 survive you ending your turn — an orphaned scanner dies silently and the node
@@ -145,10 +147,11 @@ until stop (see "Stopping" below):
 0. **Wait for work — park on the scanner, synchronously.** Run the scan script as
    ONE normal **synchronous** Bash call (NEVER `run_in_background: true` — an
    orphaned background scanner dies when you end your turn and the node goes
-   deaf). Set the call's `timeout` to 600000 ms (the tool maximum); the script
-   self-limits to ~4 min and returns `IDLE` well before that ceiling, so the
-   call always comes back. Do not pass a 5th argument or `MESH_MAX_WAIT_SEC`: the
-   ~4-min default is what keeps your re-park a cache read:
+   deaf). Set the call's `timeout` to 600000 ms (the tool maximum); the real
+   ceiling is the 180 s cap Claude Code puts on a subagent's foreground Bash
+   call, and the script self-limits to 150 s and returns `IDLE` before it. Do
+   not pass a 5th argument or `MESH_MAX_WAIT_SEC`: the 150 s default is what
+   keeps the call under that cap and your re-park a cache read:
 
    ```
    MESH_WORKERS_DIR=«WORKERS_DIR» MESH_MAX_WORKERS=«MAX_WORKERS» \
@@ -181,7 +184,7 @@ until stop (see "Stopping" below):
    idle deadline hits.** Between scans it looks at «WORKERS_DIR» every 2 s, so
    a worker's end reaches you within seconds, not a poll interval later. While
    it blocks you are parked on this one tool call and spend NO tokens. An idle
-   mesh therefore costs near-zero inference (one cache-read re-park per ~4 min)
+   mesh therefore costs near-zero inference (one cache-read re-park per 150 s)
    and one heartbeat commit per node per heartbeat
    interval (900 s by default); claims, statuses and results stay proportional to real work. It
    runs on macOS and Linux alike (bash 3.2+, no `timeout` dependency).
@@ -215,6 +218,9 @@ until stop (see "Stopping" below):
    - If the call is killed by the tool timeout itself (no output — the harness
      ceiling fired before the script's own deadline), treat it exactly like
      `IDLE`: re-park immediately.
+   - If the call comes back "moved to the background" (the 180 s subagent
+     cap fired), the same: re-park immediately. Never end your turn on it;
+     that leaves the node deaf.
 
    If the call ever returns an error instead of one of the above (e.g. a broken
    invocation), do not hot-spin: note it and re-launch it once; if it fails
@@ -567,8 +573,9 @@ subject; read the matches before acting and cite any lore id you relied on in yo
 result. Then: you are executing one mesh task. Do the work. Do NOT touch git or
 status files — the poller owns those — and write no scratch (`spaces/tmp`): an
 executor returns its work in its result. When you wait on a long-running command or
-job, wait in synchronous calls of at most 4 min each (a loop that checks the
-job and gives up after 240 s), never one long blocking call: after 5 min with no
+job, wait in synchronous calls of at most 150 s each (a loop that checks the
+job and gives up after 150 s), never one long blocking call: Claude Code moves
+a subagent's foreground Bash call to the background after 180 s, and after 5 min with no
 turn the prompt cache expires, and your next turn re-writes your whole context
 at the cache-write price. Right after you start any process that can outlive
 one tool call (a background job, a `nohup` run, a server, a solver run you
