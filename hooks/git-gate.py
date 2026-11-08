@@ -14,7 +14,10 @@ becomes the sole authority on these ops.
 Blob layer: for an `add` that already targets an allowlisted repo, a second
 enforcement layer rejects staging blob-class files (blocked extensions or
 files over BLOB_SIZE_LIMIT). Large results belong by pointer in a record's
-`artifacts` field, not committed into git.
+`artifacts` field, not committed into git. A file git will store through
+git-lfs (an LFS_EXTS type, or a path the target repo's own gitattributes give
+filter=lfs with an lfs filter driver configured) is staged as a small pointer,
+so the size limit does not apply to it.
 
 Contract (Claude Code PreToolUse):
   stdin  : JSON with tool_name, tool_input.command, and cwd.
@@ -42,6 +45,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from typing import NoReturn
 
@@ -63,7 +67,9 @@ LFS_EXTS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".tar", ".zip",
     ".gz", ".tgz", ".pdf", ".pptx", ".docx",
 })
-BLOB_SIZE_LIMIT = 5 * 1024 * 1024  # 5 MB (not applied to LFS_EXTS)
+# 5 MB; not applied to LFS_EXTS, nor to a path the target repo's
+# gitattributes route through git-lfs (_lfs_tracked)
+BLOB_SIZE_LIMIT = 5 * 1024 * 1024
 
 # Resolve the config dir the way Claude Code does, NOT via ~/.claude: on some
 # hosts HOME is not the config-dir parent (e.g. HOME=/quantum-data/agallojr/
@@ -203,10 +209,29 @@ def git_invocations(fragment: str) -> list[list[str]]:
 _ADD_STAGE_ALL = {"-A", "--all", "-u"}
 
 
-def _blob_reason(path: str) -> str | None:
+def _lfs_tracked(path: str, repo_dir: str) -> bool:
+    """True if git in `repo_dir` will store `path` through git-lfs: its
+    gitattributes give it filter=lfs AND an lfs filter driver is configured
+    (with no driver git stages the raw file despite the attribute). Any
+    error means False, so the size check still applies (fail closed)."""
+    def git(*args: str) -> str:
+        res = subprocess.run(["git", "-C", repo_dir, *args],
+                             capture_output=True, text=True, timeout=10,
+                             check=False)
+        return res.stdout.strip() if res.returncode == 0 else ""
+    try:
+        attr = git("check-attr", "filter", "--", path)
+        driver = (git("config", "--get", "filter.lfs.process")
+                  or git("config", "--get", "filter.lfs.clean"))
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return attr.endswith(": filter: lfs") and bool(driver)
+
+
+def _blob_reason(path: str, repo_dir: str | None = None) -> str | None:
     """Return a deny reason if `path` is a blob-class file, else None.
     Blob = blocked extension (regardless of existence), or an existing file
-    over BLOB_SIZE_LIMIT."""
+    over BLOB_SIZE_LIMIT that git in `repo_dir` would not store via LFS."""
     ext = os.path.splitext(path)[1].lower()
     if ext in BLOB_EXTS:
         return (
@@ -218,6 +243,8 @@ def _blob_reason(path: str) -> str | None:
         return None  # git-lfs handles these at any size; skip the size check
     try:
         if os.path.isfile(path) and os.path.getsize(path) > BLOB_SIZE_LIMIT:
+            if repo_dir and _lfs_tracked(path, repo_dir):
+                return None  # staged as an LFS pointer, not as this file
             return (
                 f"git add denied: '{path}' exceeds the "
                 f"{BLOB_SIZE_LIMIT}-byte blob size limit. Reference large "
@@ -246,7 +273,8 @@ def _find_blob_in_tree(root: str) -> str | None:
                 if ext in LFS_EXTS:
                     continue  # git-lfs handles these at any size
                 try:
-                    if os.path.getsize(full) > BLOB_SIZE_LIMIT:
+                    if (os.path.getsize(full) > BLOB_SIZE_LIMIT
+                            and not _lfs_tracked(full, root)):
                         return full
                 except OSError:
                     continue
@@ -273,7 +301,7 @@ def check_add_blobs(add_args: list[str], target_dir: str) -> None:
         if not resolvable_literal(p):
             continue
         full = p if os.path.isabs(p) else os.path.join(target_dir, p)
-        reason = _blob_reason(full)
+        reason = _blob_reason(full, target_dir)
         if reason:
             deny(reason)
 
@@ -281,7 +309,7 @@ def check_add_blobs(add_args: list[str], target_dir: str) -> None:
     if stage_all or not paths:
         offender = _find_blob_in_tree(target_dir)
         if offender:
-            deny(_blob_reason(offender) or (
+            deny(_blob_reason(offender, target_dir) or (
                 f"git add denied: '{offender}' is a blob-class file. "
                 f"Reference large results by pointer in the record's "
                 f"`artifacts` field instead of committing them."

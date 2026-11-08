@@ -282,10 +282,13 @@ when the pin advances.
 - Git literal-absolute-path rule: agents must run `git -C /abs/bus <subcmd>`
   with a literal path, never `git -C "$VAR" ...` or `cd ... && git ...`.
   Read-only git (pull, fetch, status, `submodule update`) is not gated.
-- The gate rejects staging large or binary blobs into the bus (`*.nc`, `*.h5`,
-  `*.hdf5`, `*.ckpt`, `*.npy`, `*.npz`, `*.png`, `*.jpg`, `*.mp4`, `*.tar`,
-  `*.zip`, and any file over roughly 5MB). Large results must be referenced by
-  pointer in a record's `artifacts` field, not committed to the bus.
+- The gate always rejects staging data and model blobs (`*.nc`, `*.h5`,
+  `*.hdf5`, `*.ckpt`, `*.npy`, `*.npz`, `*.bin`, `*.pt`, `*.pth`,
+  `*.safetensors`). It also rejects any other file over 5 MB unless git will
+  store it through LFS: one of the gate's `LFS_EXTS` types (papers, slides,
+  images, archives), or a path the repo's `.gitattributes` gives
+  `filter=lfs`. Large results must be referenced by pointer in a record's
+  `artifacts` field, not committed to the bus.
 
 ## Troubleshooting
 - Submodule not checked out / `product/` empty: the clone did not realize the

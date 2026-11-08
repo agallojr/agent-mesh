@@ -192,7 +192,10 @@ committed index (§7), which was the only file that ever justified one. The
 `filter=lfs` lines make the stored **reference artifacts** the `refs` category
 holds (papers, slides, images — §7) go to git-LFS, so they do not bloat the pack
 and are not subject to the gate's 5 MB non-LFS blob limit; these extensions must
-match the gate's `LFS_EXTS` (`hooks/git-gate.py`).
+match the gate's `LFS_EXTS` (`hooks/git-gate.py`). The gate also lifts the limit
+for any path the target repo's own `.gitattributes` gives `filter=lfs`, when an
+LFS filter driver is configured, so a repo that LFS-tracks other types can
+stage them. With no driver, git stores the raw file, so the limit still applies.
 
 The same `.gitattributes` is at the root of each space the split makes from the
 bus (memory-spaces §9 step 3), and its rules hold there: in core
