@@ -857,8 +857,8 @@ record; keeping them in one field would mix a decaying namespace into a permanen
 one.
 
 Category-specific fields may follow. **Lore** is the canonical curated example — it
-adds `tags`, `verified_on`, `confidence`, `supersedes`, and a symptom/cause/fix/scope
-body:
+adds `tags`, `verified_on`, `confidence`, `supersedes`, the optional `triggers` and
+`trigger_mode` (below), and a symptom/cause/fix/scope body:
 
 ```markdown
 ---
@@ -869,6 +869,8 @@ category: lore
 provenance: worker
 contexts: [frontier-login]
 tags: [build, cmake, hdf5]
+triggers: ["cmake *hdf5*|*HDF5*"]  # optional: commands this lore is about
+trigger_mode: fail        # hint | fail | block (default hint)
 discovered_by: a7f3c2
 discovered_on: 2026-07-18
 verified_on: 2026-07-18
@@ -889,6 +891,39 @@ Exact commands or configuration. Be specific about where and when.
 ## Scope
 Which machines, versions, or conditions this applies to — and which it does not.
 ```
+
+**Lore triggers — the command axis.** `contexts` says where a fact holds and
+`tags` what it is about; `triggers` says *which command it is about*, so the
+record can reach an agent at the moment it issues that command instead of
+waiting to be grepped. Each trigger is a string of space-separated token
+patterns. The first must match the command name (its basename). Each later one
+must match a later token of the same simple command, in order, with other
+tokens skipped between. A pattern is an `fnmatch` glob, and `a|b` is an
+alternation. A WebFetch call is matched as `WebFetch <url>`. Quote each trigger,
+and use no commas or brackets inside one. Examples: `git commit`,
+`ssh genode`, `git -C $*|~* add|commit|push`, `WebFetch *osti.gov*`.
+
+`trigger_mode` says when the record is shown. It defaults to `hint`:
+
+- `hint`: shown with the result of the first matching call. Use it when the
+  call may look like it succeeded but did not, or when the next step depends on
+  knowing the fact.
+- `fail`: shown only when a matching call fails. It costs nothing when the call
+  succeeds, so it suits gotchas that fail loudly.
+- `block`: the first matching call is refused once, with the fix as the
+  reason, and the same call issued again goes through. Use it only when the
+  failure is silent or costly.
+
+A record is shown at most once per session and agent, and only where its
+`contexts` hold. A trigger is metadata over the record, not an index: it lives
+in the record's own front-matter, and the hook that reads it
+(`hooks/lore-trigger.py`, registered for PreToolUse and PostToolUseFailure on
+Bash and WebFetch) rescans the records on every call. Because a triggered record
+reaches the agent at its command, the session-start catalog
+(`hooks/lore-recall.py`) leaves it out and only counts it, which keeps that
+catalog small as lore grows. Lore about a command should carry triggers. A
+record whose value lies in planning, before any command runs, should carry
+none, so that it stays in the catalog.
 
 **Workflows** is the one category with a nested layout. A `workflows/` record is the durable
 write-up of a multi-agent / multi-node process that ran — what it did, who took
@@ -1050,8 +1085,11 @@ and reads the matches before acting. Retrieval rides the two header axes: filter
 on `contexts` (does the fact hold in your `AGENT_CONTEXT` environment class) and
 `tags` (is it about your subject). This is a standing duty of every node,
 interactive or unattended, not a step that only fires inside the poll loop (see
-`guidance/agent-operating.md` loop step 4a). A record relied on should be cited
-by `id` in the result that used it.
+`guidance/agent-operating.md` loop step 4a). Two hooks carry the first part of
+this duty: `hooks/lore-recall.py` lists the lore that holds on the node at
+session start, and `hooks/lore-trigger.py` shows triggered lore at the command it
+is about (*Lore triggers*, above). Neither replaces the grep. A record relied on
+should be cited by `id` in the result that used it.
 
 **There is no index file — the records are the library.** The single source of
 truth is the set of record front-matters; the library is self-describing, and

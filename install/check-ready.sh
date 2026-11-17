@@ -753,6 +753,33 @@ def lore_catalog():
         "hooks/lore-recall.py reads " + LORE)
 
 
+def lore_trigger():
+    """The lore-trigger hook is registered for PreToolUse and
+    PostToolUseFailure on Bash, and runs to exit 0 on an empty payload."""
+    cmds = load_hooks("lore-trigger")
+    if cmds is None:
+        return
+    step = ("register the product's hooks/lore-trigger.py for PreToolUse and "
+            "PostToolUseFailure, matcher Bash|WebFetch (INSTALL.md section 5)")
+    env = hook_env()
+    for event in ("PreToolUse", "PostToolUseFailure"):
+        found = [c for e, m, c in cmds if e == event
+                 and "lore-trigger.py" in c
+                 and (not m or re.search(r"(^|\|)Bash(\||$)", m))]
+        if not found:
+            say("MISSING", "lore-trigger", "no %s hook runs "
+                "hooks/lore-trigger.py on Bash" % event, step)
+            return
+        code, _ = run_hook(found[0], "{}", env)
+        if code != 0:
+            say("MISSING", "lore-trigger", "%s hook %s does not run to exit 0"
+                % (event, label(split_words(found[0], env) or [found[0]])),
+                "bring product to the bus's pin, which ships "
+                "hooks/lore-trigger.py")
+            return
+    say("OK", "lore-trigger", "registered for PreToolUse and "
+        "PostToolUseFailure on Bash")
+
 def git_out(args, cwd, stdin_bytes=None):
     """stdout of a read-only git command, or None when it fails."""
     try:
@@ -815,6 +842,8 @@ def main():
         overlay()
     elif ITEM == "lore-catalog":
         lore_catalog()
+    elif ITEM == "lore-trigger":
+        lore_trigger()
     else:
         return 2
     return 0
@@ -1243,6 +1272,7 @@ run_after() {
     done
     helper overlay
     helper lore-catalog
+    helper lore-trigger
     item_agents
     item_skills
 }

@@ -209,7 +209,7 @@ values are secrets. The management model is **names travel, values never do**:
   site's supported credential mechanism where one exists.
 
 ## 5. Check the node
-Steps 1 to 4 leave two of this check's items undone, so a node set up from
+Steps 1 to 4 leave three of this check's items undone, so a node set up from
 this file alone prints `NOT READY` here until you also:
 
 - register the product's lore hook as a SessionStart hook in
@@ -218,6 +218,16 @@ this file alone prints `NOT READY` here until you also:
 
       "SessionStart": [{"hooks": [{"type": "command",
         "command": "/usr/bin/python3 <REPO>/product/hooks/lore-recall.py"}]}]
+
+- register the product's lore-trigger hook for `PreToolUse` (beside the git
+  gate) and `PostToolUseFailure`, both on `Bash|WebFetch`, so lore with
+  `triggers` reaches the agent at the command it is about (PROTOCOL §7):
+
+      {"matcher": "Bash|WebFetch", "hooks": [{"type": "command",
+        "command": "/usr/bin/python3 <REPO>/product/hooks/lore-trigger.py"}]}
+
+  added to the `PreToolUse` list, and the same group as the whole
+  `"PostToolUseFailure"` list.
 
 - link the SWE Pod's six role definitions, `swe-spec.md`, `swe-plan.md`,
   `swe-lead.md`, `swe-build.md`, `swe-test.md` and `swe-review.md`, into
@@ -236,7 +246,8 @@ its fetched `origin/main` and `spaces.yaml` lists core, lore and tmp; each of
 `spaces/core`, `spaces/lore` and `spaces/tmp` is cloned, on `main`, with no LFS
 pointer file left in its work tree; the guidance chain reaches the overlay at
 `spaces/core/best-practices.user.md`; a SessionStart hook prints a lore catalog
-that names `spaces/lore/lore`; and the SWE Pod's role agents and the mesh's
+that names `spaces/lore/lore`; the lore-trigger hook is registered for
+PreToolUse and PostToolUseFailure on Bash; and the SWE Pod's role agents and the mesh's
 skills resolve in the Claude Code config. Each `MISSING` line ends with the step
 that fixes it, such as registering the product's `hooks/lore-recall.py` as a
 SessionStart hook. Apply it and run the check again until it prints `READY`.

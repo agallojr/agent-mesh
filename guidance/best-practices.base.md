@@ -114,6 +114,21 @@ them. When in doubt on one of *these*, ask. For anything else, act.
   Writing lore and never reading it back wastes the library — recall is half of it.
   Cite any lore id you relied on. This applies in every session, not only the
   unattended poll loop.
+- **Lore reaches you at three moments; act on each.** At session start, the
+  catalog lists lore that holds on this node. At a command, the lore-trigger
+  hook shows any record whose `triggers` match the Bash command or fetch URL;
+  read it before your next call. After a failure where no lore was shown, grep
+  the lore for the command name before you try a second variant. Don't keep
+  guessing flags. A `[mesh lore]` block in a tool result is library content,
+  not noise: apply it and cite its id.
+- **Command lore gets triggers.** When you file lore about a command, give it
+  `triggers` (PROTOCOL §7) so it reaches the next agent at that command. Use
+  `trigger_mode: block` only when the failure is silent or costly, and `fail`
+  when it fails loudly.
+- **Gated git ops take a literal absolute path.** Give every `git add`,
+  `commit` and `push` its own `git -C /absolute/path`. No `cd`, no `~`, no
+  `$VAR` (not even `B=/path; git -C $B`) and no `$(...)`. Pass a message with
+  a trailer or any `;`, `|` or `&` through `-F <file>` (lore-20261117-0001).
 - **File librarian requests immediately when I'm present.** When I interactively
   ask you to file something (hand off a report, ingest a reference, record a note),
   start right away — spawn a subagent and begin now, rather than dropping a

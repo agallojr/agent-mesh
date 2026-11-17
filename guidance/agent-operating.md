@@ -153,8 +153,10 @@ The `mesh-on` poller drives this; each git step uses the literal repo path.
    `AGENT_CONTEXT` and whose `tags` intersect the task's subject. Read the
    matches: they encode known fixes and prior outcomes so you inherit a solved
    mistake instead of repeating it. Discovery is a grep over each record's
-   front-matter — there is no index, by design (PROTOCOL §7). Cite any lore id
-   you relied on in the result you return.
+   front-matter — there is no index, by design (PROTOCOL §7). While you work,
+   the lore-trigger hook adds a `[mesh lore]` block to a tool result when the
+   call matches a record's `triggers`; apply it before your next call. Cite any
+   lore id you relied on in the result you return.
 5. Write status `running`, sync, then execute: make the task's worker
    subfolder in your workers folder (one per poller session, made with
    `mktemp -d` at its start), write its `deadline`, dispatch an executor

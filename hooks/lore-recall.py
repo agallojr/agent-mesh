@@ -15,9 +15,13 @@ spaces/lore/lore/*.md (memory/lore/ if absent) front-matter for records whose
 `contexts` include that context
 (the coarse environment class, PROTOCOL §4/§7) OR are empty (universal — true
 everywhere), and inject a compact CATALOG (id · title, plus tags) into the
-session's initial context. It injects the catalog, not the full bodies: the
-catalog is cheap (~tens of tokens per record) and its job is only to tell the
-agent WHICH lore exists so it reads the pertinent ones by id (discovery stays a
+session's initial context. Records that carry `triggers` are left out and
+counted in one line: lore-trigger.py shows each at the command it is about,
+which keeps this catalog small as lore grows. Front-matter parsing is shared
+with that hook (lore_fm.py) and is Python 3.6-safe.
+
+It injects the catalog, not the full bodies: the catalog is cheap (~tens of
+tokens per record) and its job is only to tell the agent WHICH lore exists so it reads the pertinent ones by id (discovery stays a
 grep over front-matter — there is no committed index, PROTOCOL §7). This mirrors
 the "generate a view on demand, never commit an index" rule: the catalog is
 built fresh each session start and never written to disk.
@@ -38,75 +42,21 @@ Contract (Claude Code SessionStart):
 Posture: FAIL OPEN. Any error (no identity, unreadable bus, no lore dir) exits 0
 with no output — a broken recall hook must never block or delay a session.
 """
-# Lazy annotations so PEP 604 unions work under a pinned 3.9 /usr/bin/python3.
-from __future__ import annotations
-
-import glob
 import json
 import os
-import re
 import sys
+from typing import Dict, List
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import lore_fm  # noqa: E402
 
 
-def _identity() -> dict:
-    """Parse ~/.agent-identity.env into a dict (values stripped of quotes and
-    trailing # comments). Returns {} if the file is absent/unreadable."""
-    out: dict = {}
-    try:
-        with open(os.path.expanduser("~/.agent-identity.env")) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                # strip an inline comment, then surrounding quotes/space
-                val = val.split("#", 1)[0].strip().strip("'\"")
-                out[key.strip()] = val
-    except Exception:
-        pass
-    return out
-
-
-def _fm_block(text: str) -> str:
-    """Return the YAML front-matter block (between the first two --- fences)."""
-    m = re.search(r"^---\s*$(.*?)^---\s*$", text, re.M | re.S)
-    return m.group(1) if m else ""
-
-
-def _field(block: str, name: str) -> str:
-    m = re.search(rf"^{name}:\s*(.*)$", block, re.M)
-    return m.group(1).strip() if m else ""
-
-
-def _list_field(block: str, name: str) -> list:
-    raw = _field(block, name)
-    return [v.strip().strip("'\"") for v in raw.strip("[]").split(",") if v.strip()]
-
-
-def _catalog(lore_dir: str, context: str) -> list:
-    """Records whose contexts include `context` or are empty (universal).
-
-    Returns a list of (why, id, title, tags) sorted by id. `why` is the matched
-    context or 'universal'. A record with a non-empty contexts list that does
-    not include our context is skipped (its fact is scoped elsewhere)."""
-    rows = []
-    for path in sorted(glob.glob(os.path.join(lore_dir, "*.md"))):
-        try:
-            block = _fm_block(open(path, encoding="utf-8").read())
-        except Exception:
-            continue
-        ctxs = _list_field(block, "contexts")
-        if not ctxs:
-            why = "universal"
-        elif context and context in ctxs:
-            why = context
-        else:
-            continue
-        rows.append(
-            (why, _field(block, "id"), _field(block, "title"),
-             ", ".join(_list_field(block, "tags")))
-        )
-    return rows
+def _catalog(recs: List[Dict], context: str) -> List[Dict]:
+    """Records that hold here (contexts empty or naming this context) and
+    carry no triggers. A triggered record is shown by lore-trigger.py at the
+    command it is about, so it stays out of the session-start catalog."""
+    return [r for r in recs
+            if lore_fm.holds(r["contexts"], context) and not r["triggers"]]
 
 
 def main() -> int:
@@ -115,40 +65,42 @@ def main() -> int:
         _ = json.loads(raw) if raw.strip() else {}
     except Exception:
         return 0  # fail open
-
-    ident = _identity()
-    repo = ident.get("REPO_PATH", "")
-    context = ident.get("AGENT_CONTEXT", "")
-    if not repo:
-        return 0  # no bus location — nothing to scan; fail open
-
-    # New home first; memory/lore is the compatibility link path, read only
-    # when the space folder is absent.
-    lore_dir = os.path.join(repo, "spaces", "lore", "lore")
-    if not os.path.isdir(lore_dir):
-        lore_dir = os.path.join(repo, "memory", "lore")
-    if not os.path.isdir(lore_dir):
+    try:
+        ident = lore_fm.identity()
+        context = ident.get("AGENT_CONTEXT", "")
+        ldir = lore_fm.lore_dir(ident.get("REPO_PATH", ""))
+        if not ldir:
+            return 0
+        recs = lore_fm.records(ldir)
+        rows = _catalog(recs, context)
+        triggered = [r for r in recs if r["triggers"]
+                     and lore_fm.holds(r["contexts"], context)]
+    except Exception:
         return 0
-
-    rows = _catalog(lore_dir, context)
-    if not rows:
+    if not rows and not triggered:
         return 0
 
     scope = context or "this machine"
     lines = [
-        f"[mesh lore — {len(rows)} record(s) that hold on {scope} "
-        f"(context={context or 'none'})]",
+        "[mesh lore — %d record(s) that hold on %s (context=%s)]"
+        % (len(rows), scope, context or "none"),
         "Operational lore on file for this machine. Consult the library before "
         "work with a known failure surface (PROTOCOL §7): when your task touches "
         "one of these subjects, READ the full record by id under "
-        f"{lore_dir}/<id>-*.md before acting, and cite the id in your result. "
+        "%s/<id>-*.md before acting, and cite the id in your result. "
         "This catalog is a session-start convenience, not a substitute for the "
-        "grep — new lore may have landed since.",
+        "grep — new lore may have landed since." % ldir,
     ]
-    for why, id_, title, tags in rows:
-        tag_str = f"  ·  tags: {tags}" if tags else ""
-        marker = "" if why == "universal" else f" [{why}]"
-        lines.append(f"- {id_}{marker}: {title}{tag_str}")
+    for r in rows:
+        tags = ", ".join(r["tags"])
+        tag_str = "  ·  tags: %s" % tags if tags else ""
+        marker = " [%s]" % context if r["contexts"] else ""
+        lines.append("- %s%s: %s%s" % (r["id"], marker, r["title"], tag_str))
+    if triggered:
+        lines.append(
+            "%d more record(s) that hold here carry command triggers; the "
+            "lore-trigger hook shows each one when a matching command runs. "
+            "When it does, act on it." % len(triggered))
 
     out = {
         "hookSpecificOutput": {

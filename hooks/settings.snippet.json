@@ -1,5 +1,5 @@
 {
-  "_comment": "Merge these keys into the node's ~/.claude/settings.json. Remove any blanket git add/commit/push deny from permissions.deny (keep sudo). The git-gate hook becomes the sole authority on git add/commit/push. The broad allow list lets task execution run unattended without permission prompts.",
+  "_comment": "Merge these keys into the node's ~/.claude/settings.json. Remove any blanket git add/commit/push deny from permissions.deny (keep sudo). The git-gate hook becomes the sole authority on git add/commit/push. The broad allow list lets task execution run unattended without permission prompts. The lore hooks (SessionStart, the second PreToolUse entry, PostToolUseFailure) run in place from the bus; set REPLACE_WITH_REPO_PATH to the node's REPO_PATH.",
   "permissions": {
     "allow": [
       "Bash",
@@ -24,6 +24,36 @@
           {
             "type": "command",
             "command": "REPLACE_WITH_HOME/.claude/hooks/git-gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE_WITH_REPO_PATH/product/hooks/lore-trigger.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE_WITH_REPO_PATH/product/hooks/lore-trigger.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "REPLACE_WITH_REPO_PATH/product/hooks/lore-recall.py"
           }
         ]
       }
