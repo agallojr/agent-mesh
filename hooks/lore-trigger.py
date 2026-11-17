@@ -25,9 +25,14 @@ routine (grep, diff, test, ...).
 Trigger syntax: space-separated token patterns. The first must match the
 command name (its basename); each later one must match a later token of the
 same simple command, in order, with other tokens skipped. A pattern is an
-fnmatch glob, and `a|b` is an alternation. WebFetch is matched as
-`WebFetch <url>`. Examples: `git commit`, `ssh genode`,
-`git -C $*|~* add|commit|push`, `WebFetch *osti.gov*`.
+fnmatch glob, and `a|b` is an alternation. Tokens match as written or with
+`$VAR`, `${VAR}`, `~` and `$HOME` expanded from assignments made earlier in
+the same call. A pattern `dir=<glob>`, anywhere in the trigger, must match the
+directory the command runs in: the call's cwd, moved by any cd or pushd
+before it, and for git the root of the repo that -C names. WebFetch is
+matched as `WebFetch <url>`. Examples: `git commit`, `ssh genode`,
+`git -C $*|~* add|commit|push`, `git dir=*/bus add -A`,
+`WebFetch *osti.gov*`.
 
 State: the ids shown, per session and agent, in ~/.cache/mesh-lore-trigger/.
 Debug: if that folder holds a file named `debug`, each payload is appended to
@@ -39,6 +44,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import time
 from typing import Dict, List, Tuple
@@ -50,6 +56,10 @@ STATE_DIR = os.path.expanduser("~/.cache/mesh-lore-trigger")
 SEPARATORS = {";", ";;", "&", "&&", "|", "||", "|&", "(", ")", "\n"}
 WRAPPERS = {"env", "command", "exec", "nohup", "time", "builtin", "nice"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
+DECLARE = {"export", "local", "declare", "readonly", "typeset"}
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+GIT_VALUE_OPTS = {"-c", "--work-tree", "--namespace", "--exec-path",
+                  "--super-prefix", "--config-env"}
 # Commands whose non-zero exit is routine; no "file lore" nudge for these.
 ROUTINE = {
     "grep", "egrep", "fgrep", "rg", "diff", "cmp", "test", "[", "[[", "find",
@@ -64,77 +74,183 @@ FIX_CHARS = 900
 TOTAL_CHARS = 3200
 
 
-def simple_commands(command: str) -> List[List[str]]:
-    """Split a shell command into simple commands, each a token list whose
-    first token is the command name (basename), with assignments, wrappers
-    and `bash -c` unwrapped. Quotes are honoured; nothing is expanded."""
+Cmd = Dict[str, object]  # {"raw": [...], "exp": [...], "dir": str}
+
+
+def simple_commands(command: str, cwd: str = "") -> List[Cmd]:
+    """Split a shell command into simple commands. Each has its tokens as
+    written (`raw`), the same tokens with variables assigned earlier in the
+    call, `~` and `$HOME` expanded (`exp`), and the directory it runs in
+    (`dir`): cwd, moved by any cd or pushd before it, and for git the root of
+    the repo its -C points at. The first token is the command name (its
+    basename); assignments, wrappers and `bash -c` are unwrapped. Quotes are
+    honoured. `dir` is '' where it cannot be known."""
+    env = {"HOME": os.path.expanduser("~")}
+    out = []  # type: List[Cmd]
+    _walk(command, env, {"dir": cwd}, out)
+    return out
+
+
+def _tokens(command: str) -> List[str]:
     command = re.sub(r"\d*>&\d+|&>", " ", command)
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
         lex.whitespace = " \t\r"
         lex.whitespace_split = True
-        tokens = list(lex)
+        return list(lex)
     except ValueError:
         tokens = re.split(r"\s+|(;|&&|\|\||\||&|\n)", command)
-        tokens = [t for t in tokens if t]
-    out = []  # type: List[List[str]]
+        return [t for t in tokens if t]
+
+
+def _walk(command: str, env: Dict[str, str], state: Dict[str, str],
+          out: List[Cmd]) -> None:
     cur = []  # type: List[str]
-    for tok in tokens + [";"]:
+    for tok in _tokens(command) + [";"]:
         if tok in SEPARATORS:
             if cur:
-                out.extend(_normalise(cur))
+                _one(cur, env, state, out)
             cur = []
         else:
             cur.append(tok)
+
+
+def _expand(tok: str, env: Dict[str, str]) -> str:
+    def sub(m):
+        return env.get(m.group(1) or m.group(2), m.group(0))
+    out = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)",
+                 sub, tok)
+    if out == "~" or out.startswith("~/"):
+        out = env["HOME"] + out[1:]
     return out
 
 
-def _normalise(toks: List[str]) -> List[List[str]]:
-    while toks and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0])
-                    or toks[0] in WRAPPERS):
-        toks = toks[1:]
-    if toks and toks[0] == "timeout":
-        j = 1
-        while j < len(toks) and toks[j].startswith("-"):
-            j += 1
-        toks = toks[j + 1:]  # drop timeout, its options and its duration
-    if not toks:
-        return []
-    name = os.path.basename(toks[0]) or toks[0]
-    if name in SHELLS and len(toks) > 2 and toks[1] == "-c":
-        return simple_commands(toks[2])
-    return [[name] + toks[1:]]
+def _assign(raw: str, exp: str, env: Dict[str, str]) -> None:
+    if ASSIGN.match(raw):
+        name, val = exp.split("=", 1)
+        env[name] = val
+
+
+def _join(base: str, path: str) -> str:
+    if not path or "$" in path or "`" in path:
+        return ""
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    return os.path.normpath(os.path.join(base, path)) if base else ""
+
+
+def _one(raw: List[str], env: Dict[str, str], state: Dict[str, str],
+         out: List[Cmd]) -> None:
+    exp = [_expand(t, env) for t in raw]
+    i = 0
+    while i < len(raw) and (ASSIGN.match(raw[i]) or raw[i] in WRAPPERS):
+        _assign(raw[i], exp[i], env)
+        i += 1
+    if i < len(raw) and raw[i] == "timeout":
+        i += 1
+        while i < len(raw) and raw[i].startswith("-"):
+            i += 1
+        i += 1  # its duration
+    raw, exp = raw[i:], exp[i:]
+    if not raw:
+        return
+    name = os.path.basename(raw[0]) or raw[0]
+    if name in SHELLS and len(raw) > 2 and raw[1] == "-c":
+        _walk(raw[2], env, state, out)
+        return
+    here = state["dir"]
+    if name in DECLARE:
+        for r, e in zip(raw[1:], exp[1:]):
+            _assign(r, e, env)
+    elif name in ("cd", "pushd"):
+        args = [e for e in exp[1:] if not e.startswith("-")]
+        state["dir"] = _join(here, args[0]) if args else env["HOME"]
+    elif name == "popd":
+        state["dir"] = ""
+    elif name == "git":
+        here = _git_dir(raw, exp, here)
+    out.append({"raw": [name] + raw[1:], "exp": [name] + exp[1:],
+                "dir": here})
+
+
+def _git_dir(raw: List[str], exp: List[str], base: str) -> str:
+    """The root of the repo a git command acts on: base moved by each -C
+    or --git-dir, then resolved with rev-parse. '' if it cannot be known."""
+    d = base
+    i = 1
+    while i < len(raw):
+        t = raw[i]
+        if t == "-C" and i + 1 < len(raw):
+            d = _join(d, exp[i + 1])
+            i += 2
+        elif t.startswith("--git-dir"):
+            if t == "--git-dir" and i + 1 < len(raw):
+                gd, i = exp[i + 1], i + 2
+            else:
+                gd, i = exp[i].split("=", 1)[-1], i + 1
+            d = re.sub(r"/\.git/?$", "", _join(d, gd))
+        elif t in GIT_VALUE_OPTS:
+            i += 2
+        elif t.startswith("-"):
+            i += 1
+        else:
+            break
+    if not d or not os.path.isdir(d):
+        return d
+    try:
+        p = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=2)
+        top = p.stdout.strip()
+        return top if p.returncode == 0 and top else d
+    except Exception:
+        return d
 
 
 def tok_match(pattern: str, token: str) -> bool:
     return any(fnmatch.fnmatchcase(token, alt) for alt in pattern.split("|"))
 
 
-def trigger_matches(trigger: str, cmd: List[str]) -> bool:
-    pats = trigger.split()
-    if not pats or not cmd or not tok_match(pats[0], cmd[0]):
+def _in_order(pats: List[str], toks: List[str]) -> bool:
+    if not pats or not toks or not tok_match(pats[0], toks[0]):
         return False
     i = 1
     for pat in pats[1:]:
-        while i < len(cmd) and not tok_match(pat, cmd[i]):
+        while i < len(toks) and not tok_match(pat, toks[i]):
             i += 1
-        if i >= len(cmd):
+        if i >= len(toks):
             return False
         i += 1
     return True
 
 
-def commands_of(payload: Dict) -> List[List[str]]:
+def trigger_matches(trigger: str, cmd: Cmd) -> bool:
+    """Token patterns match in order against the raw or the expanded
+    tokens; each `dir=<glob>` must match the command's directory."""
+    pats = trigger.split()
+    dirs = [p[4:] for p in pats if p.startswith("dir=")]
+    toks = [p for p in pats if not p.startswith("dir=")]
+    if dirs and not (cmd["dir"] and all(tok_match(p, cmd["dir"])
+                                        for p in dirs)):
+        return False
+    return _in_order(toks, cmd["raw"]) or (
+        cmd["exp"] != cmd["raw"] and _in_order(toks, cmd["exp"]))
+
+
+def commands_of(payload: Dict) -> List[Cmd]:
     tool = payload.get("tool_name", "")
     tin = payload.get("tool_input") or {}
     if tool == "Bash":
-        return simple_commands(tin.get("command", "") or "")
+        return simple_commands(tin.get("command", "") or "",
+                               payload.get("cwd", "") or "")
     if tool == "WebFetch":
-        return [["WebFetch", tin.get("url", "") or ""]]
+        url = tin.get("url", "") or ""
+        return [{"raw": ["WebFetch", url], "exp": ["WebFetch", url],
+                 "dir": ""}]
     return []
 
 
-def matching(recs: List[Dict], cmds: List[List[str]],
+def matching(recs: List[Dict], cmds: List[Cmd],
              context: str) -> List[Tuple[Dict, str]]:
     """(record, trigger) for each record that holds here and has a trigger
     matching any of the simple commands."""
@@ -242,7 +358,7 @@ def pre_tool_use(payload: Dict, hits: List[Tuple[Dict, str]],
 
 
 def post_tool_failure(payload: Dict, hits: List[Tuple[Dict, str]],
-                      cmds: List[List[str]], st: Dict, ldir: str) -> None:
+                      cmds: List[Cmd], st: Dict, ldir: str) -> None:
     if payload.get("is_interrupt"):
         return
     fresh = [(r, t) for r, t in hits if r["id"] not in st["shown"]]
@@ -259,8 +375,9 @@ def post_tool_failure(payload: Dict, hits: List[Tuple[Dict, str]],
     if not hits:
         names = []
         for c in cmds:
-            if c[0] not in ROUTINE and c[0] not in names:
-                names.append(c[0])
+            n = c["raw"][0]
+            if n not in ROUTINE and n not in names:
+                names.append(n)
         names = [n for n in names if n not in st["nudged"]][:3]
         if names:
             st["nudged"].extend(names)

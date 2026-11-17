@@ -899,9 +899,16 @@ waiting to be grepped. Each trigger is a string of space-separated token
 patterns. The first must match the command name (its basename). Each later one
 must match a later token of the same simple command, in order, with other
 tokens skipped between. A pattern is an `fnmatch` glob, and `a|b` is an
-alternation. A WebFetch call is matched as `WebFetch <url>`. Quote each trigger,
-and use no commas or brackets inside one. Examples: `git commit`,
-`ssh genode`, `git -C $*|~* add|commit|push`, `WebFetch *osti.gov*`.
+alternation. A token matches as written or with `$VAR`, `${VAR}`, `~` and
+`$HOME` expanded from assignments made earlier in the same call, so a trigger
+on a path still matches `B=/path; git -C $B ...`. A pattern `dir=<glob>`,
+anywhere in the trigger, matches the directory the command runs in rather than
+a token: the call's working directory, moved by any `cd` or `pushd` before it,
+and for git the root of the repo its `-C` names. Use it for lore about a
+place, which `git add -A` run from inside the repo would otherwise slip past.
+A WebFetch call is matched as `WebFetch <url>`. Quote each trigger, and use no
+commas or brackets inside one. Examples: `git commit`, `ssh genode`,
+`git -C $*|~* add|commit|push`, `git dir=*/bus add -A`, `WebFetch *osti.gov*`.
 
 `trigger_mode` says when the record is shown. It defaults to `hint`:
 
