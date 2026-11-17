@@ -107,6 +107,9 @@ The three checks, as the check script `check.sh` runs them:
   `superseded_by`, `discovered_in`), or a qualified cross-space id
   `<space id>/<record id>` in the body outside inline code and fenced blocks,
   where a space id is `core`, `lore`, `tmp`, `lore:<name>` or `proj:<name>`.
+  In a space with `header_profile: mesh`, `discovered_in` is not a citation:
+  there it holds a mesh task or session id, provenance that may dangle once
+  the task is swept (PROTOCOL §7, memory-spaces §3.3).
   A trailing `@<commit>` pin is ignored. It resolves when it is:
   - a URL;
   - a record id held by a record in the space (in its `id:` line, or as the

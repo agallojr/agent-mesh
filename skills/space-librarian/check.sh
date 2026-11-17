@@ -222,11 +222,15 @@ text() {  # record $1, line for line: its body outside inline code and fenced
          if (!code) out = out s
          print out }' "$1"
 }
-refs() {  # "<line> <citation>" for each citation in record $1
-  awk 'function emit(x) { gsub(/^[ \t"]+|[ \t"]+$/, "", x)
+refs() {  # "<line> <citation>" for each citation in record $1; under the
+          # mesh profile discovered_in is provenance that may dangle (a mesh
+          # task id decays, PROTOCOL §7), so it is not a citation there
+  mesh=0; [ "$PROF" = mesh ] && mesh=1
+  awk -v mesh="$mesh" 'function emit(x) { gsub(/^[ \t"]+|[ \t"]+$/, "", x)
                           if (x != "" && x != "null" && x != "~") print NR, x }
        NR == 1 { if ($0 != "---") exit; next }
        $0 == "---" { exit }
+       mesh && /^discovered_in:/ { blk = 0; next }
        /^(related|supersedes|superseded_by|discovered_in):/ {
          x = $0; sub(/^[a-z_]+:/, "", x); sub(/[ \t]+#.*$/, "", x)
          blk = (x ~ /^[ \t]*$/); gsub(/\[|\]/, "", x)
